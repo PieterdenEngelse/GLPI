@@ -5,7 +5,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15161a; --fg: #e8e8e4; --muted: #9a9a94;
+    --bg: #15161a; --fg: #e8e8e4; --muted: #d1d5db;
     --line: #2c2d33; --stale: #ff8a80; --stale-bg: #2a1a19;
   }
 }
@@ -30,3 +30,40 @@ tr.stale td:first-child { box-shadow: inset 3px 0 0 var(--stale); }
 .error { border-color: var(--stale); background: var(--stale-bg); }
 .error pre { margin: .5rem 0 0; white-space: pre-wrap; font-size: .82rem; }
 .empty, .loading { color: var(--muted); }
+
+/* Links: RERAG's rule, as hex - this is a raw-CSS surface, so the Tailwind
+   class names do not apply but the palette still does. Blue for links,
+   never orange or teal. */
+:root { --link: #60a5fa; --link-hover: #93c5fd; }
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); }
+
+/* Site chrome. The header carries the title and nav; pages render only their
+   own content, so neither has to know what the other shows. */
+header.site { border-bottom: 1px solid var(--line); }
+header.site .bar {
+  max-width: 60rem; margin: 0 auto; padding: 1.5rem 1.25rem .75rem;
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 1rem; flex-wrap: wrap;
+}
+header.site .sub { margin: 0; }
+header.site nav { display: flex; gap: .25rem; }
+
+/* Tabs are 2.25rem tall and full-width-padded: this box is driven by a
+   touchpad, where a small target costs a second attempt. */
+.tab {
+  color: var(--muted); padding: .5rem .9rem; border-radius: 6px;
+  font-size: .9rem; line-height: 1.25rem; border: 1px solid transparent;
+}
+.tab:hover { color: var(--fg); background: var(--stale-bg); }
+.tab.on { color: var(--fg); border-color: var(--line); font-weight: 550; }
+
+/* Prose pages. Measure capped near 34rem: the About text is meant to be
+   read, and a 60rem line is not. */
+.prose { max-width: 34rem; }
+.prose h2 { font-size: 1rem; margin: 1.75rem 0 .4rem; }
+.prose h2:first-child { margin-top: 0; }
+.prose p { margin: 0 0 .75rem; }
+.prose dt { font-weight: 550; margin-top: .9rem; }
+.prose dd { margin: .2rem 0 0; color: var(--muted); }
+.empty .path { font-family: ui-monospace, monospace; font-size: .82rem; margin: .4rem 0 .75rem; }

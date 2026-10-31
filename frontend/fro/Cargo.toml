@@ -12,6 +12,12 @@ description = "GLPI inventory telemetry - Dioxus web UI"
 #     dx version: 0.7.9   dioxus versions: [0.7.10]
 # Bump this and the nixpkgs pin together, never one alone.
 dioxus = { version = "=0.7.9", features = ["web"] }
+
+# Pinned with `=` to the same version as dioxus above, as RERAG pins it. The
+# router is a separate crate on 0.7 and is part of the same lockstep: a
+# mismatch here fails at the Routable derive rather than at the dx check, so
+# it reads as broken macro code instead of a version problem.
+dioxus-router = { version = "=0.7.9" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
