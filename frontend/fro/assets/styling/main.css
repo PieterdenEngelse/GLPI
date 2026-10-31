@@ -79,3 +79,9 @@ header.site nav { display: flex; gap: .25rem; }
   color: #22d3ee; cursor: pointer;
 }
 .refresh .ghost:hover { color: #67e8f9; }
+
+/* Scope line. Muted by default - it is a qualifier, not the content - but
+   it takes the stale colour when the scope is unknown or empty, because a
+   scope that cannot be established undermines the whole table. */
+.scope { font-size: .82rem; color: var(--muted); margin: 0 0 1rem; }
+.scope.warn { color: var(--stale); }

@@ -23,6 +23,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 pub mod agents;
+pub mod entities;
 
 /// An OAuth2 access token with the instant it stops being valid.
 struct Token {

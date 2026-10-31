@@ -63,3 +63,37 @@ pub async fn fetch_agents() -> Result<Vec<AgentStatus>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// One entity this account may read. Mirrors the backend's Entity.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Entity {
+    pub id: i64,
+    pub name: Option<String>,
+    pub completename: Option<String>,
+}
+
+impl Entity {
+    /// What to show for this entity.
+    ///
+    /// The full path first: once entities nest, two sites can each hold a
+    /// "Workstations" and the bare name identifies neither. Falling back to
+    /// the id rather than an empty string keeps a malformed row visible - a
+    /// scope line with a blank in it is worse than one admitting "entity 7".
+    pub fn label(&self) -> String {
+        self.completename
+            .clone()
+            .or_else(|| self.name.clone())
+            .unwrap_or_else(|| format!("entity {}", self.id))
+    }
+}
+
+/// The entities this account can read. Everything else the app shows is
+/// filtered to these, invisibly - see components/scope_note.rs.
+pub async fn fetch_entities() -> Result<Vec<Entity>, String> {
+    reqwest::get(api_url("/api/entities"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<Entity>>()
+        .await
+        .map_err(|e| e.to_string())
+}

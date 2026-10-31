@@ -1,6 +1,6 @@
 //! The one page that answers the question: which agents have gone quiet?
 use crate::api::{self, AgentStatus};
-use crate::components::RefreshControl;
+use crate::components::{RefreshControl, ScopeNote};
 use dioxus::prelude::*;
 
 /// How often the table re-reads the backend.
@@ -34,6 +34,10 @@ pub fn Fleet() -> Element {
             interval_label: REFRESH_LABEL.to_string(),
             on_refresh: move |_| agents.restart(),
         }
+
+        // Above the table, not below it: the scope qualifies everything in
+        // the table, so reading it afterwards is too late.
+        ScopeNote {}
         match &*agents.read_unchecked() {
             // An unreachable backend must not look like an empty fleet. The
             // two mean opposite things and the page says which it is.

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
 use serde::Serialize;
 
-use crate::glpi::{agents::Agent, Client};
+use crate::glpi::{agents::Agent, entities::Entity, Client};
 
 pub struct AppState {
     pub glpi: Client,
@@ -24,6 +24,7 @@ pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/agents", get(agents))
+        .route("/api/entities", get(entities))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -83,15 +84,7 @@ impl From<anyhow::Error> for ApiError {
 async fn agents(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let raw = state.glpi.get("Inventory/Agent").await?;
 
-    // GLPI returns a bare array for a collection. Tolerate an object with a
-    // data/items key too, since the HL API's envelope has changed across its
-    // own versions and pinning to one shape would break on an upgrade.
-    let list = raw
-        .as_array()
-        .cloned()
-        .or_else(|| raw.get("data").and_then(|d| d.as_array()).cloned())
-        .or_else(|| raw.get("items").and_then(|d| d.as_array()).cloned())
-        .unwrap_or_default();
+    let list = collection(&raw);
 
     let mut out = Vec::with_capacity(list.len());
     for item in list {
@@ -106,5 +99,37 @@ async fn agents(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
     // Most overdue first: the reason to open this page is to find what has
     // stopped reporting.
     out.sort_by_key(|s| std::cmp::Reverse(s.hours_since_contact.unwrap_or(i64::MAX)));
+    Ok(Json(out))
+}
+
+/// The rows of a GLPI collection response.
+///
+/// GLPI returns a bare array. Tolerate an object with a data/items key too,
+/// since the HL API's envelope has changed across its own versions and
+/// pinning to one shape would break on an upgrade.
+fn collection(raw: &serde_json::Value) -> Vec<serde_json::Value> {
+    raw.as_array()
+        .cloned()
+        .or_else(|| raw.get("data").and_then(|d| d.as_array()).cloned())
+        .or_else(|| raw.get("items").and_then(|d| d.as_array()).cloned())
+        .unwrap_or_default()
+}
+
+/// The entities this account can read, so the page can state the scope of
+/// everything else it shows. See glpi::entities for why this is on screen at
+/// all rather than left implicit.
+async fn entities(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let raw = state.glpi.get("Administration/Entity").await?;
+
+    let mut out = Vec::new();
+    for item in collection(&raw) {
+        // Skip rather than fail: one odd entity row should not cost the page
+        // its scope line entirely.
+        match serde_json::from_value::<Entity>(item.clone()) {
+            Ok(e) => out.push(e),
+            Err(e) => tracing::warn!("skipping unparseable entity row: {e}; raw={item}"),
+        }
+    }
+
     Ok(Json(out))
 }
