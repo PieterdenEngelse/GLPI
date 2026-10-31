@@ -67,3 +67,15 @@ header.site nav { display: flex; gap: .25rem; }
 .prose dt { font-weight: 550; margin-top: .9rem; }
 .prose dd { margin: .2rem 0 0; color: var(--muted); }
 .empty .path { font-family: ui-monospace, monospace; font-size: .82rem; margin: .4rem 0 .75rem; }
+
+/* Refresh row. "Refresh now" is a secondary action, so it takes the cyan
+   RERAG's rules reserve for those - visually separate from the blue used for
+   navigation, and never orange or teal. */
+.refresh { display: flex; align-items: center; gap: .75rem; margin: 0 0 1rem; }
+.refresh .interval { font-size: .8rem; color: var(--muted); }
+.refresh .ghost {
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  padding: .4rem .8rem; font: inherit; font-size: .85rem;
+  color: #22d3ee; cursor: pointer;
+}
+.refresh .ghost:hover { color: #67e8f9; }

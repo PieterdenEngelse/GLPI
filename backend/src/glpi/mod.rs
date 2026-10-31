@@ -133,22 +133,53 @@ impl Client {
         Ok(value)
     }
 
+    /// Drop the cached token so the next call mints a fresh one.
+    async fn invalidate_token(&self) {
+        *self.token.lock().await = None;
+    }
+
+    /// One authorised GET. Separate from `get` only so the 401 path can send
+    /// the identical request again without rebuilding it.
+    async fn send(&self, url: &str, token: String) -> Result<reqwest::Response> {
+        self.http
+            .get(url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))
+    }
+
     /// GET a v2.3 path, e.g. "Inventory/Agent".
     pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
-        let token = self.token().await?;
         let url = format!(
             "{}/api.php/v2.3/{}",
             self.base,
             path.trim_start_matches('/')
         );
-        let res = self
-            .http
-            .get(&url)
-            .bearer_auth(token)
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
+        let mut res = self.send(&url, self.token().await?).await?;
+
+        // One retry on 401, with the cached token thrown away first.
+        //
+        // The expiry check in token() can only see the JWT's own clock, and
+        // that is not the whole story. This API authorises per USER, so the
+        // token rides on a server-side session that can end independently -
+        // a GLPI restart, a session garbage collection - while the JWT still
+        // looks valid for another half hour. The symptom is a 401 that flatly
+        // contradicts a token this client believes in, and without a retry the
+        // dashboard shows an upstream error until the clock happens to catch
+        // up on its own.
+        //
+        // Exactly once, deliberately. A 401 that survives a token minted
+        // seconds ago is a real authorisation problem - missing `api` scope, a
+        // revoked client, a disabled service user - and looping on it would
+        // turn a clear failure into a slow one while adding load to the thing
+        // already refusing us.
+        if res.status() == reqwest::StatusCode::UNAUTHORIZED {
+            tracing::info!("GLPI {url} returned 401; retrying once with a fresh token");
+            self.invalidate_token().await;
+            res = self.send(&url, self.token().await?).await?;
+        }
 
         let status = res.status();
         // Read before the body is consumed. This header is the only place the
