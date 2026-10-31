@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -20,10 +21,14 @@ async fn main() -> Result<()> {
     // is a dx implementation detail, not a promise.
     let static_dir = std::env::var("GLPI_INV_STATIC_DIR")
         .ok()
-        .map(std::path::PathBuf::from)
+        .map(PathBuf::from)
         .or_else(|| {
-            let guess = std::path::PathBuf::from("target/dx/glpi-inv-frontend/debug/web/public");
-            guess.join("index.html").is_file().then_some(guess)
+            std::env::current_exe()
+                .ok()
+                .map(|exe| bundle_candidates(&exe))
+                .unwrap_or_default()
+                .into_iter()
+                .find(|d| d.join("index.html").is_file())
         });
 
     match &static_dir {
@@ -54,4 +59,97 @@ async fn main() -> Result<()> {
 
     axum::serve(listener, app).await.context("serving")?;
     Ok(())
+}
+
+/// Candidate bundle directories, in preference order, for a backend binary
+/// living at `exe`.
+///
+/// Derived from the binary's own path, not the process working directory.
+/// The working directory is the wrong thing to ask: it is the project root
+/// under `just run` and $HOME under a systemd user unit, which has no
+/// WorkingDirectory and no reason to need one. The old CWD-relative guess
+/// therefore worked in development and silently failed in deployment,
+/// looking for ~/target/dx/... , finding nothing, and serving the API with
+/// no page - a 404 that reads as a broken frontend build rather than as a
+/// path that was never going to resolve.
+///
+/// Both profiles are offered because the pairing can legitimately differ.
+/// The profile of the running binary comes first: a release backend normally
+/// ships with a release bundle. The other profile follows rather than being
+/// rejected, because a debug bundle left over from `just build-frontend` is
+/// a working dashboard, and refusing it would serve nothing out of tidiness.
+fn bundle_candidates(exe: &Path) -> Vec<PathBuf> {
+    // <root>/target/<profile>/glpi-inv-backend -> <root>/target
+    let Some(target) = exe.parent().and_then(Path::parent) else {
+        return Vec::new();
+    };
+    let profile = exe
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|s| s.to_str())
+        .unwrap_or("debug");
+    let fallback = if profile == "release" {
+        "debug"
+    } else {
+        "release"
+    };
+
+    [profile, fallback]
+        .iter()
+        .map(|p| {
+            target
+                .join("dx/glpi-inv-frontend")
+                .join(p)
+                .join("web/public")
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundle_candidates;
+    use std::path::{Path, PathBuf};
+
+    fn candidates(exe: &str) -> Vec<PathBuf> {
+        bundle_candidates(Path::new(exe))
+    }
+
+    /// The deployment case: the unit runs the release binary, so the release
+    /// bundle has to be looked for first - and looked for at all, which the
+    /// CWD-relative guess never did.
+    #[test]
+    fn a_release_binary_prefers_the_release_bundle() {
+        let got = candidates("/home/pde/Projects/glpi-inv/target/release/glpi-inv-backend");
+        assert_eq!(
+            got[0],
+            PathBuf::from(
+                "/home/pde/Projects/glpi-inv/target/dx/glpi-inv-frontend/release/web/public"
+            )
+        );
+        assert!(got[1].ends_with("dx/glpi-inv-frontend/debug/web/public"));
+    }
+
+    #[test]
+    fn a_debug_binary_prefers_the_debug_bundle() {
+        let got = candidates("/home/pde/Projects/glpi-inv/target/debug/glpi-inv-backend");
+        assert!(got[0].ends_with("dx/glpi-inv-frontend/debug/web/public"));
+        assert!(got[1].ends_with("dx/glpi-inv-frontend/release/web/public"));
+    }
+
+    /// Paths are absolute here, so the candidates must be too - a relative
+    /// result would reintroduce the dependency on the working directory that
+    /// this function exists to remove.
+    #[test]
+    fn candidates_are_absolute_when_the_binary_path_is() {
+        assert!(candidates("/opt/glpi-inv/target/release/glpi-inv-backend")
+            .iter()
+            .all(|p| p.is_absolute()));
+    }
+
+    /// A binary with nothing above it yields nothing, rather than a path
+    /// rooted somewhere arbitrary.
+    #[test]
+    fn a_binary_with_no_grandparent_yields_nothing() {
+        assert!(candidates("glpi-inv-backend").is_empty());
+    }
 }
