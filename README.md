@@ -9,7 +9,7 @@ nixpkgs has **no `glpi` package and no `services.glpi` module**. It does have
 `services.fusionInventory` for the abandoned predecessor. Both modules here
 are written from scratch.
 
-Everything was built and run on one machine (NixOS 26.05). `DEPLOYMENT.md` records
+Everything was built and run on one machine (NixOS 26.05). `gl-net.md` records
 what was verified by executing it and what was not, and documents eight traps
 that cost real debugging time — several of which produce a *working build* and
 a broken system.
@@ -20,7 +20,7 @@ a broken system.
 |---|---|
 | `glpi.nix` | the GLPI package + module: PHP env, nginx, MariaDB, optional LAN TLS, cron |
 | `glpi-agent.nix` | the inventory agent module |
-| `DEPLOYMENT.md` | working notes, design reasoning, and the traps |
+| `gl-net.md` | working notes, design reasoning, and the traps |
 | `CLIENTS.md` | pointing Windows / macOS / other Linux clients at the server |
 
 ## Usage
@@ -72,7 +72,7 @@ sudo -u glpi glpi-console database:install \
 
 `--db-password=` with an **empty value** is required and is not a typo — the
 account uses MariaDB's `unix_socket` plugin and has no password, but GLPI
-validates the option and rejects a null one. See `DEPLOYMENT.md`, trap 5.
+validates the option and rejects a null one. See `gl-net.md`, trap 5.
 
 Native inventory ships **disabled**; the agent endpoint returns 403 until:
 
@@ -110,7 +110,7 @@ them — `CLIENTS.md` marks exactly which parts those are, including one path it
 could not confirm.
 
 PHP is taken from the system's nixpkgs by default. If yours predates
-**8.4.27**, read the CVE section of `DEPLOYMENT.md` first: two actively-exploited
+**8.4.27**, read the CVE section of `gl-net.md` first: two actively-exploited
 interpreter RCEs affect every GLPI version equally, and no GLPI release fixes
 them.
 
