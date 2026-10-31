@@ -1,0 +1,26 @@
+# Dioxus 0.7. RERAG's Dioxus.toml is 0.5/0.6-era and its [application] keys
+# are not all read by 0.7, so this is written for the CLI in flake.nix
+# (dioxus-cli 0.7.9) rather than copied across.
+[application]
+name = "glpi-inv"
+
+[web.app]
+title = "GLPI inventory"
+
+[web.watcher]
+watch_path = ["frontend/fro/src", "frontend/fro/assets"]
+reload_html = true
+
+# Both tables are required. [web.resource] without [web.resource.dev] fails
+# with `missing field \`dev\``, which reads like a syntax error rather than an
+# absent section - RERAG's 0.6-era file had both, and dropping one was mine.
+[web.resource]
+style = []
+script = []
+
+[web.resource.dev]
+style = []
+script = []
+
+[web.wasm_opt]
+level = "z"

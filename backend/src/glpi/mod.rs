@@ -1,0 +1,160 @@
+//! Client for GLPI's High-Level API, v2.3.
+//!
+//! Version choice is deliberate. GLPI 11.0.12 advertises five: v1 (described
+//! by GLPI itself as "closely tied to the GLPI source code ... no promise of
+//! stability between versions"), v2.0/v2.1/v2.2 (all three marked
+//! `"deprecated": true`), and v2.3. Only v2.3 is both current and stable, so
+//! it is the only one this client speaks.
+//!
+//! WHAT THIS API CANNOT GIVE US - verified by reading
+//! src/Glpi/Api/HL/Controller/InventoryController.php in the GLPI release:
+//!
+//!   * RefusedEquipment is NOT exposed. That is the failure mode worth
+//!     surfacing most: the agent exits 0, GLPI rejects the submission, and
+//!     the asset silently never appears. Nothing in the agent's own log says
+//!     so.
+//!   * No field-level change history (glpi_logs) under Inventory, so "what
+//!     changed between runs" is not reachable either.
+//!
+//! Both live in the database. Options are a read-only MariaDB user scoped to
+//! those two tables, or doing without; that choice is not made here. See
+//! CLAUDE.md.
+use anyhow::{bail, Context, Result};
+use serde::Deserialize;
+
+pub mod agents;
+
+/// An OAuth2 access token with the instant it stops being valid.
+struct Token {
+    value: String,
+    expires_at: std::time::Instant,
+}
+
+pub struct Client {
+    http: reqwest::Client,
+    base: String,
+    client_id: String,
+    client_secret: String,
+    username: String,
+    password: String,
+    token: tokio::sync::Mutex<Option<Token>>,
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    access_token: String,
+    expires_in: u64,
+}
+
+impl Client {
+    pub fn new(
+        glpi_url: &str,
+        client_id: String,
+        client_secret: String,
+        username: String,
+        password: String,
+    ) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            base: glpi_url.trim_end_matches('/').to_string(),
+            client_id,
+            client_secret,
+            username,
+            password,
+            token: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    /// A valid bearer token, fetched on first use and reused until it is close
+    /// to expiry.
+    ///
+    /// The 60-second margin is not decoration: without it a token that passes
+    /// the check here can still expire in flight, and the request comes back
+    /// 401 for a reason that looks nothing like "the token aged out".
+    async fn token(&self) -> Result<String> {
+        let mut guard = self.token.lock().await;
+
+        if let Some(t) = guard.as_ref() {
+            if t.expires_at > std::time::Instant::now() + std::time::Duration::from_secs(60) {
+                return Ok(t.value.clone());
+            }
+        }
+
+        let url = format!("{}/api.php/token", self.base);
+        let res = self
+            .http
+            .post(&url)
+            // The `password` grant, NOT `client_credentials`. GLPI issues a
+            // perfectly valid token for client_credentials - Bearer, 3600s,
+            // an 807-character JWT - and then rejects it on every data
+            // endpoint with 401 "The Authorization header is missing or
+            // invalid", which reads like a malformed header rather than the
+            // wrong grant.
+            //
+            // Router.php:717 is the reason:
+            //
+            //   if (!($request->hasHeader('Authorization')
+            //         && Session::getLoginUserID() !== false)) { 401 }
+            //
+            // It requires a logged-in USER, and a client_credentials token has
+            // no user attached by definition. So there is no configuration
+            // that makes that grant work here; only a user-scoped one can.
+            //
+            // scope=api because /Inventory/Agent falls into the default branch
+            // of OAuthRequestMiddleware, which requires the `api` scope. The
+            // OAuth client in GLPI must have it ticked, or this returns
+            // "You do not have the required scope(s)".
+            .form(&[
+                ("grant_type", "password"),
+                ("client_id", &self.client_id),
+                ("client_secret", &self.client_secret),
+                ("username", &self.username),
+                ("password", &self.password),
+                ("scope", "api"),
+            ])
+            .send()
+            .await
+            .with_context(|| format!("POST {url}"))?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            // GLPI answers with a real OAuth2 error document, so pass it
+            // through rather than flattening it to "auth failed".
+            bail!("GLPI token endpoint returned {status}: {body}");
+        }
+
+        let tr: TokenResponse = res.json().await.context("decoding token response")?;
+        let value = tr.access_token.clone();
+        *guard = Some(Token {
+            value: tr.access_token,
+            expires_at: std::time::Instant::now() + std::time::Duration::from_secs(tr.expires_in),
+        });
+        Ok(value)
+    }
+
+    /// GET a v2.3 path, e.g. "Inventory/Agent".
+    pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
+        let token = self.token().await?;
+        let url = format!(
+            "{}/api.php/v2.3/{}",
+            self.base,
+            path.trim_start_matches('/')
+        );
+        let res = self
+            .http
+            .get(&url)
+            .bearer_auth(token)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .with_context(|| format!("GET {url}"))?;
+
+        let status = res.status();
+        let body = res.text().await.unwrap_or_default();
+        if !status.is_success() {
+            bail!("GLPI {url} returned {status}: {body}");
+        }
+        serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
+    }
+}

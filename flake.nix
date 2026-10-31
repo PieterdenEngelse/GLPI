@@ -1,0 +1,86 @@
+{
+  description = "glpi-inv - GLPI inventory telemetry: axum backend + Dioxus web UI";
+
+  # Every input a github: URL, so the flake is usable from any machine. Pinned
+  # to the same nixpkgs revision the host system runs, to reuse what is already
+  # in the store rather than fetching a second toolchain.
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
+  };
+
+  outputs = { self, nixpkgs }:
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
+
+      # nixpkgs ships wasm-bindgen-cli 0.2.121; dioxus 0.7.9 requires the CLI
+      # to match the wasm-bindgen CRATE exactly, and dx aborts otherwise:
+      #   Incorrect wasm-bindgen-cli version: project requires 0.2.130
+      #   but version 0.2.121 is installed
+      #
+      # Pinning the crate DOWN is not available: js-sys 0.3.107 requires
+      # wasm-bindgen 0.2.130, js-sys arrives via chrono in the backend, and
+      # cargo resolves one version per workspace. So the tool moves up to meet
+      # the crate rather than the crate down to meet the tool.
+      #
+      # buildWasmBindgenCli and not `.override { version = ...; }`: the
+      # package in nixpkgs is wasm-bindgen-cli_0_2_121, whose function takes
+      # only { buildWasmBindgenCli, fetchCrate, rustPlatform } - passing
+      # `version` to it fails with "called with unexpected argument".
+      # buildWasmBindgenCli is the builder nixpkgs exposes for exactly this.
+      wasmBindgenCli = pkgs.buildWasmBindgenCli rec {
+        src = pkgs.fetchCrate {
+          pname = "wasm-bindgen-cli";
+          version = "0.2.130";
+          hash = "sha256-9Og1O/6/VC3sc5hBjoIWBErmLW2UHGMsTQO+6+m/dng=";
+        };
+
+        cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
+          inherit src;
+          inherit (src) pname version;
+          hash = "sha256-j81sUf1m5yXU4FJfGj7GV+hdqVCV8mRmNb0QIsMCjqw=";
+        };
+      };
+    in
+    {
+      devShells.${system}.default = pkgs.mkShell {
+        # This machine has NO system-wide Rust: rustc, cargo, gcc and the rest
+        # were deliberately removed from environment.systemPackages. So this
+        # shell is the only way to build, and it must carry the C toolchain
+        # too - rustc shells out to `cc` for the final link.
+        packages = with pkgs; [
+          rustc
+          cargo
+          rustfmt
+          clippy
+          rust-analyzer
+          gcc
+          pkg-config
+
+          # Dioxus 0.7. Keep the `dioxus` crate in frontend/ on the same minor
+          # as this CLI: dx refuses to build a project whose dioxus version it
+          # does not recognise.
+          dioxus-cli
+          wasmBindgenCli
+
+          # The wasm32 linker. Without it the frontend fails with
+          #   error: linker `lld` not found
+          # on tracing-wasm and wasm-streams - a message that points at those
+          # crates rather than at the missing tool, so it reads like a broken
+          # dependency instead of an incomplete shell.
+          lld
+
+          just
+          curl
+          jq
+        ];
+
+        # No fenix needed here, unlike the Windows cross-build in nixdash:
+        # VERIFIED that nixpkgs' rustc 1.95 already ships wasm32-unknown-unknown
+        # std (`ls $(rustc --print sysroot)/lib/rustlib` lists it), so the web
+        # target builds with the stock toolchain.
+        RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+        RUST_LOG = "glpi_inv_backend=debug,tower_http=warn";
+      };
+    };
+}

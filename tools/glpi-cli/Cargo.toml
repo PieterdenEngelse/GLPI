@@ -1,0 +1,16 @@
+[package]
+name = "glpi-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Probe GLPI's High-Level API from a terminal"
+
+[[bin]]
+name = "glpi-cli"
+path = "src/main.rs"
+
+[dependencies]
+glpi-inv-backend = { path = "../../backend" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = { workspace = true }
+serde_json = { workspace = true }

@@ -1,0 +1,27 @@
+[package]
+name = "glpi-inv-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "GLPI inventory telemetry - Dioxus web UI"
+
+[dependencies]
+# PINNED with `=` to the exact dioxus-cli version in flake.nix. A plain
+# "0.7" resolves to the newest 0.7.x and dx then refuses outright:
+#   dx and dioxus versions are incompatible!
+#     dx version: 0.7.9   dioxus versions: [0.7.10]
+# Bump this and the nixpkgs pin together, never one alone.
+dioxus = { version = "=0.7.9", features = ["web"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# reqwest on wasm32 compiles to the browser's fetch API. default-features off
+# because the native TLS stack has no meaning here and pulls in C code that
+# cannot link for wasm.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+
+# Only to read window.location.origin. reqwest on wasm32 cannot take a
+# relative URL - it has no base to resolve against and fails at the builder
+# stage with a bare "builder error" - so the origin has to come from the
+# browser and be prepended by hand.
+web-sys = { version = "0.3", features = ["Window", "Location"] }

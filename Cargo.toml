@@ -1,0 +1,42 @@
+[workspace]
+# Same shape as RERAG: a backend, a Dioxus frontend under frontend/, and a
+# CLI under tools/. No installer crate - this app is deployed by the
+# home-manager/systemd unit in systemd/, not by a self-installer.
+members = [
+    "backend",
+    "frontend/fro",
+    "tools/glpi-cli",
+]
+# `cargo build` at the root builds the backend only. The frontend is a wasm
+# target and is built by `dx`, which the Justfile drives - building it as part
+# of a host-target workspace build would try to link wasm into a native binary.
+default-members = ["backend"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["pde"]
+license = "MIT"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+
+# Dev profile tuned the way RERAG's is: this box has 7.6 GB and has already
+# OOM-killed the nix-daemon once this week, so debug output is kept small.
+[profile.dev]
+opt-level = 0
+debug = 1
+split-debuginfo = "packed"
+incremental = false
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

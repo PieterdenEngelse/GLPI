@@ -1,0 +1,4 @@
+# The frontend is the only wasm crate; dx passes its own target. This file
+# exists so `cargo` in the workspace root never guesses a non-host target.
+[build]
+target-dir = "target"

@@ -1,0 +1,8 @@
+/target
+/frontend/fro/dist
+/result
+/result-*
+.direnv/
+# Local credentials for the GLPI OAuth client - NEVER committed.
+.env
+*.secret

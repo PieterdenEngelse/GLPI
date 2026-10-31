@@ -1,0 +1,20 @@
+# User unit, not a system one: this is a personal dashboard that holds GLPI
+# OAuth credentials, and it has no business running as root.
+#
+# Install to ~/.config/systemd/user/ and set the credentials in
+# ~/.config/glpi-inv/env (chmod 600) - NOT in this file, which is readable by
+# anyone who can read the unit directory.
+[Unit]
+Description=glpi-inv backend (GLPI inventory telemetry, loopback only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/glpi-inv/env
+ExecStart=%h/Projects/glpi-inv/target/release/glpi-inv-backend
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=default.target

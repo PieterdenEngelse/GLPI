@@ -1,0 +1,32 @@
+/* Light and dark both, following the viewer's preference. */
+:root {
+  --bg: #fbfbfa; --fg: #1a1a18; --muted: #6b6b66;
+  --line: #e2e2dd; --stale: #b3261e; --stale-bg: #fdf0ef;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161a; --fg: #e8e8e4; --muted: #9a9a94;
+    --line: #2c2d33; --stale: #ff8a80; --stale-bg: #2a1a19;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+main { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
+h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+.sub { color: var(--muted); margin: 0 0 1.75rem; }
+
+/* Wide tables scroll inside their own box; the page never scrolls sideways. */
+table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: .6rem .75rem; border-bottom: 1px solid var(--line); }
+th { font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+.name { font-weight: 550; }
+.deviceid { font-size: .78rem; color: var(--muted); font-family: ui-monospace, monospace; }
+tr.stale { background: var(--stale-bg); }
+tr.stale td:first-child { box-shadow: inset 3px 0 0 var(--stale); }
+.error, .empty, .loading { padding: 1rem 1.25rem; border: 1px solid var(--line); border-radius: 8px; }
+.error { border-color: var(--stale); background: var(--stale-bg); }
+.error pre { margin: .5rem 0 0; white-space: pre-wrap; font-size: .82rem; }
+.empty, .loading { color: var(--muted); }
