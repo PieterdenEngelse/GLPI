@@ -70,6 +70,17 @@
           # dependency instead of an incomplete shell.
           lld
 
+          # wasm-opt, for `dx build --release`. Release builds alone run it,
+          # so the shell looked complete right up to the first one and then
+          # failed with "Failed to create wasm-opt instance: Missing
+          # wasm-opt" - a message about dx's own plumbing that says nothing
+          # about which package supplies the tool.
+          #
+          # It has to come from nixpkgs rather than from dx fetching its own
+          # copy: there is no FHS here, so a downloaded dynamically-linked
+          # binary finds no interpreter at /lib64 and cannot run at all.
+          binaryen
+
           just
           curl
           jq
