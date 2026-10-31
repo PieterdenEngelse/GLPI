@@ -151,10 +151,89 @@ impl Client {
             .with_context(|| format!("GET {url}"))?;
 
         let status = res.status();
+        // Read before the body is consumed. This header is the only place the
+        // full count appears; the JSON body is a bare array with no envelope.
+        let content_range = res
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let body = res.text().await.unwrap_or_default();
         if !status.is_success() {
             bail!("GLPI {url} returned {status}: {body}");
         }
+        reject_partial(status, content_range.as_deref(), &url)?;
         serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
+    }
+}
+
+/// Refuse a collection GLPI only partly served.
+///
+/// GLPI answers a truncated collection with 206 and a `Content-Range` of
+/// `start-end/total` - ResourceAccessor.php:386-393 in 11.0.12:
+///
+///   $has_more = $results['start'] + $results['limit'] < $results['total'];
+///   return new JSONResponse($results['results'], $has_more ? 206 : 200, [
+///       'Content-Range' => $results['start'] . '-' . $end . '/' . $results['total'],
+///   ]);
+///
+/// reqwest's `is_success()` spans 200-299, so a 206 passes the status check
+/// above untouched and the short array renders as the entire fleet. For an app
+/// whose only job is noticing which agents stopped reporting, a silently short
+/// list is the worst available answer: a missing agent and an unlisted one look
+/// identical, and the page reads as a healthy fleet either way.
+///
+/// This cannot fire today. The client sends no `start` or `limit`, and
+/// Search.php:581 adds a SQL LIMIT only when one of those is numeric, so GLPI
+/// returns every row with a 200. That is precisely why the guard is here: the
+/// invariant is an assumption about an upstream nobody here controls, and when
+/// it breaks it does so quietly.
+fn reject_partial(
+    status: reqwest::StatusCode,
+    content_range: Option<&str>,
+    url: &str,
+) -> Result<()> {
+    if status != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Ok(());
+    }
+    let range = content_range.unwrap_or("no Content-Range header");
+    bail!(
+        "GLPI {url} returned 206 Partial Content ({range}): this is part of the \
+         collection, not all of it. This client requests no pagination, so every \
+         row should arrive with a 200 - refusing rather than showing a short \
+         fleet as the whole fleet. Paginate explicitly if this is now expected."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_partial;
+    use reqwest::StatusCode;
+
+    /// The operator needs the slice GLPI actually served, or the error says
+    /// only that something was incomplete.
+    #[test]
+    fn a_206_is_refused_and_names_the_range() {
+        let err = reject_partial(
+            StatusCode::PARTIAL_CONTENT,
+            Some("0-49/327"),
+            "http://glpi/api.php/v2.3/Inventory/Agent",
+        )
+        .expect_err("a partial collection must not pass as complete");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("0-49/327"), "served slice missing from: {msg}");
+    }
+
+    /// A 206 is reason enough on its own; a proxy may strip the header.
+    #[test]
+    fn a_206_without_the_header_is_still_refused() {
+        assert!(reject_partial(StatusCode::PARTIAL_CONTENT, None, "u").is_err());
+    }
+
+    /// GLPI sets Content-Range on every collection response, 200 included, so
+    /// its presence must not be mistaken for truncation.
+    #[test]
+    fn a_complete_200_carrying_a_content_range_passes() {
+        assert!(reject_partial(StatusCode::OK, Some("0-0/1"), "u").is_ok());
     }
 }
