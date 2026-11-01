@@ -5,7 +5,7 @@
 //! never names the missing right - and GLPI activates exactly ONE profile per
 //! session, so an account holding several authorizations does not get their
 //! union. None of that is visible from the dashboard it breaks.
-use crate::api::{self, SessionInfo};
+use crate::api::{self, Authorization, SessionInfo};
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
 
@@ -26,7 +26,10 @@ pub fn Status() -> Element {
                     }
                 }
             },
-            Some(Ok(s)) => rsx! { SessionPanel { session: s.clone() } },
+            Some(Ok(s)) => rsx! {
+                SessionPanel { session: s.clone() }
+                AuthorizationsPanel {}
+            },
             None => rsx! {
                 div { class: "flex items-center gap-2 text-base-content/60",
                     span { class: "loading loading-spinner loading-sm" }
@@ -296,6 +299,138 @@ fn Row(
                 InfoButton { title: label.clone(), body: info, sections, links }
             }
             dd { class: "mt-0.5 font-medium", "{value}" }
+        }
+    }
+}
+
+/// Every authorization the account holds - not just the one in force.
+///
+/// This is the question the v2.3 API cannot answer at all: `Profile_User` has
+/// zero occurrences anywhere in it, and its `Profile` schema carries neither
+/// `interface` nor any rights. So the panel above can say "something is
+/// missing" and this one can say which profile, on which entity, to fix.
+#[component]
+fn AuthorizationsPanel() -> Element {
+    let rows = use_resource(|| async move { api::fetch_authorizations().await });
+
+    rsx! {
+        div { class: "mt-5",
+            match &*rows.read_unchecked() {
+                Some(Err(e)) => rsx! {
+                    div { class: "alert alert-warning",
+                        div {
+                            div { class: "font-semibold", "Could not read this account's authorizations." }
+                            pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
+                        }
+                    }
+                },
+                Some(Ok(list)) => rsx! { AuthTable { rows: list.clone() } },
+                None => rsx! {
+                    div { class: "flex items-center gap-2 text-base-content/60",
+                        span { class: "loading loading-spinner loading-sm" }
+                        "Loading…"
+                    }
+                },
+            }
+        }
+    }
+}
+
+#[component]
+fn AuthTable(rows: Vec<Authorization>) -> Element {
+    rsx! {
+        Panel {
+            title: "Authorizations".to_string(),
+            subtitle: "Every profile this account may use, the one in force first".to_string(),
+            info: "What this account is allowed to be in GLPI, and what each of those \
+                   options would grant."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Only one is in force",
+                    "GLPI activates exactly one profile per session - the account's default - \
+                     so the others are available but inactive. Holding a second authorization \
+                     does not add its permissions to the first; it only means the account \
+                     could be switched to it.",
+                ),
+                InfoSection::new(
+                    "Reading the rights",
+                    "Agent and Entity are the two permissions this app needs, shown as GLPI \
+                     stores them. Anything other than none means read access is present. A \
+                     helpdesk profile always shows none, because those permissions cannot \
+                     exist on one.",
+                ),
+                InfoSection::new(
+                    "Where this comes from",
+                    "GLPI's current API does not expose authorizations at all - not for this \
+                     account, not for any other. This panel reads GLPI's older interface, \
+                     which still does. It is the only way to see this without opening GLPI \
+                     itself.",
+                ),
+            ],
+            info_links: vec![
+                InfoLink::new("Users", "front/user.php"),
+                InfoLink::new("Profiles", "front/profile.php"),
+            ],
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "" }
+                            th { "Profile" }
+                            th { "Entity" }
+                            th { "Interface" }
+                            th { "Child entities" }
+                            th { "Agent" }
+                            th { "Entity right" }
+                        }
+                    }
+                    tbody {
+                        for a in rows.iter() {
+                            tr { class: if a.is_active { "bg-primary/5" } else { "" },
+                                td {
+                                    if a.is_active {
+                                        span { class: "badge badge-primary badge-sm", "in force" }
+                                    }
+                                }
+                                td { class: "font-medium", "{a.profile}" }
+                                td { class: "text-base-content/80", "{a.entity}" }
+                                td {
+                                    if a.interface == "central" {
+                                        span { class: "badge badge-ghost badge-sm", "Standard" }
+                                    } else {
+                                        span { class: "badge badge-warning badge-sm", "Simplified" }
+                                    }
+                                }
+                                td {
+                                    if a.is_recursive {
+                                        span { class: "badge badge-success badge-sm", "included" }
+                                    } else {
+                                        span { class: "badge badge-warning badge-sm", "this entity only" }
+                                    }
+                                }
+                                RightCell { value: a.right_agent }
+                                RightCell { value: a.right_entity }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// A right as GLPI stores it: a bitmask where bit 1 is read.
+#[component]
+fn RightCell(value: i64) -> Element {
+    rsx! {
+        td {
+            if value & READ != 0 {
+                span { class: "badge badge-success badge-sm", "read" }
+            } else {
+                span { class: "badge badge-ghost badge-sm text-base-content/50", "none" }
+            }
         }
     }
 }

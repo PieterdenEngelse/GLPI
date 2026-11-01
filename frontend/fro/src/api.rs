@@ -183,3 +183,70 @@ pub async fn fetch_session() -> Result<SessionInfo, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// One GLPI right. Mirrors the backend's RightEntry.
+///
+/// `value` is the authoritative figure and `bits` is a reading of it; both are
+/// shown, because a decoded name is only as good as the constant table behind
+/// it and the raw number is what GLPI's own form and source use.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RightEntry {
+    pub name: String,
+    pub value: i64,
+    pub bits: Vec<String>,
+
+    /// Bits beyond GLPI's twelve global constants. Genuine permissions this
+    /// app cannot name - modules define their own - so they are shown as a
+    /// number rather than hidden. See backend/src/glpi/rights.rs.
+    pub unnamed_bits: i64,
+    pub writes: bool,
+}
+
+impl RightEntry {
+    /// Granted at all. A right GLPI lists with a value of 0 is a right the
+    /// profile does not have.
+    pub fn granted(&self) -> bool {
+        self.value != 0
+    }
+}
+
+/// Mirrors the backend's RightsBreakdown.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RightsBreakdown {
+    pub profile_name: Option<String>,
+    pub profile_interface: Option<String>,
+    pub entries: Vec<RightEntry>,
+}
+
+/// Every right the active profile holds.
+pub async fn fetch_rights() -> Result<RightsBreakdown, String> {
+    reqwest::get(api_url("/api/rights"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<RightsBreakdown>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One authorization: a profile this account may use, on one entity.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Authorization {
+    pub entity: String,
+    pub profile: String,
+    pub interface: String,
+    pub is_recursive: bool,
+    /// GLPI activates exactly one profile per session; this is that one.
+    pub is_active: bool,
+    pub right_agent: i64,
+    pub right_entity: i64,
+}
+
+/// Every authorization the account holds, active one first.
+pub async fn fetch_authorizations() -> Result<Vec<Authorization>, String> {
+    reqwest::get(api_url("/api/authorizations"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<Authorization>>()
+        .await
+        .map_err(|e| e.to_string())
+}

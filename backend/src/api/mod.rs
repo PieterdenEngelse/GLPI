@@ -18,7 +18,8 @@ use axum::{
 use serde::Serialize;
 
 use crate::glpi::{
-    agents::Agent, computers::Computer, entities::Entity, session::SessionInfo, Client,
+    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, rights::RightsBreakdown,
+    session::SessionInfo, Client,
 };
 
 pub struct AppState {
@@ -27,6 +28,11 @@ pub struct AppState {
     /// own screens. Not a secret - it is the address the user already types -
     /// unlike the credentials beside it, which never leave this process.
     pub glpi_url: String,
+
+    /// The legacy v1 client, used only for what v2.3 does not expose: who may
+    /// use which profile, on which entity, recursively or not. See
+    /// glpi::legacy for why a second API is tolerated here.
+    pub legacy: Legacy,
     /// Where the dx-built web bundle lives, if it is being served.
     pub static_dir: Option<std::path::PathBuf>,
     /// Hours without contact before an agent is called stale. 26 rather than
@@ -42,6 +48,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/entities", get(entities))
         .route("/api/computers", get(computers))
         .route("/api/session", get(session))
+        .route("/api/authorizations", get(authorizations))
+        .route("/api/rights", get(rights))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -236,4 +244,135 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
 async fn session(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let raw = state.glpi.get("session").await?;
     Ok(Json(SessionInfo::from_value(&raw)))
+}
+
+/// Every right the active profile holds, not just the two this app needs.
+///
+/// Same upstream call as /api/session - GLPI returns the whole rights map in
+/// the session blob - so this costs nothing extra against GLPI. Kept as a
+/// separate endpoint rather than folded into SessionInfo so the Status page's
+/// shape does not change: that page answers "can this app work at all", and
+/// 122 rights would bury it.
+async fn rights(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let raw = state.glpi.get("session").await?;
+    Ok(Json(RightsBreakdown::from_value(&raw)))
+}
+
+/// One authorization: a profile this account may use, on one entity.
+#[derive(Serialize)]
+struct Authorization {
+    entity: String,
+    profile: String,
+    /// "central" or "helpdesk". The rights this app needs cannot exist on a
+    /// helpdesk profile at all - the section is absent from GLPI's form.
+    interface: String,
+    /// Whether entities below this one are included. Not visible through the
+    /// v2.3 API for any account, including the caller's own.
+    is_recursive: bool,
+    /// GLPI activates exactly one profile per session, so this is the one
+    /// actually in force; the others are merely available.
+    is_active: bool,
+    right_agent: i64,
+    right_entity: i64,
+}
+
+/// Every authorization this account holds, with the two rights each profile
+/// grants.
+///
+/// The question the Status page could not previously answer: not "something
+/// is missing" but "this profile, on this entity, is the one to fix". It
+/// needs four collections that v2.3 does not expose, so it runs against v1 -
+/// see glpi::legacy.
+async fn authorizations(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    // A second handle, so the closure can own one while with_session borrows
+    // the other. Arc::clone is a refcount bump, not a copy of the client.
+    let inner = Arc::clone(&state);
+    let rows: Vec<Authorization> = state
+        .legacy
+        .with_session(|session| async move {
+            let out = collect_authorizations(&inner.legacy, &session).await;
+            (session, out)
+        })
+        .await?;
+    Ok(Json(rows))
+}
+
+async fn collect_authorizations(
+    legacy: &Legacy,
+    session: &crate::glpi::legacy::Session,
+) -> anyhow::Result<Vec<Authorization>> {
+    use anyhow::Context;
+
+    let full = legacy.get(session, "getFullSession", None).await?;
+    let me = full
+        .get("session")
+        .and_then(|s| s.get("glpiID"))
+        .and_then(|v| v.as_i64())
+        .context("getFullSession returned no glpiID")?;
+    let active_profile = full
+        .get("session")
+        .and_then(|s| s.get("glpiactiveprofile"))
+        .and_then(|p| p.get("id"))
+        .and_then(|v| v.as_i64());
+
+    // Explicit ranges throughout: v1 defaults to 0-50 and truncates silently.
+    let arr = |v: serde_json::Value| v.as_array().cloned().unwrap_or_default();
+    let links = arr(legacy.get(session, "Profile_User", Some("0-999")).await?);
+    let profiles = arr(legacy.get(session, "Profile", Some("0-999")).await?);
+    let entities = arr(legacy.get(session, "Entity", Some("0-999")).await?);
+    let rights = arr(legacy.get(session, "ProfileRight", Some("0-9999")).await?);
+
+    let num = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_i64());
+    let text = |v: &serde_json::Value, k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let right_for = |profile_id: i64, name: &str| -> i64 {
+        rights
+            .iter()
+            .find(|r| num(r, "profiles_id") == Some(profile_id) && text(r, "name") == name)
+            .and_then(|r| num(r, "rights"))
+            .unwrap_or(0)
+    };
+
+    let mut out = Vec::new();
+    for link in links.iter().filter(|l| num(l, "users_id") == Some(me)) {
+        let Some(pid) = num(link, "profiles_id") else {
+            continue;
+        };
+        let eid = num(link, "entities_id");
+
+        let profile = profiles.iter().find(|p| num(p, "id") == Some(pid));
+        let entity = entities.iter().find(|e| num(e, "id") == eid);
+
+        out.push(Authorization {
+            entity: entity
+                .map(|e| {
+                    let c = text(e, "completename");
+                    if c.is_empty() {
+                        text(e, "name")
+                    } else {
+                        c
+                    }
+                })
+                .unwrap_or_else(|| format!("entity {}", eid.unwrap_or(-1))),
+            profile: profile
+                .map(|p| text(p, "name"))
+                .unwrap_or_else(|| format!("profile {pid}")),
+            interface: profile.map(|p| text(p, "interface")).unwrap_or_default(),
+            // v1 sends 1/0, not a JSON bool.
+            is_recursive: num(link, "is_recursive").unwrap_or(0) != 0,
+            is_active: Some(pid) == active_profile,
+            right_agent: right_for(pid, "agent"),
+            right_entity: right_for(pid, "entity"),
+        });
+    }
+
+    // The profile actually in force first; it is the one a reader is looking
+    // for when something is refused.
+    out.sort_by_key(|a| std::cmp::Reverse(a.is_active));
+    Ok(out)
 }

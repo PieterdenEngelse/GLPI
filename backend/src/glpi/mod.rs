@@ -25,6 +25,8 @@ use serde::Deserialize;
 pub mod agents;
 pub mod computers;
 pub mod entities;
+pub mod legacy;
+pub mod rights;
 pub mod session;
 
 /// An OAuth2 access token with the instant it stops being valid.
