@@ -33,18 +33,22 @@ pub fn Header() -> Element {
                 }
             }
 
-            // Centre column: title and live status, truncating before it
-            // pushes the navigation off a narrow window.
-            div { class: "flex min-w-0 flex-1 items-center justify-center gap-2",
+            // Title and live status, left of the flexible gap. Allowed to
+            // truncate so a long title never pushes the navigation off a
+            // narrow window.
+            div { class: "flex min-w-0 items-center gap-2",
                 h1 { class: "truncate text-sm font-medium text-primary",
                     "GLPI inventory — which agents have stopped reporting"
                 }
                 HealthDot {}
             }
 
-            ThemeToggle {}
-
-            NavTabs {}
+            // ml-auto, not a spacer element: the navigation is pinned to the
+            // right edge and everything before it keeps its natural width.
+            div { class: "ml-auto flex shrink-0 items-center gap-2",
+                ThemeToggle {}
+                NavTabs {}
+            }
         }
     }
 }

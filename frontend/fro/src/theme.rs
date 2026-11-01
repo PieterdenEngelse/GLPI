@@ -44,14 +44,17 @@ pub fn apply(theme: &str) {
     }
 }
 
-/// Re-apply the stored choice on load.
+/// Set the theme on load: the stored choice, or dark.
 ///
-/// Only runs when something was stored: writing `data-theme="dark"` would be
-/// redundant, since no attribute already means dark.
+/// Writes `data-theme` unconditionally rather than leaning on "no attribute
+/// means dark". That default is real - index.css declares `dark --default` -
+/// but it depends on a top-level `:root:not([data-theme])` rule outranking a
+/// later `:where(:root)` rule that daisyUI also emits for the light theme.
+/// Correct, and far too subtle to rest a visible behaviour on: an explicit
+/// `[data-theme=dark]` attribute wins on its own terms and cannot be
+/// reordered out of effect by a future daisyUI release.
 pub fn restore() {
-    if let Some(t) = stored() {
-        apply(&t);
-    }
+    apply(stored().as_deref().unwrap_or(DARK));
 }
 
 /// A signal seeded from storage, for components that need to show which theme
