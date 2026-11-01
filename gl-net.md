@@ -116,13 +116,17 @@ now — listeners, certificate, agent config, observed timings — see
 `gl-cl-serv.md`.
 
 ```nix
-services.glpi.lan.enable = true;          # HTTPS on 0.0.0.0:443 + firewall
+services.glpi.lan.enable = true;          # HTTPS + firewall
 services.glpi-agent = {                   # this box inventories itself
   enable = true;
-  server = "https://nixos.local/";
-  caCertFile = "/var/lib/glpi-tls/cert.pem";
+  server = "https://${config.services.glpi.hostname}/";
+  caCertFile = "${config.services.glpi.lan.tlsDir}/cert.pem";
 };
 ```
+
+Written against the options rather than against literal values, because that
+is what `configuration.nix` actually contains — a hostname or path copied in
+here would be a second place to update and a second place to be wrong.
 
 Loopback HTTP on 8080 is **kept** — one vhost, two listeners, so the routing
 rules cannot drift between a local and a LAN copy.
@@ -135,10 +139,9 @@ for a certificate, fatal for a private key. So a oneshot unit
 `/var/lib/glpi-tls` on first boot and leaves them alone afterwards —
 regenerating would invalidate the copy already distributed to clients.
 
-Self-signed, 10 years, `subjectAltName=DNS:nixos.local,DNS:nixos`. **SAN is not
-optional**: browsers and the agent's OpenSSL both ignore CN entirely.
-Verified by running the exact command: `subject=CN=nixos.local`,
-`notAfter=Oct 28 06:46:41 2036 GMT`, SAN as intended.
+**SAN is not optional**: browsers and the agent's OpenSSL both ignore CN
+entirely, so a certificate carrying only a CN fails verification no matter how
+correct the name is. Subject, SAN and expiry as issued: `gl-cl-serv.md`.
 
 ### Agents verify properly — do not use `--no-ssl-check`
 
@@ -175,12 +178,11 @@ is a separate switch:
 services.avahi.publish = { enable = true; addresses = true; workstation = true; };
 ```
 
-Now resolves: `192.168.2.3  nixos.local`. Since the cert is bound to the name,
-a client that cannot resolve it needs a hosts entry — or the IP, which is
-**not in the SAN**, so that means reissuing.
-
-`192.168.2.3` is a **DHCP lease** (NetworkManager, no static config) — hence
-choosing a hostname over an IP. Pin it in the router anyway.
+The certificate is bound to the name, so a client that cannot resolve it needs
+a hosts entry — or the IP, which is **not in the SAN**, and using it means
+reissuing. The address is a DHCP lease (NetworkManager, no static config),
+which is precisely why the name was chosen over it; pin it in the router
+anyway. Current address: `gl-cl-serv.md`.
 
 ### Native inventory ships DISABLED
 
@@ -200,9 +202,11 @@ Both endpoints are **routes through `public/index.php`**, not files — see trap
 ### Agent runs as root, with tools on PATH
 
 An inventory agent reads DMI/SMBIOS tables, block device serials and the
-package database. Unprivileged it starts, succeeds, and reports a near-empty
-machine. `dmidecode`, `pciutils`, `usbutils`, `iproute2`, `util-linux` are on
-the unit's `path` — missing tools yield missing fields, not an error.
+package database. Unprivileged it starts, **succeeds, and reports a near-empty
+machine** — the failure mode is silent, which is why this is worth stating at
+all. The same is true of its helper tools: a missing one yields missing fields,
+not an error, so they are put on the unit's `path` deliberately. Which tools,
+and the unit as it currently runs: `gl-cl-serv.md`.
 
 ### What "inventory" actually collects — and two categories turned off
 
@@ -362,6 +366,12 @@ The banner only renders for users with `config` UPDATE right
 ---
 
 ## Verification done
+
+A record of what was executed **while building this**, dated to that work —
+not a statement about the system today. Values here are the ones observed
+then, and are deliberately not updated: the point of the section is
+evidence that each step was actually run rather than assumed. For current
+state, `gl-cl-serv.md`.
 
 | check | result |
 |---|---|
