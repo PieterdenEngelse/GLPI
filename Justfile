@@ -58,6 +58,41 @@ run:
 probe path="Inventory/Agent":
     cargo run -p glpi-cli -- {{path}}
 
+# Regenerate the right -> (tab, group) map the Rights page groups by.
+#
+# Needs the glpi user, so it is the one recipe here you cannot run as yourself:
+# GLPI's getRightsForForm() reaches $DB->listFields(), so it needs the full
+# bootstrap, which reads config/ - glpi-owned. See the script's header for why
+# parsing the PHP instead does not work.
+#
+# Re-run after a GLPI upgrade. If you forget, the Rights page says so rather
+# than mis-filing anything: rights the map does not cover are listed under
+# "Not on the profile form", and map entries GLPI no longer has are flagged
+# stale. An unchanged GLPI produces no diff.
+#
+# Both store paths are read out of the glpi-console wrapper rather than pinned,
+# so this keeps working across GLPI rebuilds.
+
+# Regenerate the Rights page grouping. Needs the glpi user.
+right-taxonomy:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src=$(grep -oE '/nix/store/[a-z0-9]+-glpi-[0-9.]+' /run/current-system/sw/bin/glpi-console | head -1)
+    php=$(grep -oE '/nix/store/[a-z0-9]+-php-with-extensions-[0-9.]+/bin/php' /run/current-system/sw/bin/glpi-console | head -1)
+    [ -n "$src" ] && [ -n "$php" ] || { echo "could not locate GLPI or php from the glpi-console wrapper" >&2; exit 1; }
+    out=backend/src/glpi/right_taxonomy.json
+    # Via a temp file, with the trap armed BEFORE anything can fail: a failed
+    # dump must neither truncate the committed map nor leave a stale .tmp that
+    # the next run would mistake for output.
+    trap 'rm -f "$out.tmp"' EXIT
+    # display_errors=stderr matters: PHP writes fatals to STDOUT by default, and
+    # stdout here is the output file - so an error would land silently inside
+    # right_taxonomy.json.tmp instead of on the terminal.
+    sudo -u glpi env GLPI_SRC="$src" GLPI_CONFIG_DIR=/var/lib/glpi/config GLPI_VAR_DIR=/var/lib/glpi/files GLPI_MARKETPLACE_DIR=/var/lib/glpi/marketplace "$php" -d display_errors=stderr -d error_reporting=E_ALL scripts/dump-glpi-right-taxonomy.php > "$out.tmp"
+    [ -s "$out.tmp" ] || { echo "dump produced nothing" >&2; exit 1; }
+    mv "$out.tmp" "$out"
+    echo "wrote $out ($(grep -c '"right"' "$out") entries)"
+
 fmt:
     cargo fmt --all
 

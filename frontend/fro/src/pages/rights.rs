@@ -1,16 +1,18 @@
-//! Every right the account this app signs in with actually holds.
+//! Every right of every profile in GLPI, decoded.
 //!
 //! The Status page answers "can this dashboard work at all" with the two
-//! rights it needs. This one answers the different question an administrator
-//! asks when setting that account up or auditing it afterwards: what else did
-//! the profile grant, and does it grant more than a read-only dashboard has
-//! any business holding?
+//! rights it needs. This one answers the questions an administrator asks when
+//! setting that account up or auditing it afterwards: what does each profile
+//! actually grant, which profile is this app running under, and does that
+//! profile grant more than a read-only dashboard has any business holding?
 //!
-//! Neither question is answerable from GLPI's own screens without opening a
-//! profile form and reading several tabs of checkboxes, and GLPI's API does
-//! not expose rights per profile at all - only for the session's own active
-//! profile. See backend/src/glpi/rights.rs for that constraint.
-use crate::api::{self, RightEntry, RightsBreakdown};
+//! None of it is visible from GLPI's own screens without opening a profile
+//! form and reading several tabs of checkboxes, one profile at a time.
+//!
+//! The data comes from v1's ProfileRight collection, not v2.3 - see
+//! backend/src/glpi/rights.rs for why v2.3 cannot answer this, and why the
+//! obvious v2.3 workaround silently answers it wrongly.
+use crate::api::{self, CallStatus, ProfileRights, RightEntry, RightsReport};
 use crate::components::{InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
 
@@ -20,19 +22,19 @@ pub fn Rights() -> Element {
 
     rsx! {
         match &*rights.read_unchecked() {
-            // An unreachable backend must never render as "this account has no
-            // rights" - on a permissions page that reads as a catastrophic
-            // misconfiguration rather than as a failure to look.
+            // An unreachable backend must never render as "no rights" - on a
+            // permissions page that reads as a catastrophic misconfiguration
+            // rather than as a failure to look.
             Some(Err(e)) => rsx! {
                 div { class: "alert alert-error",
                     div {
-                        div { class: "font-semibold", "Could not read the profile's rights." }
+                        div { class: "font-semibold", "Could not read the profiles' rights." }
                         pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
                     }
                 }
             },
 
-            Some(Ok(b)) => rsx! { Breakdown { breakdown: b.clone() } },
+            Some(Ok(r)) => rsx! { Report { report: r.clone() } },
 
             None => rsx! {
                 div { class: "flex items-center gap-2 text-base-content/60",
@@ -45,19 +47,130 @@ pub fn Rights() -> Element {
 }
 
 #[component]
-fn Breakdown(breakdown: RightsBreakdown) -> Element {
-    let entries = breakdown.entries.clone();
+fn Report(report: RightsReport) -> Element {
+    // Open on the profile this app is actually using. That is the one a reader
+    // arriving from a 403 needs, and it makes the page useful without a click.
+    let initial = report
+        .active_profile_id
+        .or_else(|| report.profiles.first().map(|p| p.id));
+    let mut selected = use_signal(move || initial);
 
+    let profiles = report.profiles.clone();
+
+    if profiles.is_empty() {
+        return rsx! {
+            div { class: "alert alert-warning",
+                div {
+                    div { class: "font-semibold", "GLPI returned no profiles." }
+                    div { class: "text-sm",
+                        "Nothing to show. The account this app signs in with needs read access "
+                        "to profiles for this page to work; every other page is unaffected."
+                    }
+                }
+            }
+        };
+    }
+
+    let current = profiles
+        .iter()
+        .find(|p| Some(p.id) == selected())
+        .cloned()
+        .unwrap_or_else(|| profiles[0].clone());
+
+    rsx! {
+        CallPanel { calls: report.calls.clone() }
+
+        // The profile picker doubles as the overview: each button carries its
+        // own granted count, so the comparison an auditor wants - which
+        // profiles are permissive - is readable without selecting each one.
+        Panel {
+            title: "Profiles".to_string(),
+            subtitle: format!("{} in this GLPI", profiles.len()),
+            info: "Every profile GLPI holds, not only the ones this app's account may use. \
+                   Select one to see its rights in full."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why every profile is listed",
+                    "A permissions question is rarely about the profile you are already in. It \
+                     is usually either comparing one against another - this profile works and \
+                     that one does not - or checking that a profile nobody is watching has not \
+                     been given more than it needs.",
+                ),
+                InfoSection::new(
+                    "The active one",
+                    "Marked below. GLPI activates exactly one profile per session, so that is \
+                     the only one in force for this app; an account authorised for others gains \
+                     nothing from them until one becomes its default. The Status page shows the \
+                     authorisations side of this.",
+                ),
+                InfoSection::new(
+                    "Where this comes from",
+                    "GLPI's older API. Its current one cannot report the rights of any profile \
+                     except the one the request is already running as, and the header that \
+                     looks like it should change that is ignored for any profile the account is \
+                     not authorised for - returning the account's own rights, successfully, \
+                     under the other profile's name. Reading the rights directly avoids that \
+                     trap entirely.",
+                ),
+            ],
+            info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
+
+            div { class: "flex flex-wrap gap-2",
+                for p in profiles.iter() {
+                    button {
+                        key: "{p.id}",
+                        class: if Some(p.id) == selected() {
+                            "btn btn-sm btn-primary"
+                        } else {
+                            "btn btn-sm btn-ghost border border-base-300"
+                        },
+                        onclick: {
+                            let id = p.id;
+                            move |_| selected.set(Some(id))
+                        },
+                        span { "{p.label()}" }
+                        span { class: "badge badge-sm", "{p.granted()}" }
+                        if p.writes() > 0 {
+                            span { class: "badge badge-warning badge-sm", "w" }
+                        }
+                        if p.is_active {
+                            span { class: "badge badge-success badge-sm", "active" }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Keyed on the profile id, so selecting another profile rebuilds this
+        // subtree rather than reusing it. That resets the filter signals in
+        // the table below as a consequence of identity: a filter left over
+        // from the previous profile would otherwise read as that profile
+        // having fewer rights than it does.
+        div { class: "mt-5",
+            ProfilePanel {
+                key: "{current.id}",
+                profile: current,
+                grouped: report.taxonomy_rights > 0,
+                form_only: report.form_only_rights.clone(),
+            }
+        }
+    }
+}
+
+#[component]
+fn ProfilePanel(profile: ProfileRights, grouped: bool, form_only: Vec<String>) -> Element {
+    let entries = profile.entries.clone();
     let total = entries.len();
     let granted: Vec<&RightEntry> = entries.iter().filter(|e| e.granted()).collect();
     let writes = granted.iter().filter(|e| e.writes).count();
     let read_only = granted.len() - writes;
     let module_defined = granted.iter().filter(|e| e.unnamed_bits != 0).count();
 
-    let profile = breakdown
-        .profile_name
-        .clone()
-        .unwrap_or_else(|| "unknown".into());
+    // Only worth alarming about for the profile this app actually runs as. A
+    // Super-Admin profile that can write is not a finding, it is the point of
+    // it; the service account being able to is.
+    let alarm_writes = profile.is_active && writes > 0;
 
     rsx! {
         div { class: "stats stats-vertical sm:stats-horizontal mb-5 w-full border border-base-300 bg-base-100 shadow-sm",
@@ -68,24 +181,32 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
                 desc: "rights this profile holds".to_string(),
                 body: "GLPI divides permission into one right per area of the application - \
                        computers, tickets, agents, and so on. This counts how many of them \
-                       the profile behind this session has been given at least some access \
-                       to."
+                       this profile has been given at least some access to."
                     .to_string(),
                 sections: vec![
                     InfoSection::new(
                         "Why the total matters too",
-                        "The denominator is every right GLPI knows about, so the rights this \
-                         profile does NOT have are listed below as well, with a value of zero. \
-                         That is deliberate: when GLPI refuses a request it never names the \
-                         missing permission, so being able to see that a right exists and is \
-                         not granted is usually the answer.",
+                        "The denominator is every right that exists anywhere in this GLPI, so \
+                         the ones this profile does NOT have are listed below as well. That is \
+                         deliberate: when GLPI refuses a request it never names the missing \
+                         permission, so seeing that a right exists and is not granted is \
+                         usually the answer.",
                     ),
                     InfoSection::new(
-                        "One profile, not the account",
-                        "An account can be authorised for several profiles, but GLPI activates \
-                         exactly one per session - the account's default - so this is the set \
-                         that is actually in force. Holding another profile adds nothing until \
-                         it becomes the active one.",
+                        "The same total for every profile",
+                        "GLPI does not record every right against every profile - it keeps only \
+                         the entries that exist, and a few rights are recorded on some profiles \
+                         and not others. Counting each profile against its own entries would \
+                         give them different denominators and make two profiles look comparable \
+                         when they are not, so every profile here is counted against the same \
+                         full set.",
+                    ),
+                    InfoSection::new(
+                        "“No entry” in the table",
+                        "Means GLPI holds no setting for that right on this profile, as opposed \
+                         to holding one that is switched off. The effect is identical - GLPI \
+                         denies both - but only one of them is a decision somebody made, so the \
+                         table does not call the other one “not granted”.",
                     ),
                 ],
                 links: vec![InfoLink::new("Profiles", "front/profile.php")],
@@ -95,7 +216,7 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
                 title: "Read-only".to_string(),
                 value: read_only.to_string(),
                 desc: "look, but cannot change".to_string(),
-                body: "Rights that grant only reading. This is what a dashboard needs: every \
+                body: "Rights that grant only reading. This is all a dashboard needs: every \
                        page in this app is a view of something GLPI already holds, and it \
                        never creates, changes or deletes anything."
                     .to_string(),
@@ -104,7 +225,7 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
                         "Reading notes counts as reading",
                         "Several rights here are a combination like READ plus READNOTE - \
                          permission to see an item and to see the free-text notes attached to \
-                         it. Neither one changes anything, so both are counted as read-only.",
+                         it. Neither changes anything, so both count as read-only.",
                     ),
                 ],
             }
@@ -112,27 +233,26 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
             StatTile {
                 title: "Write-capable".to_string(),
                 value: writes.to_string(),
-                alarm: writes > 0,
-                desc: "more than this app needs".to_string(),
+                alarm: alarm_writes,
+                desc: if profile.is_active { "more than this app needs".to_string() } else { "can change things".to_string() },
                 body: "Rights that include permission to change something - create, update, \
-                       delete, purge, or unlock a field. This app never writes to GLPI, so \
-                       anything counted here is access the dashboard does not use."
+                       delete, purge, or unlock a field."
                     .to_string(),
                 sections: vec![
                     InfoSection::new(
-                        "Why it is worth flagging",
-                        "Not a fault in itself - the profile may be shared with a person who \
-                         does need to change those things. But it is worth knowing: the \
-                         credentials this app holds can do everything the profile allows, and \
-                         they sit in a file on the machine running it. A profile created only \
-                         for this dashboard should have none of these.",
+                        "When this is worth acting on",
+                        "For most profiles it is simply what they are for - an administrator \
+                         profile that cannot write would be useless. It matters for the profile \
+                         marked active, because that is the one this dashboard signs in with, \
+                         and this app never writes to GLPI. Any write access there is privilege \
+                         held by credentials sitting in a file on the machine running it.",
                     ),
                     InfoSection::new(
                         "What counts as a write",
                         "UPDATE, CREATE, DELETE and PURGE, plus UPDATENOTE for the notes on an \
                          item, UPDATE_ASSIGNED and UPDATE_OWNED for items assigned to or owned \
                          by the user, and UNLOCK - which clears the lock on a field imported by \
-                         inventory so it can be edited by hand. That last one is not an obvious \
+                         inventory so it can be edited by hand. That last is not an obvious \
                          write, but it does change what GLPI stores.",
                     ),
                 ],
@@ -158,20 +278,20 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
                     InfoSection::new(
                         "Why they are shown as a number",
                         "GLPI resolves those names from the profile form's own definition, which \
-                         is not available through the API in any form. The alternative to showing \
-                         the leftover as a number would be to drop it silently, which would \
-                         understate what the account can do - the one direction a permissions \
+                         is not available through either API. The alternative to showing the \
+                         leftover as a number would be to drop it silently, which would \
+                         understate what the profile can do - the one direction a permissions \
                          screen must not be wrong in.",
                     ),
                 ],
             }
         }
 
-        if writes > 0 {
+        if alarm_writes {
             div { class: "alert alert-warning mb-5",
                 div {
                     div { class: "font-semibold",
-                        "This profile can change things in GLPI."
+                        "The profile this app runs as can change things in GLPI."
                     }
                     div { class: "text-sm",
                         "{writes} of the rights below include write access, and this dashboard "
@@ -183,15 +303,27 @@ fn Breakdown(breakdown: RightsBreakdown) -> Element {
             }
         }
 
-        RightsTable { entries, profile }
+        // Keyed on the profile, so selecting another one rebuilds this subtree
+        // rather than reusing it. That resets the filter signals inside as a
+        // consequence of identity: a filter left over from the previous
+        // profile would otherwise read as that profile having fewer rights.
+        RightsTable { entries, profile, grouped, form_only }
     }
 }
 
 #[component]
-fn RightsTable(entries: Vec<RightEntry>, profile: String) -> Element {
-    // A plain text filter and one toggle, because 122 rows sorted by name is
-    // not something anyone reads top to bottom - they arrive knowing which
-    // right they are looking for, usually from a 403 that would not say.
+fn RightsTable(
+    entries: Vec<RightEntry>,
+    profile: ProfileRights,
+    grouped: bool,
+    form_only: Vec<String>,
+) -> Element {
+    // A plain text filter and one toggle, because a hundred rows sorted by
+    // name is not something anyone reads top to bottom - they arrive knowing
+    // which right they are looking for, usually from a 403 that would not say.
+    //
+    // These start empty on every profile: ProfilePanel is keyed by profile id,
+    // so switching profiles rebuilds this component rather than reusing it.
     let mut query = use_signal(String::new);
     let mut granted_only = use_signal(|| false);
 
@@ -203,18 +335,28 @@ fn RightsTable(entries: Vec<RightEntry>, profile: String) -> Element {
         .cloned()
         .collect();
 
+    let interface = profile
+        .interface
+        .clone()
+        .unwrap_or_else(|| "unknown".into());
+
     rsx! {
         Panel {
-            title: "Rights of profile “{profile}”".to_string(),
-            subtitle: format!("{} of {} shown, by name", visible.len(), entries.len()),
-            info: "Every right GLPI listed for this session's active profile, granted or not."
-                .to_string(),
+            title: format!("Rights of “{}”", profile.label()),
+            subtitle: format!(
+                "{} of {} shown · {} interface{}",
+                visible.len(),
+                entries.len(),
+                interface,
+                if profile.is_default { " · GLPI's default profile" } else { "" },
+            ),
+            info: "Every right GLPI records for this profile, granted or not.".to_string(),
             info_sections: vec![
                 InfoSection::new(
                     "The columns",
                     "Right is GLPI's own internal name for it, left exactly as GLPI spells it \
                      so it can be searched for in GLPI's source or matched against a profile \
-                     form. Value is the raw number GLPI returned. Permissions is that number \
+                     form. Value is the raw number GLPI stores. Permissions is that number \
                      decoded into the individual permissions it contains.",
                 ),
                 InfoSection::new(
@@ -227,11 +369,17 @@ fn RightsTable(entries: Vec<RightEntry>, profile: String) -> Element {
                      one to trust.",
                 ),
                 InfoSection::new(
+                    "The interface matters",
+                    "A helpdesk profile cannot hold the rights this app needs at all - the \
+                     section is absent from GLPI's form rather than merely unticked. If a \
+                     profile looks inexplicably empty of the permissions you expect, check \
+                     this line before hunting for the checkbox.",
+                ),
+                InfoSection::new(
                     "Where to change any of this",
-                    "In GLPI under Administration, then Profiles, on the profile named in this \
-                     panel's title. Changing a right there affects every account that uses the \
-                     profile, so a profile dedicated to this app is safer to edit than a shared \
-                     one.",
+                    "In GLPI under Administration, then Profiles, on the profile named above. \
+                     Changing a right there affects every account that uses the profile, so a \
+                     profile dedicated to this app is safer to edit than a shared one.",
                 ),
             ],
             info_links: vec![
@@ -259,12 +407,12 @@ fn RightsTable(entries: Vec<RightEntry>, profile: String) -> Element {
             }
 
             if visible.is_empty() {
-                // Distinct from the error state above on purpose: this is an
-                // empty filter result, not a failure to read anything.
+                // Distinct from the error state on purpose: this is an empty
+                // filter result or a genuinely empty profile, not a failure to
+                // read anything.
                 div { class: "py-6 text-center text-sm text-base-content/60",
                     if entries.is_empty() {
-                        "GLPI returned no rights for this session. That is what an API older "
-                        "than version 2.2 looks like - it does not include them at all."
+                        "GLPI records no rights for this profile."
                     } else {
                         "No right matches that filter."
                     }
@@ -279,45 +427,293 @@ fn RightsTable(entries: Vec<RightEntry>, profile: String) -> Element {
                                 th { "Permissions" }
                             }
                         }
-                        tbody {
-                            for e in visible {
-                                tr {
-                                    key: "{e.name}",
-                                    class: if e.granted() { "" } else { "opacity-50" },
-
-                                    td { class: "font-mono text-xs whitespace-nowrap", "{e.name}" }
-                                    td { class: "font-mono text-xs tabular-nums", "{e.value}" }
-                                    td {
-                                        if e.granted() {
-                                            div { class: "flex flex-wrap items-center gap-1",
-                                                for bit in e.bits.iter() {
-                                                    span {
-                                                        key: "{bit}",
-                                                        class: if bit.starts_with("READ") {
-                                                            "badge badge-ghost badge-sm font-mono"
-                                                        } else {
-                                                            "badge badge-warning badge-sm font-mono"
-                                                        },
-                                                        "{bit}"
-                                                    }
-                                                }
-                                                if e.unnamed_bits != 0 {
-                                                    // Shown as the leftover value, not as a
-                                                    // guess at its name.
-                                                    span {
-                                                        class: "badge badge-outline badge-sm font-mono",
-                                                        title: "Bits beyond GLPI's twelve standard permissions. Real access, defined by one part of GLPI for its own use, and not resolvable to a name through the API.",
-                                                        "+{e.unnamed_bits}"
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            span { class: "text-xs text-base-content/50", "not granted" }
+                        // One tbody per heading. With no taxonomy committed
+                        // there is a single unheaded body, which is the flat
+                        // list this page had before grouping existed.
+                        for (heading, rows) in group_rows(&visible, grouped) {
+                            tbody { key: "{heading.clone().unwrap_or_default()}",
+                                if let Some(h) = heading {
+                                    tr {
+                                        th {
+                                            class: "bg-base-200 text-xs font-semibold",
+                                            colspan: "3",
+                                            "{h}"
                                         }
                                     }
                                 }
+                                for e in rows {
+                                    RightRow { key: "{e.name}", entry: e }
+                                }
                             }
                         }
+                    }
+                }
+
+                if grouped && !form_only.is_empty() {
+                    // Deliberately a quiet note and not a warning. GLPI ships
+                    // rights that appear on the profile form with no stored
+                    // value anywhere - defaultfilter is one, seeded nowhere -
+                    // so this list is normally non-empty and alarming about it
+                    // would train the reader to ignore the alarm.
+                    div { class: "mt-4 text-xs text-base-content/60",
+                        "On GLPI's profile form but not recorded against any profile: "
+                        span { class: "font-mono", "{form_only.join(\", \")}" }
+                        ". An unrecorded right is denied, so nobody holds these."
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What this app asks GLPI for, and whether the active profile allows it.
+///
+/// First on the page because it is the actionable half. The profile tables
+/// below answer "what does this profile grant"; this answers "which of this
+/// dashboard's own requests will be refused, and because of which right" -
+/// the question GLPI's 403 refuses to answer.
+#[component]
+fn CallPanel(calls: Vec<CallStatus>) -> Element {
+    if calls.is_empty() {
+        // Not an error. The backend declines to judge the calls when it cannot
+        // tell which profile is active, rather than judging them against an
+        // arbitrary one.
+        return rsx! {
+            Panel {
+                title: "What this app asks GLPI for".to_string(),
+                info: "Cannot be shown without knowing which profile is active.".to_string(),
+                div { class: "py-4 text-sm text-base-content/60",
+                    "GLPI did not report an active profile for this session, so there is "
+                    "nothing to judge these requests against. The Status page shows the "
+                    "session this app is using."
+                }
+            }
+        };
+    }
+
+    let blocked = calls.iter().filter(|c| !c.satisfied).count();
+
+    rsx! {
+        Panel {
+            title: "What this app asks GLPI for".to_string(),
+            subtitle: if blocked == 0 {
+                format!("{} requests, all permitted", calls.len())
+            } else {
+                format!("{} requests, {blocked} blocked", calls.len())
+            },
+            info: "Every request this dashboard makes to GLPI, and whether the profile it \
+                   signs in with is allowed to make it."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why this is the first thing here",
+                    "When GLPI refuses a request it answers with one sentence - you do not \
+                     have permission to perform this action - and never says which permission \
+                     was missing. This table is that missing sentence: it names the request, \
+                     the page that breaks without it, and the exact right to grant.",
+                ),
+                InfoSection::new(
+                    "Permitted is not the same as working",
+                    "A right is necessary, never sufficient. GLPI filters results by entity \
+                     after it has checked permission, so a request can be fully permitted and \
+                     still come back empty because the account cannot see that part of the \
+                     estate. A green row here rules out permissions as the cause; it does not \
+                     promise data.",
+                ),
+                InfoSection::new(
+                    "Two APIs",
+                    "Most of the app uses GLPI's current API. A few things it cannot answer at \
+                     all - who may use which profile, and the rights on this page - come from \
+                     the older one. Both sign in as the same account and obey the same \
+                     permissions, so the distinction matters only when reading an error.",
+                ),
+            ],
+            info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Request" }
+                            th { "API" }
+                            th { "Needs" }
+                            th { "What breaks without it" }
+                        }
+                    }
+                    tbody {
+                        for c in calls.iter() {
+                            tr { key: "{c.api}-{c.path}",
+                                td { class: "font-mono text-xs whitespace-nowrap",
+                                    if c.satisfied {
+                                        span { class: "badge badge-success badge-sm mr-2", "ok" }
+                                    } else {
+                                        span { class: "badge badge-error badge-sm mr-2", "blocked" }
+                                    }
+                                    "{c.path}"
+                                }
+                                td {
+                                    span { class: "badge badge-ghost badge-sm font-mono", "{c.api}" }
+                                }
+                                td {
+                                    if c.rights.is_empty() {
+                                        // Needs nothing, which is a real answer
+                                        // and not a gap in the table.
+                                        span { class: "text-xs text-base-content/50", "no right" }
+                                    } else {
+                                        div { class: "flex flex-wrap items-center gap-1",
+                                            for r in c.rights.iter() {
+                                                span {
+                                                    key: "{r.name}",
+                                                    class: if r.satisfied {
+                                                        "badge badge-ghost badge-sm font-mono"
+                                                    } else {
+                                                        "badge badge-error badge-sm font-mono"
+                                                    },
+                                                    title: match r.value {
+                                                        Some(v) => format!("{} is {v} on this profile", r.name),
+                                                        None => format!("GLPI records no entry for {} on this profile", r.name),
+                                                    },
+                                                    "{r.name}"
+                                                }
+                                            }
+                                            // Spelled out, because two badges
+                                            // side by side read as a choice.
+                                            if c.rights.len() > 1 {
+                                                span { class: "text-xs text-base-content/50", "(both required)" }
+                                            }
+                                        }
+                                    }
+                                }
+                                td { class: "text-xs text-base-content/70", "{c.used_for}" }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if blocked > 0 {
+                div { class: "alert alert-error mt-4",
+                    div {
+                        div { class: "font-semibold", "{blocked} of this app's requests will be refused." }
+                        div { class: "text-sm",
+                            "Grant the rights marked in red to the active profile, in GLPI under "
+                            "Administration → Profiles. Read is enough for every one of them - "
+                            "this app never writes to GLPI."
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Split rights into the headed blocks the table renders.
+///
+/// Returns `(heading, rows)` pairs: tab then group from GLPI's own profile
+/// form, ordered by tab so two profiles read the same way down the page, with
+/// the unplaceable rights last under their own heading.
+///
+/// `grouped` false yields exactly one unheaded block - the flat alphabetical
+/// list. That is the state before `just right-taxonomy` has ever run, and it
+/// is a deliberate fallback rather than an error: one enormous "ungrouped"
+/// heading would be strictly worse than no headings at all.
+fn group_rows(entries: &[RightEntry], grouped: bool) -> Vec<(Option<String>, Vec<RightEntry>)> {
+    if !grouped {
+        return vec![(None, entries.to_vec())];
+    }
+
+    // BTreeMap so the order is the tab/group name order and therefore stable
+    // across profiles and across reloads.
+    let mut placed: std::collections::BTreeMap<(String, String), Vec<RightEntry>> =
+        std::collections::BTreeMap::new();
+    let mut unplaced: Vec<RightEntry> = Vec::new();
+
+    for e in entries {
+        match (e.tab.clone(), e.group.clone()) {
+            (Some(tab), Some(group)) => placed.entry((tab, group)).or_default().push(e.clone()),
+            // Half a heading cannot be rendered as one. The backend asserts
+            // this never happens; treating it as unplaced is the safe read.
+            _ => unplaced.push(e.clone()),
+        }
+    }
+
+    let mut out: Vec<(Option<String>, Vec<RightEntry>)> = placed
+        .into_iter()
+        .map(|((tab, group), rows)| {
+            // "general" is GLPI's filler name for a tab's only block, so it
+            // adds nothing to a heading that already names the tab.
+            let heading = if group == "general" {
+                tab
+            } else {
+                format!("{tab} · {group}")
+            };
+            (Some(heading), rows)
+        })
+        .collect();
+
+    if !unplaced.is_empty() {
+        // Last, and named for what it means rather than for the gap in our
+        // map: most of these are rights GLPI's own form never offers.
+        out.push((Some("Not on the profile form".to_string()), unplaced));
+    }
+    out
+}
+
+/// One right. Extracted so the grouped and flat paths render identical rows
+/// rather than two copies of this markup drifting apart.
+#[component]
+fn RightRow(entry: RightEntry) -> Element {
+    let e = entry;
+    rsx! {
+        tr { class: if e.granted() { "" } else { "opacity-50" },
+            td { class: "font-mono text-xs whitespace-nowrap", "{e.name}" }
+            td { class: "font-mono text-xs tabular-nums", "{e.value}" }
+            td {
+                if e.granted() {
+                    div { class: "flex flex-wrap items-center gap-1",
+                        for bit in e.bits.iter() {
+                            span {
+                                key: "{bit.name}",
+                                // Amber marks the ability to CHANGE something,
+                                // not the presence of a permission: reading is
+                                // the baseline this app itself runs on, and
+                                // colouring that too would leave every badge
+                                // on a hundred-row table coloured and the
+                                // colour carrying nothing.
+                                //
+                                // The classification is the backend's, from the
+                                // same mask that decides the write-capable
+                                // count, so a badge cannot contradict the tile
+                                // above it.
+                                class: if bit.writes {
+                                    "badge badge-warning badge-sm font-mono"
+                                } else {
+                                    "badge badge-ghost badge-sm font-mono"
+                                },
+                                "{bit.name}"
+                            }
+                        }
+                        if e.unnamed_bits != 0 {
+                            // Shown as the leftover value, not as a guess at
+                            // its name.
+                            span {
+                                class: "badge badge-outline badge-sm font-mono",
+                                title: "Bits beyond GLPI's twelve standard permissions. Real access, defined by one part of GLPI for its own use, and not resolvable to a name through either API.",
+                                "+{e.unnamed_bits}"
+                            }
+                        }
+                    }
+                } else if e.recorded {
+                    span { class: "text-xs text-base-content/50", "not granted" }
+                } else {
+                    // No row at all, rather than a row holding zero. GLPI
+                    // denies both identically, so this is not a worse state -
+                    // just a different one, and saying "not granted" would
+                    // imply a setting someone chose.
+                    span {
+                        class: "text-xs text-base-content/40 italic",
+                        title: "GLPI stores no row for this right on this profile. It is denied, exactly as a stored zero would be, but it was never set either way here.",
+                        "no entry"
                     }
                 }
             }

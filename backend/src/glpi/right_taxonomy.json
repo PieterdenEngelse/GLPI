@@ -1,0 +1,751 @@
+[
+    {
+        "right": "agent",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "Agents"
+    },
+    {
+        "right": "appliance",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Appliances"
+    },
+    {
+        "right": "bookmark_public",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Public Saved Searches"
+    },
+    {
+        "right": "budget",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Budgets"
+    },
+    {
+        "right": "cable_management",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Cables"
+    },
+    {
+        "right": "calendar",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Calendars"
+    },
+    {
+        "right": "cartridge",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Cartridges"
+    },
+    {
+        "right": "certificate",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Certificates"
+    },
+    {
+        "right": "change",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "changes",
+        "label": "Changes"
+    },
+    {
+        "right": "changevalidation",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "changes",
+        "label": "Change approvals"
+    },
+    {
+        "right": "cluster",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Clusters"
+    },
+    {
+        "right": "computer",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Computers"
+    },
+    {
+        "right": "config",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Setup"
+    },
+    {
+        "right": "consumable",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Consumables"
+    },
+    {
+        "right": "contact_enterprise",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Contacts / Suppliers"
+    },
+    {
+        "right": "contract",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Contracts"
+    },
+    {
+        "right": "dashboard",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "All dashboards"
+    },
+    {
+        "right": "database",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Database Instances"
+    },
+    {
+        "right": "datacenter",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Datacenters"
+    },
+    {
+        "right": "defaultfilter",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Default filters"
+    },
+    {
+        "right": "device",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Components"
+    },
+    {
+        "right": "devicesimcard_pinpuk",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Simcard PIN/PUK"
+    },
+    {
+        "right": "document",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Documents"
+    },
+    {
+        "right": "domain",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Domains"
+    },
+    {
+        "right": "dropdown",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Global Dropdowns"
+    },
+    {
+        "right": "entity",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Entities"
+    },
+    {
+        "right": "externalevent",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "planning",
+        "label": "External Events"
+    },
+    {
+        "right": "followup",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "followups_tasks",
+        "label": "Followups"
+    },
+    {
+        "right": "followup",
+        "interface": "helpdesk",
+        "tab": "tracking",
+        "group": "general",
+        "label": "Followups"
+    },
+    {
+        "right": "form",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Forms"
+    },
+    {
+        "right": "group",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Groups"
+    },
+    {
+        "right": "infocom",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Financial & Administrative Information"
+    },
+    {
+        "right": "internet",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Internet"
+    },
+    {
+        "right": "inventory",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "Inventory"
+    },
+    {
+        "right": "itilcategory",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "ITIL Categories"
+    },
+    {
+        "right": "itilfollowuptemplate",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Followup Templates"
+    },
+    {
+        "right": "itiltemplate",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "itilobjects",
+        "label": "Templates"
+    },
+    {
+        "right": "itilvalidationtemplate",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Approval templates"
+    },
+    {
+        "right": "knowbase",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Knowledge Base"
+    },
+    {
+        "right": "knowbase",
+        "interface": "helpdesk",
+        "tab": "tools",
+        "group": "general",
+        "label": "Knowledge Base"
+    },
+    {
+        "right": "knowbasecategory",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Knowledgebase Categories"
+    },
+    {
+        "right": "license",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Licenses"
+    },
+    {
+        "right": "line",
+        "interface": "central",
+        "tab": "management",
+        "group": "general",
+        "label": "Phone lines"
+    },
+    {
+        "right": "lineoperator",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Line Operators"
+    },
+    {
+        "right": "link",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "External Links"
+    },
+    {
+        "right": "location",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Locations"
+    },
+    {
+        "right": "locked_field",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "Locked Fields"
+    },
+    {
+        "right": "logs",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Historical"
+    },
+    {
+        "right": "monitor",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Monitors"
+    },
+    {
+        "right": "networking",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Network Devices"
+    },
+    {
+        "right": "notification",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Notifications"
+    },
+    {
+        "right": "oauth_client",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "OAuth clients"
+    },
+    {
+        "right": "pendingreason",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "itilobjects",
+        "label": "Pending Reasons"
+    },
+    {
+        "right": "peripheral",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Peripherals"
+    },
+    {
+        "right": "personalization",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Personalization"
+    },
+    {
+        "right": "personalization",
+        "interface": "helpdesk",
+        "tab": "setup",
+        "group": "general",
+        "label": "Personalization"
+    },
+    {
+        "right": "phone",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Phones"
+    },
+    {
+        "right": "planning",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "visibility",
+        "label": "Planning"
+    },
+    {
+        "right": "printer",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Printers"
+    },
+    {
+        "right": "problem",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "problems",
+        "label": "Problems"
+    },
+    {
+        "right": "profile",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Profiles"
+    },
+    {
+        "right": "project",
+        "interface": "central",
+        "tab": "tools",
+        "group": "projects",
+        "label": "Projects"
+    },
+    {
+        "right": "projecttask",
+        "interface": "central",
+        "tab": "tools",
+        "group": "projects",
+        "label": "Project Tasks"
+    },
+    {
+        "right": "queuednotification",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Notification queue"
+    },
+    {
+        "right": "recurrentchange",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "changes",
+        "label": "Recurring changes"
+    },
+    {
+        "right": "refusedequipment",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "Equipments refused by rules log"
+    },
+    {
+        "right": "reminder_public",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Public Reminders"
+    },
+    {
+        "right": "reminder_public",
+        "interface": "helpdesk",
+        "tab": "tools",
+        "group": "general",
+        "label": "Reminders"
+    },
+    {
+        "right": "reports",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Reports"
+    },
+    {
+        "right": "reservation",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Reservable Items"
+    },
+    {
+        "right": "reservation",
+        "interface": "helpdesk",
+        "tab": "tools",
+        "group": "general",
+        "label": "Reservable Items"
+    },
+    {
+        "right": "rssfeed_public",
+        "interface": "central",
+        "tab": "tools",
+        "group": "general",
+        "label": "Public RSS Feeds"
+    },
+    {
+        "right": "rssfeed_public",
+        "interface": "helpdesk",
+        "tab": "tools",
+        "group": "general",
+        "label": "RSS feed"
+    },
+    {
+        "right": "rule_asset",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Business Rules for Assets"
+    },
+    {
+        "right": "rule_change",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Business Rules for Changes (Entity)"
+    },
+    {
+        "right": "rule_dictionnary_dropdown",
+        "interface": "central",
+        "tab": "admin",
+        "group": "dictionaries",
+        "label": "Dropdowns Dictionary"
+    },
+    {
+        "right": "rule_dictionnary_printer",
+        "interface": "central",
+        "tab": "admin",
+        "group": "dictionaries",
+        "label": "Printers dictionary"
+    },
+    {
+        "right": "rule_dictionnary_software",
+        "interface": "central",
+        "tab": "admin",
+        "group": "dictionaries",
+        "label": "Software Dictionary"
+    },
+    {
+        "right": "rule_import",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Rules for assigning a computer to an entity"
+    },
+    {
+        "right": "rule_ldap",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Authorizations assignment rules"
+    },
+    {
+        "right": "rule_location",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Rules for assigning a computer to a location"
+    },
+    {
+        "right": "rule_mailcollector",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Rules for assigning a ticket created through an email receiver"
+    },
+    {
+        "right": "rule_problem",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Business rules for problems (entity)"
+    },
+    {
+        "right": "rule_softwarecategories",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Rules for assigning a category to a software"
+    },
+    {
+        "right": "rule_ticket",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Business Rules for Tickets (entity)"
+    },
+    {
+        "right": "search_config",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Search Result Display"
+    },
+    {
+        "right": "slm",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "SLM"
+    },
+    {
+        "right": "snmpcredential",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "SNMP Credentials"
+    },
+    {
+        "right": "software",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Software"
+    },
+    {
+        "right": "solutiontemplate",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Solution Templates"
+    },
+    {
+        "right": "state",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Status of Items"
+    },
+    {
+        "right": "statistic",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "visibility",
+        "label": "Statistics"
+    },
+    {
+        "right": "system_logs",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "System Logs"
+    },
+    {
+        "right": "task",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "followups_tasks",
+        "label": "Ticket Tasks"
+    },
+    {
+        "right": "task",
+        "interface": "helpdesk",
+        "tab": "tracking",
+        "group": "general",
+        "label": "Ticket Tasks"
+    },
+    {
+        "right": "taskcategory",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Task Categories"
+    },
+    {
+        "right": "tasktemplate",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Task Templates"
+    },
+    {
+        "right": "ticket",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "tickets",
+        "label": "Tickets"
+    },
+    {
+        "right": "ticket",
+        "interface": "helpdesk",
+        "tab": "tracking",
+        "group": "general",
+        "label": "Tickets"
+    },
+    {
+        "right": "ticketcost",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "tickets",
+        "label": "Costs"
+    },
+    {
+        "right": "ticketrecurrent",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "tickets",
+        "label": "Recurring tickets"
+    },
+    {
+        "right": "ticketvalidation",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "validations",
+        "label": "Ticket approvals"
+    },
+    {
+        "right": "ticketvalidation",
+        "interface": "helpdesk",
+        "tab": "tracking",
+        "group": "general",
+        "label": "Ticket approvals"
+    },
+    {
+        "right": "transfer",
+        "interface": "central",
+        "tab": "admin",
+        "group": "rules",
+        "label": "Transfer"
+    },
+    {
+        "right": "typedoc",
+        "interface": "central",
+        "tab": "setup",
+        "group": "general",
+        "label": "Document Types"
+    },
+    {
+        "right": "unmanaged",
+        "interface": "central",
+        "tab": "admin",
+        "group": "inventory",
+        "label": "Unmanaged assets"
+    },
+    {
+        "right": "user",
+        "interface": "central",
+        "tab": "admin",
+        "group": "general",
+        "label": "Users"
+    }
+]

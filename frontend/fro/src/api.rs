@@ -184,6 +184,19 @@ pub async fn fetch_session() -> Result<SessionInfo, String> {
         .map_err(|e| e.to_string())
 }
 
+/// One permission bit of a right. Mirrors the backend's RightBit.
+///
+/// `writes` comes from the backend rather than being inferred from `name`
+/// here. The two agree for every bit GLPI defines today, but only because the
+/// write bits happen to be the ones not called READ*; deciding it locally
+/// would let a badge's colour contradict the write-capable count the moment
+/// that stopped holding.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RightBit {
+    pub name: String,
+    pub writes: bool,
+}
+
 /// One GLPI right. Mirrors the backend's RightEntry.
 ///
 /// `value` is the authoritative figure and `bits` is a reading of it; both are
@@ -193,13 +206,25 @@ pub async fn fetch_session() -> Result<SessionInfo, String> {
 pub struct RightEntry {
     pub name: String,
     pub value: i64,
-    pub bits: Vec<String>,
+    pub bits: Vec<RightBit>,
 
     /// Bits beyond GLPI's twelve global constants. Genuine permissions this
     /// app cannot name - modules define their own - so they are shown as a
     /// number rather than hidden. See backend/src/glpi/rights.rs.
     pub unnamed_bits: i64,
     pub writes: bool,
+
+    /// GLPI stores a row for this right on this profile. False means there is
+    /// no row - which denies exactly as a stored zero does, but is a different
+    /// statement: a zero is a decision taken in the profile form, an absent
+    /// row is a right that form never offered here.
+    pub recorded: bool,
+
+    /// Where this right sits in GLPI's profile form. None when the committed
+    /// taxonomy does not cover it - either the dump has not been run, or the
+    /// right genuinely has no row on the form.
+    pub tab: Option<String>,
+    pub group: Option<String>,
 }
 
 impl RightEntry {
@@ -210,20 +235,87 @@ impl RightEntry {
     }
 }
 
-/// Mirrors the backend's RightsBreakdown.
+/// One profile's rights. Mirrors the backend's ProfileRights.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
-pub struct RightsBreakdown {
-    pub profile_name: Option<String>,
-    pub profile_interface: Option<String>,
+pub struct ProfileRights {
+    pub id: i64,
+    pub name: Option<String>,
+    pub interface: Option<String>,
+    pub is_default: bool,
+
+    /// The profile this app's own session runs under - the one every other
+    /// page is actually working through.
+    pub is_active: bool,
     pub entries: Vec<RightEntry>,
 }
 
-/// Every right the active profile holds.
-pub async fn fetch_rights() -> Result<RightsBreakdown, String> {
+impl ProfileRights {
+    /// What to show for this profile. Falls back to the id rather than a blank:
+    /// a selector with an empty entry in it is worse than one admitting
+    /// "profile 7".
+    pub fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("profile {}", self.id))
+    }
+
+    pub fn granted(&self) -> usize {
+        self.entries.iter().filter(|e| e.granted()).count()
+    }
+
+    pub fn writes(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.granted() && e.writes)
+            .count()
+    }
+}
+
+/// One right a call depends on. Mirrors the backend's CallRight.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CallRight {
+    pub name: String,
+
+    /// None when GLPI records no entry for this right on the profile - which
+    /// denies, like a zero, but is not a value somebody set.
+    pub value: Option<i64>,
+    pub satisfied: bool,
+}
+
+/// One of this app's calls, judged against the active profile. Mirrors the
+/// backend's CallStatus.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CallStatus {
+    pub path: String,
+    pub api: String,
+    pub used_for: String,
+    pub rights: Vec<CallRight>,
+    pub satisfied: bool,
+}
+
+/// Mirrors the backend's RightsReport.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RightsReport {
+    pub active_profile_id: Option<i64>,
+    pub profiles: Vec<ProfileRights>,
+    pub calls: Vec<CallStatus>,
+
+    /// Right names the committed taxonomy covers. Zero means grouping is off
+    /// and the flat list is shown.
+    pub taxonomy_rights: usize,
+
+    /// Rights GLPI's form offers that no profile records a value for. Not a
+    /// fault: GLPI ships at least one, and an unrecorded right is simply
+    /// denied.
+    pub form_only_rights: Vec<String>,
+}
+
+/// Every right of every profile in GLPI.
+pub async fn fetch_rights() -> Result<RightsReport, String> {
     reqwest::get(api_url("/api/rights"))
         .await
         .map_err(|e| e.to_string())?
-        .json::<RightsBreakdown>()
+        .json::<RightsReport>()
         .await
         .map_err(|e| e.to_string())
 }

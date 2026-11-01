@@ -18,7 +18,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::glpi::{
-    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, rights::RightsBreakdown,
+    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, rights::RightsReport,
     session::SessionInfo, Client,
 };
 
@@ -246,16 +246,58 @@ async fn session(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse
     Ok(Json(SessionInfo::from_value(&raw)))
 }
 
-/// Every right the active profile holds, not just the two this app needs.
+/// How many ProfileRight rows to ask v1 for.
 ///
-/// Same upstream call as /api/session - GLPI returns the whole rights map in
-/// the session blob - so this costs nothing extra against GLPI. Kept as a
-/// separate endpoint rather than folded into SessionInfo so the Status page's
-/// shape does not change: that page answers "can this app work at all", and
-/// 122 rights would bury it.
+/// 899 on a stock install - nine profiles at about a hundred rights each - so
+/// this is roughly a tenfold margin. It is not a target: `from_legacy` refuses
+/// the collection if the row count reaches it, because v1 truncates silently
+/// and a short rights list reads as rights that were never granted.
+const RIGHT_ROW_LIMIT: usize = 10_000;
+
+/// Every right of every profile in GLPI, not just the session's own.
+///
+/// Runs against v1, because v2.3 cannot answer this: `ProfileRight` has no HL
+/// route, and the session blob covers only the active profile - and reports 21
+/// ordinary profile columns as rights with value 0 while doing it. Both are
+/// laid out in glpi::rights.
 async fn rights(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
-    let raw = state.glpi.get("session").await?;
-    Ok(Json(RightsBreakdown::from_value(&raw)))
+    // Which profile this app is actually working under. Read from v2.3, which
+    // is the API every other page uses, so this reports the session those
+    // pages really run in rather than the separate v1 one opened below.
+    let active_profile_id = state
+        .glpi
+        .get("session")
+        .await?
+        .get("active_profile")
+        .and_then(|p| p.get("id"))
+        .and_then(|x| x.as_i64());
+
+    // A second handle, so the closure can own one while with_session borrows
+    // the other. Arc::clone is a refcount bump, not a copy of the client.
+    let inner = Arc::clone(&state);
+    let report = state
+        .legacy
+        .with_session(|session| async move {
+            let out = collect_rights(&inner.legacy, &session, active_profile_id).await;
+            (session, out)
+        })
+        .await?;
+    Ok(Json(report))
+}
+
+async fn collect_rights(
+    legacy: &Legacy,
+    session: &crate::glpi::legacy::Session,
+    active_profile_id: Option<i64>,
+) -> anyhow::Result<RightsReport> {
+    let arr = |v: serde_json::Value| v.as_array().cloned().unwrap_or_default();
+
+    // Explicit ranges: v1 defaults to 0-50 and truncates silently.
+    let profiles = arr(legacy.get(session, "Profile", Some("0-999")).await?);
+    let range = format!("0-{}", RIGHT_ROW_LIMIT - 1);
+    let rights = arr(legacy.get(session, "ProfileRight", Some(&range)).await?);
+
+    RightsReport::from_legacy(&profiles, &rights, active_profile_id, RIGHT_ROW_LIMIT)
 }
 
 /// One authorization: a profile this account may use, on one entity.
