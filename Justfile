@@ -50,6 +50,20 @@ gate:
 gate-rust: gate
     cargo clippy --all-targets -- -D warnings
 
+# Copy the release binary and bundle to ~/.local/lib/glpi-inv, where the
+# systemd unit expects them. Deliberately a copy and not a symlink into
+# target/: the point is that `just clean` cannot reach what is running.
+#
+# GLPI_INV_STATIC_DIR in ~/.config/glpi-inv/env must name the web/ directory
+# below - without it the binary looks for a bundle beside its own path, finds
+# none there, and serves the API with no page.
+deploy: build-release build-frontend-release
+    mkdir -p ~/.local/lib/glpi-inv
+    cp target/release/glpi-inv-backend ~/.local/lib/glpi-inv/
+    rm -rf ~/.local/lib/glpi-inv/web
+    cp -r target/dx/glpi-inv-frontend/release/web/public ~/.local/lib/glpi-inv/web
+    systemctl --user restart glpi-inv.service
+
 clean:
     cargo clean
     rm -rf frontend/fro/dist

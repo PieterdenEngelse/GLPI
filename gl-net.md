@@ -7,7 +7,8 @@ here and its output read; everything marked **untested** was not, and says so.
 
 - **GLPI 11.0.12, loopback only:** working — login and dashboard verified
 - **PHP 8.4.27 from a second nixpkgs input:** working — two live RCE CVEs closed
-- **LAN over HTTPS + mDNS + inventory agent:** built and validated, pending one switch
+- **LAN over HTTPS + mDNS + inventory agent:** live — `0.0.0.0:443` up, the
+  agent reporting daily, TLS verified by the client
 - **Windows / macOS clients:** written from upstream docs, **untested here**
 
 nixpkgs has **no `glpi` package and no `services.glpi` module** — checked with
@@ -109,6 +110,10 @@ GLPI's own checker agrees the result is sound: `system:check_requirements` →
 ---
 
 ## Part 2 — client-server
+
+The reasoning and the traps are below; for what is actually deployed right
+now — listeners, certificate, agent config, observed timings — see
+`gl-cl-serv.md`.
 
 ```nix
 services.glpi.lan.enable = true;          # HTTPS on 0.0.0.0:443 + firewall

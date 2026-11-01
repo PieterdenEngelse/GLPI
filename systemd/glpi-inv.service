@@ -4,6 +4,17 @@
 # Install to ~/.config/systemd/user/ and set the credentials in
 # ~/.config/glpi-inv/env (chmod 600) - NOT in this file, which is readable by
 # anyone who can read the unit directory.
+#
+# ExecStart points at an installed copy under ~/.local/lib, not into the build
+# tree, because `cargo clean` deletes target/ and the two halves then fail at
+# different times with nothing linking either to the cause. The bundle goes
+# first and silently: ServeDir opens files per request, so / starts returning
+# 404 while systemd still reports the service active. The binary goes later -
+# the running process keeps its open inode, so the failure waits for the next
+# restart and surfaces as 203/EXEC at the following login.
+#
+# `just deploy` makes both copies and is the only supported way to update a
+# running install.
 [Unit]
 Description=glpi-inv backend (GLPI inventory telemetry, loopback only)
 After=network-online.target
@@ -12,7 +23,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=%h/.config/glpi-inv/env
-ExecStart=%h/Projects/glpi-inv/target/release/glpi-inv-backend
+ExecStart=%h/.local/lib/glpi-inv/glpi-inv-backend
 Restart=on-failure
 RestartSec=5s
 
