@@ -1,4 +1,5 @@
 use crate::api::{self, Entity};
+use crate::components::InfoButton;
 use dioxus::prelude::*;
 
 /// States which entities the data below was drawn from.
@@ -19,8 +20,8 @@ pub fn ScopeNote() -> Element {
     // Muted by default - it qualifies the table rather than being content -
     // but error-coloured when the scope is unknown or empty, because a scope
     // that cannot be established undermines everything below it.
-    const OK: &str = "mb-4 text-xs text-base-content/60";
-    const WARN: &str = "mb-4 text-xs text-error";
+    const OK: &str = "text-xs text-base-content/60";
+    const WARN: &str = "text-xs text-error";
 
     let (class, text) = match &*entities.read_unchecked() {
         None => (OK, "Scope: checking…".to_string()),
@@ -60,5 +61,17 @@ pub fn ScopeNote() -> Element {
         }
     };
 
-    rsx! { p { class: "{class}", "{text}" } }
+    rsx! {
+        div { class: "mb-4 flex items-center gap-2",
+            p { class: "{class}", "{text}" }
+            InfoButton {
+                title: "Scope".to_string(),
+                body: "Which parts of GLPI this list was drawn from. GLPI filters every \
+                       query by entity, and the rows it removes leave no trace in the \
+                       answer - no count, no marker. So this cannot promise the list is \
+                       complete; it states the boundary, so that someone who knows the \
+                       estate can notice when it is too narrow.".to_string(),
+            }
+        }
+    }
 }

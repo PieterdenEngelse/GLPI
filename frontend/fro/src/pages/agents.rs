@@ -15,7 +15,7 @@ const REFRESH_MS: u32 = 5 * 60 * 1000;
 const REFRESH_LABEL: &str = "5m";
 
 #[component]
-pub fn Fleet() -> Element {
+pub fn Agents() -> Element {
     let mut agents = use_resource(|| async move { api::fetch_agents().await });
 
     // use_future, not a spawn per render: this runs once for the life of the
@@ -46,8 +46,13 @@ pub fn Fleet() -> Element {
                 StatRow { agents: list.clone() }
 
                 Panel {
-                    title: "Agents".to_string(),
+                    title: "Registered agents".to_string(),
                     subtitle: "Most overdue first".to_string(),
+                    info: "Every inventory agent registered in GLPI, with the one judgement \
+                           this app adds: whether it is still reporting. Sorted worst first, \
+                           because the reason to open this page is to find what has stopped. \
+                           The status column is the summary; Age is how long since that agent \
+                           last made contact.".to_string(),
                     actions: rsx! {
                         RefreshControl {
                             interval_label: REFRESH_LABEL.to_string(),

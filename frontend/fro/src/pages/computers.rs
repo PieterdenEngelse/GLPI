@@ -1,11 +1,11 @@
-//! The complement of the Fleet page.
+//! The complement of the Agents page.
 //!
-//! Fleet asks which agents stopped reporting. This asks which machines have
+//! That page asks which agents stopped reporting. This asks which machines have
 //! no agent at all - a failure GLPI hides even more completely, because an
 //! orphaned asset does not go quiet, it simply never changes again, which
 //! looks exactly like hardware that has not changed.
 use crate::api::{self, ComputerStatus, Named};
-use crate::components::{Panel, RefreshControl};
+use crate::components::{Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
 
 const REFRESH_MS: u32 = 5 * 60 * 1000;
@@ -36,24 +36,37 @@ pub fn Computers() -> Element {
                 let orphans = list.iter().filter(|c| c.orphaned).count();
                 rsx! {
                     div { class: "stats stats-vertical sm:stats-horizontal mb-5 w-full border border-base-300 bg-base-100 shadow-sm",
-                        div { class: "stat",
-                            div { class: "stat-title", "Computers" }
-                            div { class: "stat-value text-2xl", "{list.len()}" }
-                            div { class: "stat-desc", "assets in GLPI" }
+                        StatTile {
+                            title: "Computers".to_string(),
+                            value: list.len().to_string(),
+                            desc: "assets in GLPI".to_string(),
+                            info: "Machines GLPI holds as assets. Most are created by an \
+                                   inventory agent the first time it reports; some are typed \
+                                   in by hand. Either way GLPI keeps showing them until \
+                                   somebody deletes them.".to_string(),
                         }
-                        div { class: "stat",
-                            div { class: "stat-title", "Without an agent" }
-                            div {
-                                class: if orphans > 0 { "stat-value text-2xl text-error" } else { "stat-value text-2xl" },
-                                "{orphans}"
-                            }
-                            div { class: "stat-desc", "nothing will update these" }
+                        StatTile {
+                            title: "Without an agent".to_string(),
+                            value: orphans.to_string(),
+                            alarm: orphans > 0,
+                            desc: "nothing will update these".to_string(),
+                            info: "Computers that no agent reports for. Their details are \
+                                   frozen at whatever was last recorded, and nothing will \
+                                   ever correct them. This is harder to spot than an agent \
+                                   that went quiet: a machine with no agent does not go \
+                                   silent, it simply never changes again, which looks exactly \
+                                   like hardware that has not changed.".to_string(),
                         }
                     }
 
                     Panel {
                         title: "Computers".to_string(),
                         subtitle: "Without an agent first, then least recently inventoried".to_string(),
+                        info: "The counterpart to the Agents page. That page asks which agents \
+                               stopped reporting; this asks which machines have no agent at \
+                               all. The Agent column says whether anything is keeping each \
+                               record up to date, and Last inventory is when GLPI last \
+                               changed it.".to_string(),
                         actions: rsx! {
                             RefreshControl {
                                 interval_label: REFRESH_LABEL.to_string(),

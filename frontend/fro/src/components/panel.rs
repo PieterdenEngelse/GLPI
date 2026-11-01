@@ -1,3 +1,4 @@
+use crate::components::InfoButton;
 use dioxus::prelude::*;
 
 /// A titled card. RERAG's monitor pages are built almost entirely from these,
@@ -9,13 +10,22 @@ pub fn Panel(
     title: String,
     #[props(default = None)] subtitle: Option<String>,
     #[props(default = None)] actions: Option<Element>,
+    /// Explains what this panel shows. RERAG's rule: every control or figure
+    /// a reader could misread gets its own modal, not a tooltip.
+    #[props(default = None)]
+    info: Option<String>,
     children: Element,
 ) -> Element {
     rsx! {
         section { class: "rounded-box border border-base-300 bg-base-100 shadow-sm",
             div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-base-300 px-4 py-3",
                 div {
-                    h2 { class: "text-sm font-semibold tracking-tight", "{title}" }
+                    div { class: "flex items-center gap-2",
+                        h2 { class: "text-sm font-semibold tracking-tight", "{title}" }
+                        if let Some(i) = info.clone() {
+                            InfoButton { title: title.clone(), body: i }
+                        }
+                    }
                     if let Some(s) = subtitle {
                         p { class: "text-xs text-base-content/60", "{s}" }
                     }

@@ -22,7 +22,7 @@ pub fn NavTabs() -> Element {
     let is = |r: &Route| std::mem::discriminant(&current) == std::mem::discriminant(r);
 
     let tabs = [
-        (Route::Fleet {}, "Fleet"),
+        (Route::Agents {}, "Agents"),
         (Route::Computers {}, "Computers"),
         (Route::Status {}, "Status"),
         (Route::About {}, "About"),

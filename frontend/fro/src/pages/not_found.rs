@@ -12,8 +12,8 @@ pub fn PageNotFound(#[props(default = vec![])] segments: Vec<String>) -> Element
             div { class: "rounded-box border border-base-300 bg-base-100 p-5 shadow-sm",
                 div { class: "font-semibold", "No such page." }
                 p { class: "mt-1 font-mono text-xs text-base-content/60", "/{segments.join(\"/\")}" }
-                Link { to: Route::Fleet {}, class: "link link-primary mt-3 inline-block",
-                    "Back to the fleet"
+                Link { to: Route::Agents {}, class: "link link-primary mt-3 inline-block",
+                    "Back to agents"
                 }
             }
         }

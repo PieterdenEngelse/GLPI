@@ -6,7 +6,7 @@
 //! session, so an account holding several authorizations does not get their
 //! union. None of that is visible from the dashboard it breaks.
 use crate::api::{self, SessionInfo};
-use crate::components::Panel;
+use crate::components::{InfoButton, Panel};
 use dioxus::prelude::*;
 
 /// GLPI's rights are a bitmask; READ is bit 1.
@@ -47,17 +47,48 @@ fn SessionPanel(session: SessionInfo) -> Element {
         Panel {
             title: "GLPI session".to_string(),
             subtitle: "The identity and rights this dashboard reads with".to_string(),
+            info: "This app signs in to GLPI as an ordinary user and can only see what that \
+                   user is allowed to see. When a page is empty or refuses to load, this is \
+                   where to look first - GLPI's refusals do not say which permission was \
+                   missing.".to_string(),
 
             dl { class: "grid gap-x-6 gap-y-3 sm:grid-cols-2",
-                Row { label: "Profile".to_string(),
-                    value: session.profile_name.clone().unwrap_or_else(|| "unknown".into()) }
-                Row { label: "Interface".to_string(),
-                    value: session.profile_interface.clone().unwrap_or_else(|| "unknown".into()) }
-                Row { label: "Entity".to_string(),
-                    value: session.entity_name.clone().unwrap_or_else(|| "unknown".into()) }
+                Row {
+                    label: "Profile".to_string(),
+                    value: session.profile_name.clone().unwrap_or_else(|| "unknown".into()),
+                    info: "The set of permissions GLPI applied to this session. An account \
+                           can be granted several profiles, but GLPI activates exactly one \
+                           at a time - the account's default - so holding others does not \
+                           add their permissions.".to_string(),
+                }
+                Row {
+                    label: "Interface".to_string(),
+                    value: session.profile_interface.clone().unwrap_or_else(|| "unknown".into()),
+                    info: "GLPI profiles come in two kinds. Standard can hold the permissions \
+                           this app needs; Simplified is the helpdesk view and cannot hold \
+                           them at all - the settings simply do not appear on it.".to_string(),
+                }
+                Row {
+                    label: "Entity".to_string(),
+                    value: session.entity_name.clone().unwrap_or_else(|| "unknown".into()),
+                    info: "GLPI can divide one installation into entities - separate sites, \
+                           departments or customers - and every list is filtered to the ones \
+                           this account may reach. This is the entity it is working in.".to_string(),
+                }
 
                 div {
-                    dt { class: "text-xs text-base-content/60", "Includes child entities" }
+                    dt { class: "flex items-center gap-2 text-xs text-base-content/60",
+                        span { "Includes child entities" }
+                        InfoButton {
+                            title: "Includes child entities".to_string(),
+                            body: "Whether this app can also see entities nested below the one \
+                                   above. When it cannot, machines in those entities are \
+                                   missing from every page with nothing to indicate it - GLPI \
+                                   removes them from the results and reports no count, so an \
+                                   absent machine is indistinguishable from one that was never \
+                                   there.".to_string(),
+                        }
+                    }
                     dd { class: "mt-0.5",
                         if recursive {
                             span { class: "badge badge-success badge-sm", "recursive" }
@@ -68,7 +99,16 @@ fn SessionPanel(session: SessionInfo) -> Element {
                 }
 
                 div {
-                    dt { class: "text-xs text-base-content/60", "Right: agent (read)" }
+                    dt { class: "flex items-center gap-2 text-xs text-base-content/60",
+                        span { "Right: agent (read)" }
+                        InfoButton {
+                            title: "Right: agent (read)".to_string(),
+                            body: "Permission to list inventory agents. Without it the Agents \
+                                   page cannot load at all, and GLPI's refusal does not say \
+                                   which permission is missing. It is granted in GLPI under \
+                                   Administration, Profiles, on the Administration tab.".to_string(),
+                        }
+                    }
                     dd { class: "mt-0.5",
                         if agent_ok {
                             span { class: "badge badge-success badge-sm", "granted" }
@@ -79,7 +119,16 @@ fn SessionPanel(session: SessionInfo) -> Element {
                 }
 
                 div {
-                    dt { class: "text-xs text-base-content/60", "Right: entity (read)" }
+                    dt { class: "flex items-center gap-2 text-xs text-base-content/60",
+                        span { "Right: entity (read)" }
+                        InfoButton {
+                            title: "Right: entity (read)".to_string(),
+                            body: "Permission to list entities. Without it this app cannot \
+                                   state which part of GLPI it is reading, so it cannot tell \
+                                   you whether a page is showing everything or only a \
+                                   slice.".to_string(),
+                        }
+                    }
                     dd { class: "mt-0.5",
                         if entity_ok {
                             span { class: "badge badge-success badge-sm", "granted" }
@@ -121,10 +170,13 @@ fn SessionPanel(session: SessionInfo) -> Element {
 }
 
 #[component]
-fn Row(label: String, value: String) -> Element {
+fn Row(label: String, value: String, info: String) -> Element {
     rsx! {
         div {
-            dt { class: "text-xs text-base-content/60", "{label}" }
+            dt { class: "flex items-center gap-2 text-xs text-base-content/60",
+                span { "{label}" }
+                InfoButton { title: label.clone(), body: info }
+            }
             dd { class: "mt-0.5 font-medium", "{value}" }
         }
     }

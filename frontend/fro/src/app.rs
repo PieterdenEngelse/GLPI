@@ -9,7 +9,7 @@
 //! link - without that fallback every path but / would 404 from the server
 //! before the router ever ran.
 use crate::components::{GlobalErrorBar, Header};
-use crate::pages::{About, Computers, Fleet, PageNotFound, Status};
+use crate::pages::{About, Agents, Computers, PageNotFound, Status};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -18,7 +18,7 @@ use dioxus_router::{Outlet, Routable, Router};
 pub enum Route {
     #[layout(Layout)]
         #[route("/")]
-        Fleet {},
+        Agents {},
         #[route("/computers")]
         Computers {},
         #[route("/status")]

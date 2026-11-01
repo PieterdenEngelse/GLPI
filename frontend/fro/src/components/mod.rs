@@ -1,19 +1,23 @@
 pub mod global_error_bar;
 pub mod header;
 pub mod health_dot;
+pub mod info;
 pub mod nav_tabs;
 pub mod panel;
 pub mod refresh_control;
 pub mod scope_note;
 pub mod stat_row;
+pub mod stat_tile;
 pub mod theme_toggle;
 
 pub use global_error_bar::GlobalErrorBar;
 pub use header::Header;
 pub use health_dot::HealthDot;
+pub use info::InfoButton;
 pub use nav_tabs::NavTabs;
 pub use panel::Panel;
 pub use refresh_control::RefreshControl;
 pub use scope_note::ScopeNote;
 pub use stat_row::StatRow;
+pub use stat_tile::StatTile;
 pub use theme_toggle::ThemeToggle;
