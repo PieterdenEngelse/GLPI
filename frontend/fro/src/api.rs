@@ -97,3 +97,81 @@ pub async fn fetch_entities() -> Result<Vec<Entity>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// Liveness of this app's own backend, for the status dot and the error bar.
+///
+/// Deliberately not typed into a struct: nothing renders the body, only
+/// whether the request succeeded, and a shape change in /api/health should
+/// not be able to report the backend as down.
+pub async fn fetch_health() -> Result<(), String> {
+    reqwest::get(api_url("/api/health"))
+        .await
+        .map_err(|e| e.to_string())?
+        .error_for_status()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// GLPI returns related records as objects, not strings.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Named {
+    pub name: Option<String>,
+}
+
+impl Named {
+    /// The name, or an empty string. Used in table cells, where a missing
+    /// relation should leave a blank rather than the word "None".
+    pub fn label(v: &Option<Named>) -> String {
+        v.as_ref().and_then(|n| n.name.clone()).unwrap_or_default()
+    }
+}
+
+/// Mirrors the backend's ComputerStatus.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ComputerStatus {
+    pub id: i64,
+    pub name: Option<String>,
+    pub serial: Option<String>,
+    pub last_inventory_update: Option<String>,
+    pub hours_since_inventory: Option<i64>,
+    pub is_dynamic: Option<bool>,
+    pub manufacturer: Option<Named>,
+    pub model: Option<Named>,
+    #[serde(rename = "type")]
+    pub kind: Option<Named>,
+    pub entity: Option<Named>,
+
+    /// No agent reports for this machine, so nothing will ever update it.
+    pub orphaned: bool,
+}
+
+/// Every computer, orphans first.
+pub async fn fetch_computers() -> Result<Vec<ComputerStatus>, String> {
+    reqwest::get(api_url("/api/computers"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<ComputerStatus>>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Mirrors the backend's SessionInfo.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SessionInfo {
+    pub profile_name: Option<String>,
+    pub profile_interface: Option<String>,
+    pub entity_name: Option<String>,
+    pub entity_recursive: Option<bool>,
+    pub right_agent: Option<i64>,
+    pub right_entity: Option<i64>,
+}
+
+/// The GLPI identity this app is using.
+pub async fn fetch_session() -> Result<SessionInfo, String> {
+    reqwest::get(api_url("/api/session"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<SessionInfo>()
+        .await
+        .map_err(|e| e.to_string())
+}

@@ -1,6 +1,6 @@
 //! The one page that answers the question: which agents have gone quiet?
 use crate::api::{self, AgentStatus};
-use crate::components::{RefreshControl, ScopeNote};
+use crate::components::{Panel, RefreshControl, ScopeNote, StatRow};
 use dioxus::prelude::*;
 
 /// How often the table re-reads the backend.
@@ -30,31 +30,52 @@ pub fn Fleet() -> Element {
     });
 
     rsx! {
-        RefreshControl {
-            interval_label: REFRESH_LABEL.to_string(),
-            on_refresh: move |_| agents.restart(),
-        }
-
-        // Above the table, not below it: the scope qualifies everything in
-        // the table, so reading it afterwards is too late.
-        ScopeNote {}
         match &*agents.read_unchecked() {
             // An unreachable backend must not look like an empty fleet. The
             // two mean opposite things and the page says which it is.
             Some(Err(e)) => rsx! {
-                div { class: "error",
-                    strong { "Could not reach the backend." }
-                    pre { "{e}" }
+                div { class: "alert alert-error",
+                    div {
+                        div { class: "font-semibold", "Could not reach the backend." }
+                        pre { class: "mt-1 text-xs whitespace-pre-wrap break-all", "{e}" }
+                    }
                 }
             },
-            Some(Ok(list)) if list.is_empty() => rsx! {
-                div { class: "empty",
-                    "No agents registered yet. GLPI has nothing to report, "
-                    "which is different from an error."
+
+            Some(Ok(list)) => rsx! {
+                StatRow { agents: list.clone() }
+
+                Panel {
+                    title: "Agents".to_string(),
+                    subtitle: "Most overdue first".to_string(),
+                    actions: rsx! {
+                        RefreshControl {
+                            interval_label: REFRESH_LABEL.to_string(),
+                            on_refresh: move |_| agents.restart(),
+                        }
+                    },
+
+                    // Above the table: the scope qualifies every row in it, so
+                    // reading it afterwards is too late.
+                    ScopeNote {}
+
+                    if list.is_empty() {
+                        div { class: "text-base-content/60",
+                            "No agents registered yet. GLPI has nothing to report, "
+                            "which is different from an error."
+                        }
+                    } else {
+                        AgentTable { agents: list.clone() }
+                    }
                 }
             },
-            Some(Ok(list)) => rsx! { AgentTable { agents: list.clone() } },
-            None => rsx! { div { class: "loading", "Loading…" } },
+
+            None => rsx! {
+                div { class: "flex items-center gap-2 text-base-content/60",
+                    span { class: "loading loading-spinner loading-sm" }
+                    "Loading…"
+                }
+            },
         }
     }
 }
@@ -62,36 +83,47 @@ pub fn Fleet() -> Element {
 #[component]
 fn AgentTable(agents: Vec<AgentStatus>) -> Element {
     rsx! {
-        table {
-            thead {
-                tr {
-                    th { "Agent" }
-                    th { "Last contact" }
-                    th { "Age" }
-                    th { "Version" }
-                    th { "Tag" }
-                    th { "From" }
+        // The table scrolls inside its own box; the page never scrolls sideways.
+        div { class: "overflow-x-auto",
+            table { class: "table table-sm table-pin-rows",
+                thead {
+                    tr {
+                        th { "Status" }
+                        th { "Agent" }
+                        th { "Last contact" }
+                        th { "Age" }
+                        th { "Version" }
+                        th { "Tag" }
+                        th { "From" }
+                    }
                 }
-            }
-            tbody {
-                for a in agents.iter() {
-                    tr { class: if a.stale { "stale" } else { "fresh" },
-                        td {
-                            div { class: "name", "{a.name.clone().unwrap_or_else(|| \"(unnamed)\".into())}" }
-                            div { class: "deviceid", "{a.deviceid.clone().unwrap_or_default()}" }
-                        }
-                        td { "{a.last_contact.clone().unwrap_or_else(|| \"never\".into())}" }
-                        td {
-                            match a.hours_since_contact {
-                                Some(h) if h < 1 => "just now".to_string(),
-                                Some(h) if h < 48 => format!("{h}h ago"),
-                                Some(h) => format!("{}d ago", h / 24),
-                                None => "—".to_string(),
+                tbody {
+                    for a in agents.iter() {
+                        tr { class: if a.stale { "bg-error/5" } else { "" },
+                            td {
+                                if a.stale {
+                                    span { class: "badge badge-error badge-sm", "stale" }
+                                } else {
+                                    span { class: "badge badge-success badge-sm", "ok" }
+                                }
                             }
+                            td {
+                                div { class: "font-medium", "{a.name.clone().unwrap_or_else(|| \"(unnamed)\".into())}" }
+                                div { class: "font-mono text-xs text-base-content/60", "{a.deviceid.clone().unwrap_or_default()}" }
+                            }
+                            td { class: "whitespace-nowrap text-base-content/80", "{a.last_contact.clone().unwrap_or_else(|| \"never\".into())}" }
+                            td { class: if a.stale { "whitespace-nowrap font-semibold text-error" } else { "whitespace-nowrap" },
+                                match a.hours_since_contact {
+                                    Some(h) if h < 1 => "just now".to_string(),
+                                    Some(h) if h < 48 => format!("{h}h ago"),
+                                    Some(h) => format!("{}d ago", h / 24),
+                                    None => "never".to_string(),
+                                }
+                            }
+                            td { span { class: "badge badge-ghost badge-sm font-mono", "{a.version.clone().unwrap_or_default()}" } }
+                            td { class: "text-base-content/70", "{a.tag.clone().unwrap_or_default()}" }
+                            td { class: "font-mono text-xs text-base-content/70", "{a.remote_address.clone().unwrap_or_default()}" }
                         }
-                        td { "{a.version.clone().unwrap_or_default()}" }
-                        td { "{a.tag.clone().unwrap_or_default()}" }
-                        td { "{a.remote_address.clone().unwrap_or_default()}" }
                     }
                 }
             }

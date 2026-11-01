@@ -16,20 +16,26 @@ use dioxus::prelude::*;
 pub fn ScopeNote() -> Element {
     let entities = use_resource(|| async move { api::fetch_entities().await });
 
+    // Muted by default - it qualifies the table rather than being content -
+    // but error-coloured when the scope is unknown or empty, because a scope
+    // that cannot be established undermines everything below it.
+    const OK: &str = "mb-4 text-xs text-base-content/60";
+    const WARN: &str = "mb-4 text-xs text-error";
+
     let (class, text) = match &*entities.read_unchecked() {
-        None => ("scope", "Scope: checking…".to_string()),
+        None => (OK, "Scope: checking…".to_string()),
 
         // Never hide the line on failure. A page with no scope note reads as
         // "no limits apply", which is the opposite of what is known here.
         Some(Err(e)) => (
-            "scope warn",
+            WARN,
             format!("Scope: could not be read ({e}). The list below may be filtered."),
         ),
 
         // Readable but empty is a real state, and a bad one: an account with
         // no entities can read nothing, so an empty table below means nothing.
         Some(Ok(list)) if list.is_empty() => (
-            "scope warn",
+            WARN,
             "Scope: this account can read no entities, so nothing below is complete.".to_string(),
         ),
 
@@ -45,7 +51,7 @@ pub fn ScopeNote() -> Element {
                 "entities"
             };
             (
-                "scope",
+                OK,
                 format!(
                     "Scope: {} {noun} — {names}. Agents outside these are not listed.",
                     list.len()

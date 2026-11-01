@@ -8,6 +8,8 @@ default: build
 
 # Backend only. The frontend is wasm and is built by dx, never by a
 # host-target cargo build.
+#
+# Build the backend.
 build:
     cargo build
 
@@ -15,13 +17,27 @@ build-release:
     cargo build --release
 
 # Dioxus dev server with hot reload, for working on the UI.
-dev-frontend:
+dev-frontend: css-build
     dx serve --package glpi-inv-frontend
 
-build-frontend:
+# Installs the npm tree first if absent - 34 packages, seconds - so a fresh
+# clone is not left guessing why the CSS did not change.
+#
+# Regenerate the Tailwind/daisyUI stylesheet.
+css-build:
+    cd frontend/fro && [ -d node_modules ] || npm install --no-audit --no-fund
+    cd frontend/fro && npm run css:build
+
+# Depends on css-build deliberately: class names live in the .rs files, so a
+# component edit can invalidate output.css without touching any stylesheet,
+# and a bundle shipping yesterday's CSS fails silently - it looks like a
+# styling mistake rather than a stale artefact.
+#
+# Build the wasm bundle.
+build-frontend: css-build
     dx build --package glpi-inv-frontend
 
-build-frontend-release:
+build-frontend-release: css-build
     dx build --release --package glpi-inv-frontend
 
 # Everything, launching nothing.
@@ -30,11 +46,15 @@ build-all: build-release build-frontend-release
 # Run the backend. Needs GLPI_CLIENT_ID and GLPI_CLIENT_SECRET in the
 # environment - it refuses to start without them rather than failing later
 # with a confusing 401 from GLPI.
+#
+# Run the backend. Needs credentials in the environment.
 run:
     cargo run
 
 # Probe GLPI's API directly, bypassing the backend and the browser. The fast
 # answer to "is it GLPI or is it us".
+#
+# GET a GLPI API path and print the JSON.
 probe path="Inventory/Agent":
     cargo run -p glpi-cli -- {{path}}
 
@@ -57,11 +77,25 @@ gate-rust: gate
 # GLPI_INV_STATIC_DIR in ~/.config/glpi-inv/env must name the web/ directory
 # below - without it the binary looks for a bundle beside its own path, finds
 # none there, and serves the API with no page.
+#
+# Install binary + bundle to ~/.local/lib and restart the service.
 deploy: build-release build-frontend-release
     mkdir -p ~/.local/lib/glpi-inv
-    cp target/release/glpi-inv-backend ~/.local/lib/glpi-inv/
-    rm -rf ~/.local/lib/glpi-inv/web
-    cp -r target/dx/glpi-inv-frontend/release/web/public ~/.local/lib/glpi-inv/web
+    # Copy beside the target and rename over it, never straight onto it.
+    # Writing to the path the running service is executing fails outright
+    # with ETXTBSY ("Text file busy"); rename(2) is atomic and the live
+    # process keeps its own inode until the restart below swaps it.
+    cp target/release/glpi-inv-backend ~/.local/lib/glpi-inv/.backend.new
+    mv -f ~/.local/lib/glpi-inv/.backend.new ~/.local/lib/glpi-inv/glpi-inv-backend
+    # Same shape for the bundle, for a different reason: ServeDir opens files
+    # per request, so deleting the directory first leaves a window in which
+    # every page 404s while the service still reports healthy.
+    rm -rf ~/.local/lib/glpi-inv/web.new
+    cp -r target/dx/glpi-inv-frontend/release/web/public ~/.local/lib/glpi-inv/web.new
+    rm -rf ~/.local/lib/glpi-inv/web.old
+    if [ -d ~/.local/lib/glpi-inv/web ]; then mv ~/.local/lib/glpi-inv/web ~/.local/lib/glpi-inv/web.old; fi
+    mv ~/.local/lib/glpi-inv/web.new ~/.local/lib/glpi-inv/web
+    rm -rf ~/.local/lib/glpi-inv/web.old
     systemctl --user restart glpi-inv.service
 
 clean:

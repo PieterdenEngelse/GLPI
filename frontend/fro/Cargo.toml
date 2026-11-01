@@ -13,11 +13,19 @@ description = "GLPI inventory telemetry - Dioxus web UI"
 # Bump this and the nixpkgs pin together, never one alone.
 dioxus = { version = "=0.7.9", features = ["web"] }
 
-# Pinned with `=` to the same version as dioxus above, as RERAG pins it. The
-# router is a separate crate on 0.7 and is part of the same lockstep: a
-# mismatch here fails at the Routable derive rather than at the dx check, so
-# it reads as broken macro code instead of a version problem.
-dioxus-router = { version = "=0.7.9" }
+# NOT `=`-pinned, unlike `dioxus` above, and the difference matters.
+#
+# dx checks the `dioxus` crate's version against its own and refuses on a
+# mismatch, which is why that one is pinned exactly. It does not check
+# dioxus-router. Pinning the router to =0.7.9 to match left it paired with
+# dioxus-router-macro 0.7.10, which cargo resolves independently - the
+# Routable derive comes from the macro crate and generates code against the
+# router crate's API. That compiles, because the surface still lines up, and
+# can still misbehave at runtime where it touches history and Outlet.
+#
+# A caret range lets the router track the rest of the family (core, web,
+# history are all 0.7.10 here) and keeps it level with its own macro.
+dioxus-router = { version = "0.7" }
 
 # Timed futures on wasm32. tokio::time does not exist here - there is no
 # timer driver in the browser - and this is the crate RERAG uses for the
@@ -35,4 +43,4 @@ reqwest = { version = "0.12", default-features = false, features = ["json"] }
 # relative URL - it has no base to resolve against and fails at the builder
 # stage with a bare "builder error" - so the origin has to come from the
 # browser and be prepended by hand.
-web-sys = { version = "0.3", features = ["Window", "Location"] }
+web-sys = { version = "0.3", features = ["Window", "Location", "Document", "Element", "Storage"] }

@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+/* Scan the Rust sources for class names. Explicit and narrow on purpose:
+   Tailwind walking a large tree is what causes Node OOM, and this box has
+   7.5 GB. Paths are relative to this file. */
+@source "../../src/**/*.rs";
+
+/* Both themes, selected by the viewer's system preference.
+   `--default` marks the theme used when nothing else applies; `--prefersdark`
+   marks the one bound to prefers-color-scheme: dark.
+
+   Dark is the default: with no data-theme on the root element, dark applies.
+   Light is reachable, but only by explicit choice - the toggle in the header
+   writes data-theme and persists it.
+
+   Note what is deliberately NOT here: `--prefersdark`. The system preference
+   no longer decides, because an explicit default and an automatic one cannot
+   both win. Dark is the stated default, so it is the one that applies when
+   nobody has chosen.
+
+   RERAG is dark-only and removed light mode deliberately. This app keeps
+   both, which is why nothing here may use a fixed grey: RERAG's rule of
+   "text-gray-400 minimum, never gray-500 or darker" is written for dark
+   tiles and inverts on a light background. Use daisyUI's semantic tokens -
+   base-100/200/300, base-content, primary - and they flip with the theme on
+   their own. */
+@plugin "daisyui" {
+  themes: dark --default, light;
+}
+
+/* RERAG's brand primary, in both themes so the two apps read as a family.
+   Only primary is overridden: the rest of daisyUI's light and dark palettes
+   are already contrast-matched to their own backgrounds, and hand-picking
+   greys is exactly what breaks when a second theme exists. */
+@plugin "daisyui/theme" {
+  name: "light";
+  default: true;
+  --color-primary: #0D98BA;
+  --color-primary-content: #ffffff;
+}
+
+@plugin "daisyui/theme" {
+  name: "dark";
+  prefersdark: true;
+  --color-primary: #0D98BA;
+  --color-primary-content: #ffffff;
+}

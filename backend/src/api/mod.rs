@@ -5,10 +5,21 @@
 //! through this process.
 use std::sync::Arc;
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::{
+        header::{CACHE_CONTROL, CONTENT_TYPE},
+        HeaderValue, StatusCode,
+    },
+    response::IntoResponse,
+    routing::get,
+    Json, Router,
+};
 use serde::Serialize;
 
-use crate::glpi::{agents::Agent, entities::Entity, Client};
+use crate::glpi::{
+    agents::Agent, computers::Computer, entities::Entity, session::SessionInfo, Client,
+};
 
 pub struct AppState {
     pub glpi: Client,
@@ -25,6 +36,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/health", get(health))
         .route("/api/agents", get(agents))
         .route("/api/entities", get(entities))
+        .route("/api/computers", get(computers))
+        .route("/api/session", get(session))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -33,8 +46,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         // than 404. ServeDir's own fallback does that; routing it as a nested
         // service would shadow /api instead.
         Some(dir) => api.fallback_service(
-            tower_http::services::ServeDir::new(dir)
-                .fallback(tower_http::services::ServeFile::new(dir.join("index.html"))),
+            tower::ServiceBuilder::new()
+                .layer(tower_http::set_header::SetResponseHeaderLayer::overriding(
+                    CACHE_CONTROL,
+                    cache_control,
+                ))
+                .service(
+                    tower_http::services::ServeDir::new(dir)
+                        .fallback(tower_http::services::ServeFile::new(dir.join("index.html"))),
+                ),
         ),
         // No bundle built yet: the API still works, which is what `just probe`
         // and curl use. Serving a 404 here is honest - there is nothing to
@@ -132,4 +152,82 @@ async fn entities(State(state): State<Arc<AppState>>) -> Result<impl IntoRespons
     }
 
     Ok(Json(out))
+}
+
+/// Cache policy for the web bundle.
+///
+/// The two halves need opposite answers, and getting it wrong is silent.
+///
+/// index.html is served from stable URLs - `/` and every client-side route -
+/// but the filenames inside it change with every build. A cached shell
+/// therefore names a *previous* build's .js, which is still sitting in the
+/// same directory, so the browser loads the old application successfully.
+/// Nothing errors. The new version simply "does not show up", which reads as
+/// a broken deployment rather than a cached document.
+///
+/// Everything it names carries a content hash, so those can be cached
+/// forever: a changed file is a changed URL by construction.
+fn cache_control<B>(res: &axum::http::Response<B>) -> Option<HeaderValue> {
+    let is_shell = res
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
+
+    Some(HeaderValue::from_static(if is_shell {
+        "no-cache, must-revalidate"
+    } else {
+        "public, max-age=31536000, immutable"
+    }))
+}
+
+/// Computers, each marked with whether any agent reports for it.
+///
+/// Two upstream calls rather than one, and both must succeed. Rendering the
+/// computer list with the agent list missing would mark every machine
+/// orphaned - the page's alarm state - on nothing worse than a transient
+/// failure. An error here is honest; a screen of false alarms is not.
+async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let raw_agents = state.glpi.get("Inventory/Agent").await?;
+    let covered: std::collections::HashSet<i64> = collection(&raw_agents)
+        .iter()
+        .filter_map(|a| {
+            // Only agents attached to a Computer count. GLPI can attach an
+            // agent to other itemtypes, and an id collision across types
+            // would otherwise clear the wrong machine.
+            let is_computer = a.get("itemtype").and_then(|v| v.as_str()) == Some("Computer");
+            is_computer
+                .then(|| a.get("items_id").and_then(|v| v.as_i64()))
+                .flatten()
+        })
+        .collect();
+
+    let raw = state.glpi.get("Assets/Computer").await?;
+    let mut out = Vec::new();
+    for item in collection(&raw) {
+        match serde_json::from_value::<Computer>(item.clone()) {
+            Ok(c) => out.push(c.status(&covered)),
+            Err(e) => tracing::warn!("skipping unparseable computer row: {e}; raw={item}"),
+        }
+    }
+
+    // Orphans first, then oldest inventory: both are reasons to look, and an
+    // orphan is the worse one.
+    out.sort_by_key(|c| {
+        (
+            std::cmp::Reverse(c.orphaned),
+            std::cmp::Reverse(c.hours_since_inventory.unwrap_or(i64::MAX)),
+        )
+    });
+    Ok(Json(out))
+}
+
+/// The GLPI identity this app is actually using.
+///
+/// Worth a page of its own: a 403 from the HL API never names the missing
+/// right, and GLPI activates exactly one profile per session regardless of
+/// how many authorizations the account holds.
+async fn session(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let raw = state.glpi.get("session").await?;
+    Ok(Json(SessionInfo::from_value(&raw)))
 }

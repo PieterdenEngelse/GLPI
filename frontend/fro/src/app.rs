@@ -8,8 +8,8 @@
 //! index.html, so a client-side route survives a page reload or a pasted
 //! link - without that fallback every path but / would 404 from the server
 //! before the router ever ran.
-use crate::components::Header;
-use crate::pages::{About, Fleet, PageNotFound};
+use crate::components::{GlobalErrorBar, Header};
+use crate::pages::{About, Computers, Fleet, PageNotFound, Status};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -19,6 +19,10 @@ pub enum Route {
     #[layout(Layout)]
         #[route("/")]
         Fleet {},
+        #[route("/computers")]
+        Computers {},
+        #[route("/status")]
+        Status {},
         #[route("/about")]
         About {},
     #[end_layout]
@@ -28,10 +32,19 @@ pub enum Route {
 
 #[component]
 pub fn App() -> Element {
+    // Re-apply a stored theme choice once, before the first paint. Nothing
+    // runs when none is stored: dark is the stylesheet's default, so the
+    // absence of a data-theme attribute is already correct.
+    use_hook(crate::theme::restore);
+
     rsx! {
         // Declared here rather than in Layout so the 404 - which sits outside
         // the layout by design - is styled like everything else.
-        document::Stylesheet { href: asset!("/assets/styling/main.css") }
+        //
+        // output.css is GENERATED from index.css plus the class names found in
+        // these .rs files; `just css-build` regenerates it and the frontend
+        // recipes depend on that. Editing it directly is overwritten silently.
+        document::Stylesheet { href: asset!("/assets/styling/output.css") }
         Router::<Route> {}
     }
 }
@@ -39,7 +52,14 @@ pub fn App() -> Element {
 #[component]
 fn Layout() -> Element {
     rsx! {
-        Header {}
-        main { Outlet::<Route> {} }
+        // A full-bleed application surface, not a centred document. The
+        // frame owns the background so every page - including the 404 - sits
+        // on the same colour, and min-h-screen keeps it covering the viewport
+        // when a page is short.
+        div { class: "flex min-h-screen flex-col bg-base-200 text-base-content",
+            GlobalErrorBar {}
+            Header {}
+            main { class: "w-full flex-1 px-4 py-4", Outlet::<Route> {} }
+        }
     }
 }

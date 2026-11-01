@@ -12,10 +12,10 @@ pub fn RefreshControl(
     on_refresh: EventHandler<()>,
 ) -> Element {
     rsx! {
-        div { class: "refresh",
-            span { class: "interval", "⟳ every {interval_label}" }
+        div { class: "mb-4 flex items-center gap-3",
+            span { class: "text-xs text-base-content/60", "⟳ every {interval_label}" }
             button {
-                class: "ghost",
+                class: "btn btn-ghost btn-sm text-primary",
                 onclick: move |_| on_refresh.call(()),
                 "Refresh now"
             }

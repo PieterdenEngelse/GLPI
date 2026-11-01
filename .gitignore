@@ -6,3 +6,7 @@
 # Local credentials for the GLPI OAuth client - NEVER committed.
 .env
 *.secret
+
+# npm tree for the stylesheet build. output.css IS committed, so a clone
+# builds the frontend without ever running npm.
+/frontend/fro/node_modules

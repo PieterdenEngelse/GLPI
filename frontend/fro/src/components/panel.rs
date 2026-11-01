@@ -1,0 +1,30 @@
+use dioxus::prelude::*;
+
+/// A titled card. RERAG's monitor pages are built almost entirely from these,
+/// which is most of why they read as a dashboard rather than a document: the
+/// content is identical, but a bordered surface with a header gives the eye
+/// somewhere to start.
+#[component]
+pub fn Panel(
+    title: String,
+    #[props(default = None)] subtitle: Option<String>,
+    #[props(default = None)] actions: Option<Element>,
+    children: Element,
+) -> Element {
+    rsx! {
+        section { class: "rounded-box border border-base-300 bg-base-100 shadow-sm",
+            div { class: "flex flex-wrap items-center justify-between gap-3 border-b border-base-300 px-4 py-3",
+                div {
+                    h2 { class: "text-sm font-semibold tracking-tight", "{title}" }
+                    if let Some(s) = subtitle {
+                        p { class: "text-xs text-base-content/60", "{s}" }
+                    }
+                }
+                if let Some(a) = actions {
+                    div { class: "flex items-center gap-2", {a} }
+                }
+            }
+            div { class: "p-4", {children} }
+        }
+    }
+}

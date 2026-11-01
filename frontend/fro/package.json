@@ -1,0 +1,14 @@
+{
+  "name": "glpi-inv-frontend-css",
+  "private": true,
+  "description": "Tailwind + daisyUI stylesheet for the Dioxus frontend. Nothing in the app runs on Node; this generates assets/styling/output.css, which is committed.",
+  "scripts": {
+    "css:build": "tailwindcss -i ./assets/styling/index.css -o ./assets/styling/output.css --minify",
+    "css:watch": "tailwindcss -i ./assets/styling/index.css -o ./assets/styling/output.css --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.0.0",
+    "tailwindcss": "^4.0.0",
+    "daisyui": "^5.0.0"
+  }
+}

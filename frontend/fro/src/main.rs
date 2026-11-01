@@ -8,6 +8,7 @@ mod api;
 mod app;
 mod components;
 mod pages;
+mod theme;
 
 fn main() {
     dioxus::launch(app::App);
