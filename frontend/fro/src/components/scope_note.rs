@@ -1,5 +1,5 @@
 use crate::api::{self, Entity};
-use crate::components::InfoButton;
+use crate::components::{InfoButton, InfoLink, InfoSection};
 use dioxus::prelude::*;
 
 /// States which entities the data below was drawn from.
@@ -66,11 +66,30 @@ pub fn ScopeNote() -> Element {
             p { class: "{class}", "{text}" }
             InfoButton {
                 title: "Scope".to_string(),
-                body: "Which parts of GLPI this list was drawn from. GLPI filters every \
-                       query by entity, and the rows it removes leave no trace in the \
-                       answer - no count, no marker. So this cannot promise the list is \
-                       complete; it states the boundary, so that someone who knows the \
-                       estate can notice when it is too narrow.".to_string(),
+                body: "Which parts of GLPI this list was drawn from."
+                    .to_string(),
+                sections: vec![
+                    InfoSection::new(
+                        "Why it cannot promise completeness",
+                        "GLPI filters every query by entity, and the rows it removes leave no \
+                         trace in the answer - no count, no marker, nothing to compare against. \
+                         So this line cannot verify that the list is complete, and nothing \
+                         else can either. It states the boundary, so that somebody who knows \
+                         the estate can notice when it is too narrow.",
+                    ),
+                    InfoSection::new(
+                        "How to widen it",
+                        "Two separate settings, easy to confuse. Permission to list entities \
+                         decides whether this line can be shown at all. Whether the account's \
+                         authorization is recursive decides whether machines in entities below \
+                         this one are included. Granting the first does not grant the second. \
+                         The Status page shows both.",
+                    ),
+                ],
+                links: vec![
+                    InfoLink::new("Entities", "front/entity.php"),
+                    InfoLink::new("Users", "front/user.php"),
+                ],
             }
         }
     }

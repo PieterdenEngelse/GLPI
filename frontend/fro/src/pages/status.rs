@@ -6,7 +6,7 @@
 //! session, so an account holding several authorizations does not get their
 //! union. None of that is visible from the dashboard it breaks.
 use crate::api::{self, SessionInfo};
-use crate::components::{InfoButton, Panel};
+use crate::components::{InfoButton, InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
 
 /// GLPI's rights are a bitmask; READ is bit 1.
@@ -47,33 +47,100 @@ fn SessionPanel(session: SessionInfo) -> Element {
         Panel {
             title: "GLPI session".to_string(),
             subtitle: "The identity and rights this dashboard reads with".to_string(),
-            info: "This app signs in to GLPI as an ordinary user and can only see what that \
-                   user is allowed to see. When a page is empty or refuses to load, this is \
-                   where to look first - GLPI's refusals do not say which permission was \
-                   missing.".to_string(),
+            info: "This app signs in to GLPI as an ordinary user and can only see what \
+                   that user is allowed to see."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why this page exists",
+                    "When GLPI refuses a request it answers with a single sentence - you do \
+                     not have permission to perform this action - and does not say which \
+                     permission was missing. There is no way to tell from the refusal alone \
+                     whether the account cannot list agents, cannot list entities, or is \
+                     simply pointed at the wrong part of GLPI. This page shows all of it at \
+                     once.",
+                ),
+                InfoSection::new(
+                    "If a page is empty",
+                    "Check in this order: both rights below are granted; the interface is \
+                     Standard; and child entities are included. An empty list with all four \
+                     green means GLPI genuinely has nothing to show, which is a different \
+                     and much better answer.",
+                ),
+            ],
+            info_links: vec![
+                InfoLink::new("Users", "front/user.php"),
+                InfoLink::new("Profiles", "front/profile.php"),
+            ],
 
             dl { class: "grid gap-x-6 gap-y-3 sm:grid-cols-2",
                 Row {
                     label: "Profile".to_string(),
                     value: session.profile_name.clone().unwrap_or_else(|| "unknown".into()),
-                    info: "The set of permissions GLPI applied to this session. An account \
-                           can be granted several profiles, but GLPI activates exactly one \
-                           at a time - the account's default - so holding others does not \
-                           add their permissions.".to_string(),
+                    info: "The set of permissions GLPI applied to this session."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                            "One profile at a time",
+                            "An account can be granted several profiles, but GLPI activates \
+                             exactly one per session - the account's default - so holding \
+                             others does not add their permissions. Granting a second profile \
+                             and expecting the union is a common and quiet mistake.",
+                        ),
+                        InfoSection::new(
+                            "Where to change it",
+                            "The profile an account may use is granted under its Authorizations \
+                             in GLPI; which one is used by default is a field on the account \
+                             itself. Changing the permissions inside a profile affects every \
+                             account that uses it, so a dedicated profile is safer than editing \
+                             a shared one.",
+                        ),
+                    ],
+                    links: vec![
+                        InfoLink::new("Users", "front/user.php"),
+                        InfoLink::new("Profiles", "front/profile.php"),
+                    ],
                 }
                 Row {
                     label: "Interface".to_string(),
                     value: session.profile_interface.clone().unwrap_or_else(|| "unknown".into()),
-                    info: "GLPI profiles come in two kinds. Standard can hold the permissions \
-                           this app needs; Simplified is the helpdesk view and cannot hold \
-                           them at all - the settings simply do not appear on it.".to_string(),
+                    info: "GLPI profiles come in two kinds, and only one of them can hold the \
+                           permissions this app needs."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                            "Standard and Simplified",
+                            "Standard is the full interface. Simplified is the helpdesk view, \
+                             meant for people who only raise tickets, and the permissions this \
+                             app needs do not exist on it - the settings are not merely \
+                             unticked, the whole section is absent from the form.",
+                        ),
+                        InfoSection::new(
+                            "If this says Simplified",
+                            "No amount of looking for the permissions will help; the profile's \
+                             interface has to be changed to Standard first, after which the \
+                             section appears and the two rights below can be granted.",
+                        ),
+                    ],
+                    links: vec![InfoLink::new("Profiles", "front/profile.php")],
                 }
                 Row {
                     label: "Entity".to_string(),
                     value: session.entity_name.clone().unwrap_or_else(|| "unknown".into()),
-                    info: "GLPI can divide one installation into entities - separate sites, \
-                           departments or customers - and every list is filtered to the ones \
-                           this account may reach. This is the entity it is working in.".to_string(),
+                    info: "The part of GLPI this app is working in. GLPI can divide one \
+                           installation into entities - separate sites, departments or \
+                           customers."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                            "What it affects",
+                            "Everything. GLPI filters every list by entity before this app sees \
+                             it, so the entity here decides which machines exist as far as any \
+                             page is concerned. A small installation usually has only the root \
+                             entity, in which case this never matters.",
+                        ),
+                    ],
+                    links: vec![InfoLink::new("Entities", "front/entity.php")],
                 }
 
                 div {
@@ -82,11 +149,26 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         InfoButton {
                             title: "Includes child entities".to_string(),
                             body: "Whether this app can also see entities nested below the one \
-                                   above. When it cannot, machines in those entities are \
-                                   missing from every page with nothing to indicate it - GLPI \
-                                   removes them from the results and reports no count, so an \
-                                   absent machine is indistinguishable from one that was never \
-                                   there.".to_string(),
+                                   above."
+                                .to_string(),
+                            sections: vec![
+                                InfoSection::new(
+                                    "Why it is invisible when wrong",
+                                    "GLPI removes out-of-scope machines from the results and \
+                                     reports no count of what it removed - no total, no marker, \
+                                     nothing. So a machine you cannot see is indistinguishable \
+                                     from one that was never there, and no amount of checking \
+                                     from inside this app can tell the difference.",
+                                ),
+                                InfoSection::new(
+                                    "How to change it",
+                                    "It is a property of the account's authorization, not of the \
+                                     profile: the same profile can be granted recursively to one \
+                                     account and not another. It is set when the authorization is \
+                                     added, and GLPI marks a recursive one with an R in the list.",
+                                ),
+                            ],
+                            links: vec![InfoLink::new("Users", "front/user.php")],
                         }
                     }
                     dd { class: "mt-0.5",
@@ -104,9 +186,24 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         InfoButton {
                             title: "Right: agent (read)".to_string(),
                             body: "Permission to list inventory agents. Without it the Agents \
-                                   page cannot load at all, and GLPI's refusal does not say \
-                                   which permission is missing. It is granted in GLPI under \
-                                   Administration, Profiles, on the Administration tab.".to_string(),
+                                   page cannot load at all."
+                                .to_string(),
+                            sections: vec![
+                                InfoSection::new(
+                                    "The name is not the obvious one",
+                                    "The permission is called Agent, and it is not the one called \
+                                     Inventory - granting Inventory does nothing for this. They \
+                                     sit near each other in the same list, which makes the wrong \
+                                     one easy to tick.",
+                                ),
+                                InfoSection::new(
+                                    "Where to grant it",
+                                    "In GLPI under Administration, then Profiles, on the \
+                                     Administration tab of the profile named above. Read is \
+                                     enough; this app never writes anything.",
+                                ),
+                            ],
+                            links: vec![InfoLink::new("Profiles", "front/profile.php")],
                         }
                     }
                     dd { class: "mt-0.5",
@@ -123,10 +220,25 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         span { "Right: entity (read)" }
                         InfoButton {
                             title: "Right: entity (read)".to_string(),
-                            body: "Permission to list entities. Without it this app cannot \
-                                   state which part of GLPI it is reading, so it cannot tell \
-                                   you whether a page is showing everything or only a \
-                                   slice.".to_string(),
+                            body: "Permission to list entities. Without it this app cannot state \
+                                   which part of GLPI it is reading."
+                                .to_string(),
+                            sections: vec![
+                                InfoSection::new(
+                                    "Why it matters even with one entity",
+                                    "Without it the line under each table cannot say what the list \
+                                     was drawn from, so a short list and a complete one look the \
+                                     same. On an installation with only the root entity nothing is \
+                                     actually hidden, but the app can no longer say so.",
+                                ),
+                                InfoSection::new(
+                                    "Where to grant it",
+                                    "The same place as the agent permission: Administration, \
+                                     Profiles, Administration tab. It is listed as Entities, and \
+                                     Read is enough.",
+                                ),
+                            ],
+                            links: vec![InfoLink::new("Profiles", "front/profile.php")],
                         }
                     }
                     dd { class: "mt-0.5",
@@ -170,12 +282,18 @@ fn SessionPanel(session: SessionInfo) -> Element {
 }
 
 #[component]
-fn Row(label: String, value: String, info: String) -> Element {
+fn Row(
+    label: String,
+    value: String,
+    info: String,
+    #[props(default = vec![])] sections: Vec<InfoSection>,
+    #[props(default = vec![])] links: Vec<InfoLink>,
+) -> Element {
     rsx! {
         div {
             dt { class: "flex items-center gap-2 text-xs text-base-content/60",
                 span { "{label}" }
-                InfoButton { title: label.clone(), body: info }
+                InfoButton { title: label.clone(), body: info, sections, links }
             }
             dd { class: "mt-0.5 font-medium", "{value}" }
         }

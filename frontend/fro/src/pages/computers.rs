@@ -5,7 +5,7 @@
 //! orphaned asset does not go quiet, it simply never changes again, which
 //! looks exactly like hardware that has not changed.
 use crate::api::{self, ComputerStatus, Named};
-use crate::components::{Panel, RefreshControl, StatTile};
+use crate::components::{InfoLink, InfoSection, Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
 
 const REFRESH_MS: u32 = 5 * 60 * 1000;
@@ -40,22 +40,62 @@ pub fn Computers() -> Element {
                             title: "Computers".to_string(),
                             value: list.len().to_string(),
                             desc: "assets in GLPI".to_string(),
-                            info: "Machines GLPI holds as assets. Most are created by an \
-                                   inventory agent the first time it reports; some are typed \
-                                   in by hand. Either way GLPI keeps showing them until \
-                                   somebody deletes them.".to_string(),
+                            body: "Machines GLPI holds as assets. Most are created by an inventory \
+                                   agent the first time it reports; some are typed in by hand."
+                                .to_string(),
+                            sections: vec![
+                                InfoSection::new(
+                                    "Where they come from",
+                                    "An agent reporting for the first time creates the record and \
+                                     keeps it current. A record can also be created by hand, in which \
+                                     case nothing will ever update it unless an agent is later \
+                                     installed and matched to it.",
+                                ),
+                                InfoSection::new(
+                                    "Why the count can surprise you",
+                                    "GLPI keeps an asset after the machine is gone - retiring hardware \
+                                     does not remove it, somebody has to. A rebuilt machine can also \
+                                     produce a second record rather than updating the first, if the \
+                                     identity the agent reports has changed.",
+                                ),
+                            ],
+                            links: vec![InfoLink::new("Computers", "front/computer.php")],
                         }
                         StatTile {
                             title: "Without an agent".to_string(),
                             value: orphans.to_string(),
                             alarm: orphans > 0,
                             desc: "nothing will update these".to_string(),
-                            info: "Computers that no agent reports for. Their details are \
-                                   frozen at whatever was last recorded, and nothing will \
-                                   ever correct them. This is harder to spot than an agent \
-                                   that went quiet: a machine with no agent does not go \
-                                   silent, it simply never changes again, which looks exactly \
-                                   like hardware that has not changed.".to_string(),
+                            body: "Computers that no agent reports for. Their details are frozen at \
+                                   whatever was last recorded, and nothing will ever correct them."
+                                .to_string(),
+                            sections: vec![
+                                InfoSection::new(
+                                    "Why this is hard to spot",
+                                    "An agent that stops reporting at least goes quiet, and the Agents \
+                                     page can measure that silence. A machine with no agent never goes \
+                                     quiet - it simply never changes again, which looks exactly like \
+                                     hardware that has not changed. GLPI shows it beside every other \
+                                     asset with nothing to distinguish it.",
+                                ),
+                                InfoSection::new(
+                                    "Common causes",
+                                    "The agent was never installed; it was removed or its package \
+                                     uninstalled; the machine was retired and the asset kept; or the \
+                                     record was created by hand and never matched to a real agent.",
+                                ),
+                                InfoSection::new(
+                                    "How this is worked out",
+                                    "Each agent in GLPI points at the item it inventories. This counts \
+                                     computers that no agent points at, matching on the record GLPI \
+                                     itself stores - so it reflects GLPI's own linkage, not a guess \
+                                     based on names.",
+                                ),
+                            ],
+                            links: vec![
+                                InfoLink::new("Computers", "front/computer.php"),
+                                InfoLink::new("Agents", "front/agent.php"),
+                            ],
                         }
                     }
 
@@ -63,10 +103,25 @@ pub fn Computers() -> Element {
                         title: "Computers".to_string(),
                         subtitle: "Without an agent first, then least recently inventoried".to_string(),
                         info: "The counterpart to the Agents page. That page asks which agents \
-                               stopped reporting; this asks which machines have no agent at \
-                               all. The Agent column says whether anything is keeping each \
-                               record up to date, and Last inventory is when GLPI last \
-                               changed it.".to_string(),
+                               stopped reporting; this asks which machines have no agent at all."
+                            .to_string(),
+                        info_sections: vec![
+                            InfoSection::new(
+                                "The columns",
+                                "Agent says whether anything is keeping the record up to date. \
+                                 Last inventory is when GLPI last changed it, and Age is the same \
+                                 figure in plain words. Serial comes from the machine's firmware, \
+                                 so it survives a rebuild and is the most reliable way to tell two \
+                                 records apart. Entity is which part of GLPI the record lives in.",
+                            ),
+                            InfoSection::new(
+                                "The order",
+                                "Machines without an agent first, then least recently inventoried. \
+                                 Both are reasons to look, and having no agent is the worse of the \
+                                 two because it will never resolve on its own.",
+                            ),
+                        ],
+                        info_links: vec![InfoLink::new("Computers", "front/computer.php")],
                         actions: rsx! {
                             RefreshControl {
                                 interval_label: REFRESH_LABEL.to_string(),

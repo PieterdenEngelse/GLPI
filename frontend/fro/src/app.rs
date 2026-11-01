@@ -37,6 +37,9 @@ pub fn App() -> Element {
     // absence of a data-theme attribute is already correct.
     use_hook(crate::theme::restore);
 
+    // Fetched once here so every info panel can link into GLPI.
+    crate::glpi_link::provide();
+
     rsx! {
         // Declared here rather than in Layout so the 404 - which sits outside
         // the layout by design - is styled like everything else.

@@ -13,7 +13,7 @@ pub mod theme_toggle;
 pub use global_error_bar::GlobalErrorBar;
 pub use header::Header;
 pub use health_dot::HealthDot;
-pub use info::InfoButton;
+pub use info::{InfoButton, InfoLink, InfoSection};
 pub use nav_tabs::NavTabs;
 pub use panel::Panel;
 pub use refresh_control::RefreshControl;

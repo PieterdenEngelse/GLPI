@@ -40,6 +40,7 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(api::AppState {
         static_dir,
+        glpi_url: cfg.glpi_url.clone(),
         glpi: glpi::Client::new(
             &cfg.glpi_url,
             cfg.client_id,

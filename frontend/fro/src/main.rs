@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod components;
+mod glpi_link;
 mod pages;
 mod theme;
 

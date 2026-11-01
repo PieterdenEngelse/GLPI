@@ -23,6 +23,10 @@ use crate::glpi::{
 
 pub struct AppState {
     pub glpi: Client,
+    /// GLPI's base URL, echoed to the UI so info panels can link into GLPI's
+    /// own screens. Not a secret - it is the address the user already types -
+    /// unlike the credentials beside it, which never leave this process.
+    pub glpi_url: String,
     /// Where the dx-built web bundle lives, if it is being served.
     pub static_dir: Option<std::path::PathBuf>,
     /// Hours without contact before an agent is called stale. 26 rather than
@@ -67,12 +71,14 @@ pub fn router(state: Arc<AppState>) -> Router {
 struct Health {
     status: &'static str,
     version: &'static str,
+    glpi_url: String,
 }
 
-async fn health() -> Json<Health> {
+async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
     Json(Health {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
+        glpi_url: state.glpi_url.clone(),
     })
 }
 

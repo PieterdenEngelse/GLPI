@@ -98,17 +98,25 @@ pub async fn fetch_entities() -> Result<Vec<Entity>, String> {
         .map_err(|e| e.to_string())
 }
 
-/// Liveness of this app's own backend, for the status dot and the error bar.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Health {
+    pub status: String,
+    pub version: String,
+    /// Where GLPI itself lives, so info panels can link into its screens.
+    pub glpi_url: String,
+}
+
+/// Liveness, plus the GLPI address.
 ///
-/// Deliberately not typed into a struct: nothing renders the body, only
-/// whether the request succeeded, and a shape change in /api/health should
-/// not be able to report the backend as down.
-pub async fn fetch_health() -> Result<(), String> {
+/// The status dot and the error bar only care whether this succeeded; the
+/// body matters just enough to build links, and every field is read through
+/// serde so a shape change degrades rather than being treated as "down".
+pub async fn fetch_health() -> Result<Health, String> {
     reqwest::get(api_url("/api/health"))
         .await
         .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map(|_| ())
+        .json::<Health>()
+        .await
         .map_err(|e| e.to_string())
 }
 

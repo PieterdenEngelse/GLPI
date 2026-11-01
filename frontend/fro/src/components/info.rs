@@ -43,14 +43,66 @@ pub fn InfoIcon() -> Element {
     }
 }
 
+/// One tab inside an info panel.
+#[derive(Clone, PartialEq)]
+pub struct InfoSection {
+    pub heading: String,
+    pub body: String,
+}
+
+impl InfoSection {
+    pub fn new(heading: &str, body: &str) -> Self {
+        Self {
+            heading: heading.into(),
+            body: body.into(),
+        }
+    }
+}
+
+/// A link into GLPI's own screens, given as a path relative to GLPI's base
+/// URL rather than an absolute address - the base is whatever this install is
+/// configured against, and hardcoding localhost would be wrong the moment
+/// GLPI moves.
+#[derive(Clone, PartialEq)]
+pub struct InfoLink {
+    pub label: String,
+    pub path: String,
+}
+
+impl InfoLink {
+    pub fn new(label: &str, path: &str) -> Self {
+        Self {
+            label: label.into(),
+            path: path.into(),
+        }
+    }
+}
+
 /// A button that explains the thing it sits next to.
 ///
+/// `body` is the short answer and always shows. `sections` are the longer
+/// ones, rendered as tabs so the panel stays one screen high however much it
+/// has to say. `links` land in GLPI itself, because most of what these
+/// explain is ultimately changed there, not here.
+///
 /// Owns its own open state, so adding one is a single element with no signal
-/// to thread through the caller. The overlay closes on a click outside, and
-/// the panel stops propagation so a click inside does not close it.
+/// to thread through the caller.
 #[component]
-pub fn InfoButton(title: String, body: String) -> Element {
+pub fn InfoButton(
+    title: String,
+    body: String,
+    #[props(default = vec![])] sections: Vec<InfoSection>,
+    #[props(default = vec![])] links: Vec<InfoLink>,
+) -> Element {
     let mut open = use_signal(|| false);
+    let mut tab = use_signal(|| 0usize);
+
+    // Resolved here, not in the loop: the context read is the same for every
+    // link and the base may still be empty while health is in flight.
+    let resolved: Vec<(String, Option<String>)> = links
+        .iter()
+        .map(|l| (l.label.clone(), crate::glpi_link::link(&l.path)))
+        .collect();
 
     rsx! {
         button {
@@ -58,18 +110,22 @@ pub fn InfoButton(title: String, body: String) -> Element {
             style: "{PARAM_ICON_BUTTON_STYLE}",
             title: "What this is",
             aria_label: "What \"{title}\" means",
-            onclick: move |_| open.set(true),
+            onclick: move |_| {
+                tab.set(0);
+                open.set(true);
+            },
             InfoIcon {}
         }
 
         if open() {
             div {
-                class: "fixed inset-0 z-[100] flex items-start justify-center bg-black/60 p-4 pt-24 backdrop-blur-sm",
+                class: "fixed inset-0 z-[100] flex items-start justify-center bg-black/60 p-4 pt-20 backdrop-blur-sm",
                 onclick: move |_| open.set(false),
                 div {
-                    class: "w-full max-w-md rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl",
+                    class: "max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl",
                     onclick: move |e: Event<MouseData>| e.stop_propagation(),
-                    div { class: "mb-3 flex items-center justify-between gap-3",
+
+                    div { class: "mb-3 flex items-start justify-between gap-3",
                         h3 { class: "text-base font-semibold", "{title}" }
                         button {
                             class: "btn btn-ghost btn-sm",
@@ -77,7 +133,51 @@ pub fn InfoButton(title: String, body: String) -> Element {
                             "Close"
                         }
                     }
+
                     p { class: "text-sm leading-relaxed text-base-content/80", "{body}" }
+
+                    if !sections.is_empty() {
+                        div { role: "tablist", class: "tabs tabs-border mt-4",
+                            for (i, s) in sections.iter().enumerate() {
+                                button {
+                                    key: "{s.heading}",
+                                    role: "tab",
+                                    class: if tab() == i { "tab tab-active" } else { "tab" },
+                                    onclick: move |_| tab.set(i),
+                                    "{s.heading}"
+                                }
+                            }
+                        }
+                        if let Some(s) = sections.get(tab()) {
+                            p { class: "mt-3 text-sm leading-relaxed text-base-content/80", "{s.body}" }
+                        }
+                    }
+
+                    if !resolved.is_empty() {
+                        div { class: "mt-5 border-t border-base-300 pt-3",
+                            div { class: "mb-1 text-xs font-medium text-base-content/60", "In GLPI" }
+                            ul { class: "space-y-1",
+                                for (label, href) in resolved.iter() {
+                                    li { key: "{label}",
+                                        if let Some(h) = href {
+                                            a {
+                                                class: "link link-primary text-sm",
+                                                href: "{h}",
+                                                // GLPI is a separate application; opening it
+                                                // in place would lose whatever the reader was
+                                                // looking at here.
+                                                target: "_blank",
+                                                rel: "noopener noreferrer",
+                                                "{label} ↗"
+                                            }
+                                        } else {
+                                            span { class: "text-sm text-base-content/50", "{label}" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
