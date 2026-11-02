@@ -104,6 +104,12 @@ gate:
 # The above plus clippy, for Rust code paths. Slower.
 gate-rust: gate
     cargo clippy --all-targets -- -D warnings
+    # The frontend is NOT covered by the line above. `default-members` is the
+    # backend, and the frontend is a wasm target, so a root clippy never
+    # compiles it - this recipe reported green while the UI was broken until
+    # this line existed. Same reason `cargo test` above only runs backend
+    # tests.
+    cargo clippy -p glpi-inv-frontend --target wasm32-unknown-unknown -- -D warnings
 
 # Copy the release binary and bundle to ~/.local/lib/glpi-inv, where the
 # systemd unit expects them. Deliberately a copy and not a symlink into
