@@ -55,104 +55,130 @@ fn Report(report: RightsReport) -> Element {
         .or_else(|| report.profiles.first().map(|p| p.id));
     let mut selected = use_signal(move || initial);
 
+    // Two halves of one question, separated because they are consulted at
+    // different moments: Profiles answers "what may this account do", Api
+    // answers "did the asking itself work". Profiles opens first - a reader
+    // reaches this page because of a permission, not because of a request.
+    let mut tab = use_signal(|| 0usize);
+
     let profiles = report.profiles.clone();
 
-    if profiles.is_empty() {
-        return rsx! {
+    // Resolved without indexing, so an empty list cannot panic here. The
+    // empty case is handled inside the Profiles tab rather than by returning
+    // early: returning would also remove the Api tab, which is precisely the
+    // one worth reading when GLPI returned no profiles.
+    let current = profiles
+        .iter()
+        .find(|p| Some(p.id) == selected())
+        .cloned()
+        .or_else(|| profiles.first().cloned());
+
+    rsx! {
+        div { role: "tablist", class: "tabs tabs-border mb-5",
+            button {
+                role: "tab",
+                class: if tab() == 0 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(0),
+                "Profiles"
+            }
+            button {
+                role: "tab",
+                class: if tab() == 1 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(1),
+                "Api"
+            }
+        }
+
+        if tab() == 1 {
+            CallPanel { calls: report.calls.clone() }
+        } else if profiles.is_empty() {
             div { class: "alert alert-warning",
                 div {
                     div { class: "font-semibold", "GLPI returned no profiles." }
                     div { class: "text-sm",
                         "Nothing to show. The account this app signs in with needs read access "
-                        "to profiles for this page to work; every other page is unaffected."
+                        "to profiles for this page to work; every other page is unaffected. "
+                        "The Api tab shows which call was refused."
                     }
                 }
             }
-        };
-    }
+        } else {
+            // The profile picker doubles as the overview: each button carries its
+            // own granted count, so the comparison an auditor wants - which
+            // profiles are permissive - is readable without selecting each one.
+            Panel {
+                title: "Profiles".to_string(),
+                subtitle: format!("{} in this GLPI", profiles.len()),
+                info: "Every profile GLPI holds, not only the ones this app's account may use. \
+                       Select one to see its rights in full."
+                    .to_string(),
+                info_sections: vec![
+                    InfoSection::new(
+                        "Why every profile is listed",
+                        "A permissions question is rarely about the profile you are already in. It \
+                         is usually either comparing one against another - this profile works and \
+                         that one does not - or checking that a profile nobody is watching has not \
+                         been given more than it needs.",
+                    ),
+                    InfoSection::new(
+                        "The active one",
+                        "Marked below. GLPI activates exactly one profile per session, so that is \
+                         the only one in force for this app; an account authorised for others gains \
+                         nothing from them until one becomes its default. The Status page shows the \
+                         authorisations side of this.",
+                    ),
+                    InfoSection::new(
+                        "Where this comes from",
+                        "GLPI's older API. Its current one cannot report the rights of any profile \
+                         except the one the request is already running as, and the header that \
+                         looks like it should change that is ignored for any profile the account is \
+                         not authorised for - returning the account's own rights, successfully, \
+                         under the other profile's name. Reading the rights directly avoids that \
+                         trap entirely.",
+                    ),
+                ],
+                info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
-    let current = profiles
-        .iter()
-        .find(|p| Some(p.id) == selected())
-        .cloned()
-        .unwrap_or_else(|| profiles[0].clone());
-
-    rsx! {
-        CallPanel { calls: report.calls.clone() }
-
-        // The profile picker doubles as the overview: each button carries its
-        // own granted count, so the comparison an auditor wants - which
-        // profiles are permissive - is readable without selecting each one.
-        Panel {
-            title: "Profiles".to_string(),
-            subtitle: format!("{} in this GLPI", profiles.len()),
-            info: "Every profile GLPI holds, not only the ones this app's account may use. \
-                   Select one to see its rights in full."
-                .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why every profile is listed",
-                    "A permissions question is rarely about the profile you are already in. It \
-                     is usually either comparing one against another - this profile works and \
-                     that one does not - or checking that a profile nobody is watching has not \
-                     been given more than it needs.",
-                ),
-                InfoSection::new(
-                    "The active one",
-                    "Marked below. GLPI activates exactly one profile per session, so that is \
-                     the only one in force for this app; an account authorised for others gains \
-                     nothing from them until one becomes its default. The Status page shows the \
-                     authorisations side of this.",
-                ),
-                InfoSection::new(
-                    "Where this comes from",
-                    "GLPI's older API. Its current one cannot report the rights of any profile \
-                     except the one the request is already running as, and the header that \
-                     looks like it should change that is ignored for any profile the account is \
-                     not authorised for - returning the account's own rights, successfully, \
-                     under the other profile's name. Reading the rights directly avoids that \
-                     trap entirely.",
-                ),
-            ],
-            info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
-
-            div { class: "flex flex-wrap gap-2",
-                for p in profiles.iter() {
-                    button {
-                        key: "{p.id}",
-                        class: if Some(p.id) == selected() {
-                            "btn btn-sm btn-primary"
-                        } else {
-                            "btn btn-sm btn-ghost border border-base-300"
-                        },
-                        onclick: {
-                            let id = p.id;
-                            move |_| selected.set(Some(id))
-                        },
-                        span { "{p.label()}" }
-                        span { class: "badge badge-sm", "{p.granted()}" }
-                        if p.writes() > 0 {
-                            span { class: "badge badge-warning badge-sm", "w" }
-                        }
-                        if p.is_active {
-                            span { class: "badge badge-success badge-sm", "active" }
+                div { class: "flex flex-wrap gap-2",
+                    for p in profiles.iter() {
+                        button {
+                            key: "{p.id}",
+                            class: if Some(p.id) == selected() {
+                                "btn btn-sm btn-primary"
+                            } else {
+                                "btn btn-sm btn-ghost border border-base-300"
+                            },
+                            onclick: {
+                                let id = p.id;
+                                move |_| selected.set(Some(id))
+                            },
+                            span { "{p.label()}" }
+                            span { class: "badge badge-sm", "{p.granted()}" }
+                            if p.writes() > 0 {
+                                span { class: "badge badge-warning badge-sm", "w" }
+                            }
+                            if p.is_active {
+                                span { class: "badge badge-success badge-sm", "active" }
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Keyed on the profile id, so selecting another profile rebuilds this
-        // subtree rather than reusing it. That resets the filter signals in
-        // the table below as a consequence of identity: a filter left over
-        // from the previous profile would otherwise read as that profile
-        // having fewer rights than it does.
-        div { class: "mt-5",
-            ProfilePanel {
-                key: "{current.id}",
-                profile: current,
-                grouped: report.taxonomy_rights > 0,
-                form_only: report.form_only_rights.clone(),
+            // Keyed on the profile id, so selecting another profile rebuilds this
+            // subtree rather than reusing it. That resets the filter signals in
+            // the table below as a consequence of identity: a filter left over
+            // from the previous profile would otherwise read as that profile
+            // having fewer rights than it does.
+            div { class: "mt-5",
+                if let Some(cur) = current.clone() {
+                    ProfilePanel {
+                        key: "{cur.id}",
+                        profile: cur,
+                        grouped: report.taxonomy_rights > 0,
+                        form_only: report.form_only_rights.clone(),
+                    }
+                }
             }
         }
     }
