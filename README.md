@@ -142,20 +142,41 @@ perfectly healthy, long after that agent went silent. GLPI has no notion of an
 agent being *overdue* — so a machine that stopped checking in weeks ago is
 indistinguishable from one that reported this morning.
 
-An axum backend reads agent telemetry from GLPI's High-Level API; a Dioxus web
-UI lists agents most-overdue first.
+An axum backend reads GLPI's API; a Dioxus web UI presents it.
+
+## What it shows
+
+| page | question it answers |
+|---|---|
+| Agents | Which agents have stopped reporting? Most overdue first. |
+| Computers | Which machines have **no agent at all** — assets nothing will ever update again. |
+| Status | Who is this app in GLPI, and may it see everything? Profile, entity, recursion, and every authorization the account holds. |
+| Rights | The full rights map of the active profile, grouped the way GLPI's own profile form groups it. |
+| About | What the app judges, and the three things it cannot see. |
+
+The last two exist because diagnosing a GLPI permission problem from outside
+GLPI is genuinely hard: a refusal names no right. See `~/docs/gl-rights.md`.
 
 ## Status
 
 Running against live GLPI, deployed as a systemd user unit on
-`127.0.0.1:3200`.
+`127.0.0.1:3200`, serving a dark/light themed UI built with Tailwind and
+daisyUI.
 
-- 14 tests pass; `clippy -D warnings` clean on both the native and wasm32
-  targets
-- the agent view works end to end against real data
-- `glpi-cli` probes the API directly, bypassing the backend and the browser
+- `nix develop --command just gate-rust` is the check — fmt, tests, and
+  clippy under `-D warnings`. No test count is quoted here deliberately: the
+  last one sat in this file until it was wrong by a factor of three.
+- `glpi-cli` probes the API directly, bypassing the backend and the browser.
 
 Credentials are yours to create once — see `docs/oauth-setup.md`.
+
+## Two GLPI APIs
+
+v2.3 (the High-Level API) for everything about inventory. v1 (`/apirest.php`)
+**only** for rights and authorizations, because v2.3 does not model them at
+all: `Profile_User` has zero occurrences in it, and its `Profile` schema
+carries neither `interface` nor any rights. The trade and its traps are in
+`CLAUDE.md` and `~/docs/gl-rights.md`.
 
 ## Layout
 
@@ -165,6 +186,7 @@ Follows [RERAG](https://github.com/PieterdenEngelse/RERAG)'s shape:
 backend/            axum service + GLPI API client
 frontend/fro/       Dioxus web UI
 tools/glpi-cli/     probe the GLPI API from a terminal
+scripts/            dump GLPI's right taxonomy (needs the glpi user)
 systemd/            user unit
 docs/               OAuth setup
 Justfile            the one definition of every command
@@ -182,7 +204,13 @@ nix develop --command just --list      # every command
 nix develop --command just gate        # fmt + tests
 nix develop --command just build       # backend
 nix develop --command just run         # needs credentials, see below
+nix develop --command just deploy      # install to ~/.local/lib + restart
 ```
+
+The stylesheet is generated. `assets/styling/output.css` is committed so a
+clone builds without npm, and `just css-build` regenerates it — the frontend
+recipes depend on it, because class names live in the `.rs` sources and a
+bundle shipping yesterday's CSS fails silently.
 
 Credentials, once: `docs/oauth-setup.md`. Both GLPI APIs and the OAuth flow
 ship **disabled**, and GLPI advertises its endpoints on the wrong port until
