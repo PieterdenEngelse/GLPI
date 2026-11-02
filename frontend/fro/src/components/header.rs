@@ -1,7 +1,14 @@
+use crate::app::Route;
 use crate::components::{HealthDot, NavTabs, ThemeToggle};
 use dioxus::prelude::*;
+use dioxus_router::{use_route, Link};
 
 /// The app bar: a thin sticky strip, not a page title block.
+///
+/// Note the deliberate mismatch: `text-lg` on `-sm` chrome. The links were
+/// asked to be ~30% larger, and taking the chrome up a size with them added
+/// 16px to the bar's height - which defeats the point of a thin bar. Larger
+/// text in smaller padding keeps both.
 ///
 /// Shaped after RERAG's header - mark on the left, small centred title with a
 /// live status dot, navigation on the right, `sticky top-0` with a raised
@@ -14,9 +21,11 @@ use dioxus::prelude::*;
 /// leave the wrong tab lit.
 #[component]
 pub fn Header() -> Element {
+    let current = use_route::<Route>();
+
     rsx! {
         header {
-            class: "sticky top-0 z-50 flex items-center gap-3 border-b border-base-300 bg-base-100/95 px-3 py-1.5 shadow-sm backdrop-blur",
+            class: "sticky top-0 z-50 flex items-center gap-3 border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur",
 
             // Mark. An inline SVG rather than an asset: one file fewer to
             // hash, bundle and cache-bust for a 20px square.
@@ -47,7 +56,21 @@ pub fn Header() -> Element {
 
             // ml-auto, not a spacer element: the toggle sits against the right
             // edge and everything before it keeps its natural width.
-            div { class: "ml-auto shrink-0", ThemeToggle {} }
+            div { class: "ml-auto flex shrink-0 items-center gap-1",
+                // Styled as a quiet action rather than a fifth tab: it is not
+                // a view of the data, and giving it tab chrome over here would
+                // read as a stray member of the group on the left.
+                Link {
+                    to: Route::About {},
+                    class: if matches!(current, Route::About { .. }) {
+                        "btn btn-ghost btn-sm text-lg btn-active"
+                    } else {
+                        "btn btn-ghost btn-sm text-lg text-base-content/70"
+                    },
+                    "About"
+                }
+                ThemeToggle {}
+            }
 
         }
     }

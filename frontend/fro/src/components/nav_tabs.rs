@@ -2,7 +2,9 @@ use crate::app::Route;
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
-/// The application's top-level navigation.
+/// The pages, as tabs. About is deliberately not among them - it describes
+/// the app rather than showing data, so it sits apart on the right of the bar
+/// and does not compete with the tabs a reader actually switches between.
 ///
 /// One list in one place, so adding a page is a single line rather than an
 /// edit in the header plus a matching edit wherever else tabs were pasted.
@@ -26,7 +28,7 @@ pub fn NavTabs() -> Element {
         (Route::Computers {}, "Computers"),
         (Route::Status {}, "Status"),
         (Route::Rights {}, "Rights"),
-        (Route::About {}, "About"),
+        (Route::Sec {}, "Security"),
     ];
 
     rsx! {
@@ -34,7 +36,7 @@ pub fn NavTabs() -> Element {
             for (route, label) in tabs {
                 Link {
                     key: "{label}",
-                    class: if is(&route) { "tab tab-active" } else { "tab" },
+                    class: if is(&route) { "tab text-lg tab-active" } else { "tab text-lg" },
                     to: route,
                     "{label}"
                 }

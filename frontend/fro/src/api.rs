@@ -39,8 +39,14 @@ pub struct AgentStatus {
 /// The backend serves this bundle, so its origin is always the right base and
 /// nothing needs configuring. Same origin also means no CORS. RERAG's api.rs
 /// guesses a port here because its frontend can run under `dx serve` on an
-/// origin the backend does not own; this app has no such split, and inventing
-/// one would add a way to misconfigure it.
+/// origin the backend does not own.
+///
+/// This app does have that split under `just dev-frontend`, and still does not
+/// guess: Dioxus.toml proxies /api from the dev server to the backend, so the
+/// page origin is the right base in both cases. Keeping the guess out of here
+/// means there is one way URLs are built and no dev-only branch to be wrong
+/// about - the difference is config in one file rather than a condition in
+/// this one.
 pub fn api_url(path: &str) -> String {
     let origin = web_sys::window()
         .and_then(|w| w.location().origin().ok())

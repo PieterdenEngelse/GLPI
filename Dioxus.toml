@@ -24,3 +24,20 @@ script = []
 
 [web.wasm_opt]
 level = "z"
+
+# Hot reload would otherwise show every data page in its error state.
+#
+# api.rs builds request URLs from the PAGE's own origin, which under `dx serve`
+# is the dev server, not the backend - so /api/* would hit the dev server,
+# which has no such routes, and the Rights page would render "could not read"
+# instead of a table. Forwarding /api to the real backend restores same-origin,
+# so the dev server behaves like the deployed bundle and no code has to know
+# which of the two is serving it.
+#
+# Verified rather than assumed: `dx check` accepts unknown tables silently, so
+# this was tested by serving on a spare port and confirming /api/rights came
+# back as 180 KB of real JSON rather than the dev server's 404.
+#
+# The backend must already be running - `just run`, or the installed service.
+[[web.proxy]]
+backend = "http://127.0.0.1:3200/api"

@@ -9,11 +9,23 @@
  * command touches rights. It lives only in Profile::getRightsForForm().
  *
  * WHY IT CALLS GLPI RATHER THAN PARSING IT. Parsing src/Profile.php with a
- * regex looks cheaper and does not work. Of its 104 class-based entries, seven
- * cannot be resolved statically: one is `self::class`, and Certificate, Grid,
- * Item_DeviceSimcard, TicketTask and TicketTemplate declare no literal
- * $rightname at all - theirs is computed or inherited at runtime. Asking GLPI
- * is the only complete answer.
+ * regex is possible but fragile, which is a weaker claim than an earlier
+ * version of this comment made - it said five classes compute their $rightname
+ * at runtime, and that is simply not true. They are all static literals; a
+ * naive parser just cannot see them:
+ *
+ *   - `self::class`        -> the enclosing class, Profile, so 'profile'
+ *   - Certificate          -> $rightname = "certificate", DOUBLE quotes
+ *   - TicketTask           -> inherits CommonITILTask::$rightname = 'task'
+ *   - TicketTemplate       -> inherits ITILTemplate::$rightname = 'itiltemplate'
+ *   - Item_DeviceSimcard   -> inherits Item_Devices::$rightname = 'device'
+ *   - Grid                 -> not an itemtype right at all
+ *
+ * A parser handling both quote styles, `self::class` and one level of
+ * inheritance would resolve every one. So the reason to call GLPI is not
+ * impossibility: it is that this is the function that RENDERS the form, so its
+ * answer cannot drift from what the form shows, where a parser tracking PHP
+ * inheritance chains across upgrades certainly can.
  *
  * WHY IT NEEDS THE glpi USER. getRightsForForm reaches CommonDBTM::getTable()
  * and so $DB->listFields(). A vendor/autoload.php-only bootstrap dies with

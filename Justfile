@@ -17,8 +17,18 @@ build-release:
     cargo build --release
 
 # Dioxus dev server with hot reload, for working on the UI.
+#
+# NEEDS THE BACKEND RUNNING - `just run` in another shell, or the installed
+# service. Dioxus.toml forwards /api to 127.0.0.1:3200; without something
+# there, every page renders its upstream-error state and the UI you are trying
+# to iterate on never appears.
+#
+# The port is pinned because dx does not document its default and GLPI already
+# holds 8080, which is the conventional one.
+
+# Dev server with hot reload on :8099. Needs the backend running.
 dev-frontend: css-build
-    dx serve --package glpi-inv-frontend
+    dx serve --package glpi-inv-frontend --port 8099
 
 # Installs the npm tree first if absent - 34 packages, seconds - so a fresh
 # clone is not left guessing why the CSS did not change.

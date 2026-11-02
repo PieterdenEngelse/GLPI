@@ -13,7 +13,7 @@
 //! backend/src/glpi/rights.rs for why v2.3 cannot answer this, and why the
 //! obvious v2.3 workaround silently answers it wrongly.
 use crate::api::{self, CallStatus, ProfileRights, RightEntry, RightsReport};
-use crate::components::{InfoLink, InfoSection, Panel, StatTile};
+use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
 
 #[component]
@@ -533,39 +533,6 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                      estate. A green row here rules out permissions as the cause; it does not \
                      promise data.",
                 ),
-                InfoSection::new(
-                    "v2.3 and v1",
-                    "GLPI serves two generations of interface side by side, and each request \
-                     above is tagged with the one it uses. v2.3 is the current one; v1 is the \
-                     older, lower-level one. GLPI lists five in all - v1, then v2.0, v2.1 and \
-                     v2.2 all marked deprecated, then v2.3 - so these two are the only ones \
-                     worth using: the newest, and the one that predates the series.",
-                ),
-                InfoSection::new(
-                    "Why both",
-                    "Not preference. The current interface cannot answer some questions at \
-                     all: it has no way to report the rights of any profile except the one it \
-                     is signed in as, and no way to report who may use which profile. GLPI \
-                     says as much itself, describing the older interface as more powerful and \
-                     able to do things the newer one cannot. So everything this app can get \
-                     from v2.3 it does, and v1 covers only the requests above with no newer \
-                     equivalent. The cost is that GLPI attaches no stability promise to v1 and \
-                     says it may change without warning - which is why it is confined to those \
-                     few, and why the v1 rows are the first place to look if this app breaks \
-                     after a GLPI upgrade.",
-                ),
-                InfoSection::new(
-                    "Same permissions",
-                    "Worth being explicit, because reaching for an older interface often is a \
-                     way around something. This is not. Both sign in as the same account and \
-                     are filtered by the same profile rights and the same entity scope - the \
-                     rights listed against a v1 request above are real and enforced, and it \
-                     reads nothing the account could not see in GLPI's own screens. Reading \
-                     GLPI's database directly would bypass all of that; this does not, which \
-                     is why it was the acceptable option. The two do accept different \
-                     credentials, so a sign-in failure usually hits the v2.3 rows or the v1 \
-                     rows rather than both - which group fails tells you where to look.",
-                ),
             ],
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
@@ -574,7 +541,70 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                     thead {
                         tr {
                             th { "Request" }
-                            th { "API" }
+                            // The explanation sits on the column whose badges
+                            // it explains, not in the panel's own info, which
+                            // is about the table as a whole. Same pairing as
+                            // the labels on the Status page.
+                            th {
+                                div { class: "flex items-center gap-2",
+                                    span { "API" }
+                                    InfoButton {
+                                        title: "API version".to_string(),
+                                        body: "Which of GLPI's two interfaces this request uses. \
+                                               The badge on each row below says v2.3 or v1."
+                                            .to_string(),
+                                        sections: vec![
+                                            InfoSection::new(
+                                                "v2.3 and v1",
+                                                "GLPI serves two generations of interface side \
+                                                 by side, and every request in this table is \
+                                                 tagged with the one it uses. v2.3 is the \
+                                                 current one; v1 is the older, lower-level one. \
+                                                 GLPI lists five in all - v1, then v2.0, v2.1 \
+                                                 and v2.2 all marked deprecated, then v2.3 - so \
+                                                 these two are the only ones worth using: the \
+                                                 newest, and the one that predates the series.",
+                                            ),
+                                            InfoSection::new(
+                                                "Why both",
+                                                "Not preference. The current interface cannot \
+                                                 answer some questions at all: it has no way to \
+                                                 report the rights of any profile except the one \
+                                                 it is signed in as, and no way to report who \
+                                                 may use which profile. GLPI says as much \
+                                                 itself, describing the older interface as more \
+                                                 powerful and able to do things the newer one \
+                                                 cannot. So everything this app can get from \
+                                                 v2.3 it does, and v1 covers only the requests \
+                                                 with no newer equivalent. The cost is that GLPI \
+                                                 attaches no stability promise to v1 and says it \
+                                                 may change without warning - which is why it is \
+                                                 confined to those few, and why the v1 rows are \
+                                                 the first place to look if this app breaks \
+                                                 after a GLPI upgrade.",
+                                            ),
+                                            InfoSection::new(
+                                                "Same permissions",
+                                                "Worth being explicit, because reaching for an \
+                                                 older interface often is a way around \
+                                                 something. This is not. Both sign in as the \
+                                                 same account and are filtered by the same \
+                                                 profile rights and the same entity scope - the \
+                                                 rights listed against a v1 request are real and \
+                                                 enforced, and it reads nothing the account \
+                                                 could not see in GLPI's own screens. Reading \
+                                                 GLPI's database directly would bypass all of \
+                                                 that; this does not, which is why it was the \
+                                                 acceptable option. The two do accept different \
+                                                 credentials, so a sign-in failure usually hits \
+                                                 the v2.3 rows or the v1 rows rather than both - \
+                                                 which group fails tells you where to look.",
+                                            ),
+                                        ],
+                                        links: vec![],
+                                    }
+                                }
+                            }
                             th { "Needs" }
                         }
                     }
