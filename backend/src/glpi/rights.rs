@@ -320,12 +320,31 @@ pub struct ApiCall {
     /// Which GLPI API: "v2.3" or "v1".
     pub api: String,
 
-    /// What stops working if this call fails.
-    pub used_for: String,
+    /// The features that stop working if this call fails.
+    ///
+    /// A list, not a sentence. One call commonly serves several - losing
+    /// `agent` takes out the Agents page AND the orphan column on the
+    /// Computers page - and that fan-out is the thing a reader needs to see.
+    /// As prose it was invisible to the UI and could not be grouped by.
+    pub features: Vec<CallFeature>,
 
     /// Every right this call needs READ on. More than one means ALL of them
     /// are required, not any.
     pub needs: Vec<String>,
+}
+
+/// One feature a call serves, and what it does for it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CallFeature {
+    /// Named as the reader would name it - the page or the element on it, not
+    /// the handler. Someone arrives at this panel thinking "the Computers page
+    /// is empty", never "Assets/Computer returned 403".
+    pub name: String,
+
+    /// What this call contributes to that feature, where it is not the whole
+    /// of it. `Inventory/Agent` is the Agents page outright, but only the
+    /// orphan check on the Computers page.
+    pub role: Option<String>,
 }
 
 /// One required right, resolved against a profile.
@@ -345,7 +364,7 @@ pub struct CallRight {
 pub struct CallStatus {
     pub path: String,
     pub api: String,
-    pub used_for: String,
+    pub features: Vec<CallFeature>,
     pub rights: Vec<CallRight>,
 
     /// Every right this call needs is held, so the call should not 403.
@@ -367,30 +386,49 @@ const READ: i64 = 1;
 /// which is why it sits beside the rights code rather than in api/mod.rs,
 /// where it would read as documentation.
 pub fn api_calls() -> Vec<ApiCall> {
-    let call = |path: &str, api: &str, used_for: &str, needs: &[&str]| ApiCall {
+    // Feature order on the page follows first appearance here, so this list is
+    // also the running order of the breakdown. One list to keep current rather
+    // than a second ordering table that could disagree with it.
+    let call = |path: &str, api: &str, needs: &[&str], features: &[(&str, Option<&str>)]| ApiCall {
         path: path.to_string(),
         api: api.to_string(),
-        used_for: used_for.to_string(),
         needs: needs.iter().map(|s| (*s).to_string()).collect(),
+        features: features
+            .iter()
+            .map(|(name, role)| CallFeature {
+                name: (*name).to_string(),
+                role: role.map(str::to_string),
+            })
+            .collect(),
     };
+
+    const AGENTS: &str = "Agents page";
+    const COMPUTERS: &str = "Computers page";
+    const SCOPE: &str = "Scope line under every table";
+    const STATUS: &str = "Status page";
+    const RIGHTS: &str = "Rights page";
+    const AUTHS: &str = "Authorizations table";
+
     vec![
+        // Serves two features, which is exactly the fan-out the old prose
+        // column could state but not structure.
         call(
             "Inventory/Agent",
             "v2.3",
-            "The Agents page, and the orphan check on the Computers page",
             &["agent"],
+            &[(AGENTS, None), (COMPUTERS, Some("orphan check"))],
         ),
         call(
             "Assets/Computer",
             "v2.3",
-            "The Computers page",
             &["computer"],
+            &[(COMPUTERS, None)],
         ),
         call(
             "Administration/Entity",
             "v2.3",
-            "The scope line under every table",
             &["entity"],
+            &[(SCOPE, None)],
         ),
         // No right: /session reports the caller's own session. Listed anyway,
         // because a reader counting the app's calls would wonder where it
@@ -398,34 +436,37 @@ pub fn api_calls() -> Vec<ApiCall> {
         call(
             "session",
             "v2.3",
-            "The Status page, and which profile is active here",
             &[],
+            &[(STATUS, None), (RIGHTS, Some("which profile is active"))],
         ),
+        // Both of these are read twice over: once to build this page, once by
+        // the authorizations handler. Verified against the call sites in
+        // api/mod.rs, not assumed from their names.
         call(
             "Profile",
             "v1",
-            "The profile list on this page",
             &["profile"],
+            &[(RIGHTS, Some("the profile list")), (AUTHS, None)],
         ),
         call(
             "ProfileRight",
             "v1",
-            "Every right on this page",
             &["profile"],
+            &[(RIGHTS, Some("every right shown")), (AUTHS, None)],
         ),
-        call(
-            "Profile_User",
-            "v1",
-            "The Authorizations table",
-            &["user", "profile"],
-        ),
+        call("Profile_User", "v1", &["user", "profile"], &[(AUTHS, None)]),
         call(
             "Entity",
             "v1",
-            "Entity names in Authorizations",
             &["entity"],
+            &[(AUTHS, Some("entity names"))],
         ),
-        call("getFullSession", "v1", "Which account this app is", &[]),
+        call(
+            "getFullSession",
+            "v1",
+            &[],
+            &[(AUTHS, Some("which account this app is"))],
+        ),
     ]
 }
 
@@ -595,7 +636,7 @@ impl RightsReport {
                     CallStatus {
                         path: c.path,
                         api: c.api,
-                        used_for: c.used_for,
+                        features: c.features,
                         // A call needing nothing is satisfied: `all` on an
                         // empty iterator is true, which is the right answer
                         // here rather than an accident of the fold.
@@ -1060,6 +1101,86 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Every call must name at least one feature, or it appears in the
+    /// breakdown under no heading and is effectively invisible.
+    #[test]
+    fn every_call_names_a_feature() {
+        for c in api_calls() {
+            assert!(
+                !c.features.is_empty(),
+                "call {} serves no named feature, so nothing would show it",
+                c.path
+            );
+        }
+    }
+
+    /// The fan-out the prose column could not express: a call serving two
+    /// features must appear under both, so one missing right visibly breaks
+    /// more than one page.
+    #[test]
+    fn a_call_serving_two_features_is_listed_under_both() {
+        let calls = api_calls();
+        let agent = calls
+            .iter()
+            .find(|c| c.path == "Inventory/Agent")
+            .expect("Inventory/Agent is the app's core call");
+        let names: Vec<&str> = agent.features.iter().map(|f| f.name.as_str()).collect();
+        assert!(
+            names.contains(&"Agents page") && names.contains(&"Computers page"),
+            "the agent call feeds both pages; got {names:?}"
+        );
+        // And the secondary use says what it is, rather than implying the
+        // whole page depends on it in the same way.
+        let computers = agent
+            .features
+            .iter()
+            .find(|f| f.name == "Computers page")
+            .unwrap();
+        assert_eq!(computers.role.as_deref(), Some("orphan check"));
+        assert!(
+            agent
+                .features
+                .iter()
+                .find(|f| f.name == "Agents page")
+                .unwrap()
+                .role
+                .is_none(),
+            "the Agents page IS this call, so it needs no qualifier"
+        );
+    }
+
+    /// A feature name used by two different calls must be spelled identically,
+    /// or the breakdown splits one page into two headings.
+    #[test]
+    fn feature_names_are_consistent_across_calls() {
+        let calls = api_calls();
+        let mut seen: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        for c in &calls {
+            for f in &c.features {
+                *seen.entry(f.name.clone()).or_default() += 1;
+            }
+        }
+        // Spot the near-miss spelling: any two names differing only by case or
+        // trailing whitespace would be a split heading.
+        let names: Vec<String> = seen.keys().cloned().collect();
+        for (i, a) in names.iter().enumerate() {
+            for b in names.iter().skip(i + 1) {
+                assert_ne!(
+                    a.trim().to_lowercase(),
+                    b.trim().to_lowercase(),
+                    "feature names {a:?} and {b:?} differ only cosmetically and would \
+                     render as two headings for one page"
+                );
+            }
+        }
+        // The Rights page is served by several calls; if that collapsed to one
+        // the grouping would have lost its point.
+        assert!(
+            seen.get("Rights page").copied().unwrap_or(0) >= 3,
+            "the Rights page depends on session, Profile and ProfileRight"
+        );
     }
 
     /// v1 truncates at the requested range and reports it only in a header the

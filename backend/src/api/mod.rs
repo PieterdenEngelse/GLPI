@@ -249,9 +249,14 @@ async fn session(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse
 /// How many ProfileRight rows to ask v1 for.
 ///
 /// 899 on a stock install - nine profiles at about a hundred rights each - so
-/// this is roughly a tenfold margin. It is not a target: `from_legacy` refuses
-/// the collection if the row count reaches it, because v1 truncates silently
-/// and a short rights list reads as rights that were never granted.
+/// this is roughly a tenfold margin. It is not a target.
+///
+/// Two independent guards sit behind it, and both are deliberate. `Legacy::get`
+/// refuses any collection v1 served only partly, which is the real protection
+/// and catches every call. `from_legacy` separately refuses a row count that
+/// reaches this limit, because it is a pure function that must not hand back a
+/// short rights list whatever it is fed - a right missing because it was never
+/// fetched reads exactly like a right that was never granted.
 const RIGHT_ROW_LIMIT: usize = 10_000;
 
 /// Every right of every profile in GLPI, not just the session's own.
@@ -292,7 +297,11 @@ async fn collect_rights(
 ) -> anyhow::Result<RightsReport> {
     let arr = |v: serde_json::Value| v.as_array().cloned().unwrap_or_default();
 
-    // Explicit ranges: v1 defaults to 0-50 and truncates silently.
+    // Explicit ranges: v1 applies a default limit and truncates past it -
+    // measured, a rangeless ProfileRight returns 15 of 899 rows. These are
+    // generous rather than tight because Legacy::get now REFUSES a truncated
+    // collection, so a range that turns out too small fails loudly and names
+    // the number to raise instead of shortening a list.
     let profiles = arr(legacy.get(session, "Profile", Some("0-999")).await?);
     let range = format!("0-{}", RIGHT_ROW_LIMIT - 1);
     let rights = arr(legacy.get(session, "ProfileRight", Some(&range)).await?);
@@ -357,7 +366,8 @@ async fn collect_authorizations(
         .and_then(|p| p.get("id"))
         .and_then(|v| v.as_i64());
 
-    // Explicit ranges throughout: v1 defaults to 0-50 and truncates silently.
+    // Explicit ranges throughout, for the reason in collect_rights: v1 limits
+    // by default, and Legacy::get refuses anything it served only partly.
     let arr = |v: serde_json::Value| v.as_array().cloned().unwrap_or_default();
     let links = arr(legacy.get(session, "Profile_User", Some("0-999")).await?);
     let profiles = arr(legacy.get(session, "Profile", Some("0-999")).await?);

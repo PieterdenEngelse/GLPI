@@ -493,13 +493,26 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
 
     let blocked = calls.iter().filter(|c| !c.satisfied).count();
 
+    // Counted over features rather than calls, because a feature is what
+    // breaks: one blocked request can take out two pages, and "1 blocked"
+    // would understate that.
+    let grouped = by_feature(&calls);
+    let broken_features = grouped
+        .iter()
+        .filter(|(_, rows)| rows.iter().any(|c| !c.satisfied))
+        .count();
+
     rsx! {
         Panel {
             title: "What this app asks GLPI for".to_string(),
             subtitle: if blocked == 0 {
-                format!("{} requests, all permitted", calls.len())
+                format!("{} features, {} requests, all permitted", grouped.len(), calls.len())
             } else {
-                format!("{} requests, {blocked} blocked", calls.len())
+                format!(
+                    "{broken_features} of {} features affected · {blocked} of {} requests blocked",
+                    grouped.len(),
+                    calls.len(),
+                )
             },
             info: "Every request this dashboard makes to GLPI, and whether the profile it \
                    signs in with is allowed to make it."
@@ -521,11 +534,37 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                      promise data.",
                 ),
                 InfoSection::new(
-                    "Two APIs",
-                    "Most of the app uses GLPI's current API. A few things it cannot answer at \
-                     all - who may use which profile, and the rights on this page - come from \
-                     the older one. Both sign in as the same account and obey the same \
-                     permissions, so the distinction matters only when reading an error.",
+                    "v2.3 and v1",
+                    "GLPI serves two generations of interface side by side, and each request \
+                     above is tagged with the one it uses. v2.3 is the current one; v1 is the \
+                     older, lower-level one. GLPI lists five in all - v1, then v2.0, v2.1 and \
+                     v2.2 all marked deprecated, then v2.3 - so these two are the only ones \
+                     worth using: the newest, and the one that predates the series.",
+                ),
+                InfoSection::new(
+                    "Why both",
+                    "Not preference. The current interface cannot answer some questions at \
+                     all: it has no way to report the rights of any profile except the one it \
+                     is signed in as, and no way to report who may use which profile. GLPI \
+                     says as much itself, describing the older interface as more powerful and \
+                     able to do things the newer one cannot. So everything this app can get \
+                     from v2.3 it does, and v1 covers only the requests above with no newer \
+                     equivalent. The cost is that GLPI attaches no stability promise to v1 and \
+                     says it may change without warning - which is why it is confined to those \
+                     few, and why the v1 rows are the first place to look if this app breaks \
+                     after a GLPI upgrade.",
+                ),
+                InfoSection::new(
+                    "Same permissions",
+                    "Worth being explicit, because reaching for an older interface often is a \
+                     way around something. This is not. Both sign in as the same account and \
+                     are filtered by the same profile rights and the same entity scope - the \
+                     rights listed against a v1 request above are real and enforced, and it \
+                     reads nothing the account could not see in GLPI's own screens. Reading \
+                     GLPI's database directly would bypass all of that; this does not, which \
+                     is why it was the acceptable option. The two do accept different \
+                     credentials, so a sign-in failure usually hits the v2.3 rows or the v1 \
+                     rows rather than both - which group fails tells you where to look.",
                 ),
             ],
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
@@ -537,54 +576,76 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                             th { "Request" }
                             th { "API" }
                             th { "Needs" }
-                            th { "What breaks without it" }
                         }
                     }
-                    tbody {
-                        for c in calls.iter() {
-                            tr { key: "{c.api}-{c.path}",
-                                td { class: "font-mono text-xs whitespace-nowrap",
-                                    if c.satisfied {
-                                        span { class: "badge badge-success badge-sm mr-2", "ok" }
+                    // One tbody per feature, so the top level is what a reader
+                    // would notice breaking - "the Computers page is empty" -
+                    // rather than an endpoint they have never heard of. A call
+                    // serving two features appears under both.
+                    for (feature, rows) in grouped.clone() {
+                        tbody { key: "{feature}",
+                            tr {
+                                th {
+                                    class: "bg-base-200 text-xs font-semibold",
+                                    colspan: "3",
+                                    "{feature}"
+                                    // The feature's own verdict: it is broken
+                                    // if ANY request it depends on is.
+                                    if rows.iter().any(|c| !c.satisfied) {
+                                        span { class: "badge badge-error badge-sm ml-2", "blocked" }
                                     } else {
-                                        span { class: "badge badge-error badge-sm mr-2", "blocked" }
+                                        span { class: "badge badge-success badge-sm ml-2", "ok" }
                                     }
-                                    "{c.path}"
                                 }
-                                td {
-                                    span { class: "badge badge-ghost badge-sm font-mono", "{c.api}" }
-                                }
-                                td {
-                                    if c.rights.is_empty() {
-                                        // Needs nothing, which is a real answer
-                                        // and not a gap in the table.
-                                        span { class: "text-xs text-base-content/50", "no right" }
-                                    } else {
-                                        div { class: "flex flex-wrap items-center gap-1",
-                                            for r in c.rights.iter() {
-                                                span {
-                                                    key: "{r.name}",
-                                                    class: if r.satisfied {
-                                                        "badge badge-ghost badge-sm font-mono"
-                                                    } else {
-                                                        "badge badge-error badge-sm font-mono"
-                                                    },
-                                                    title: match r.value {
-                                                        Some(v) => format!("{} is {v} on this profile", r.name),
-                                                        None => format!("GLPI records no entry for {} on this profile", r.name),
-                                                    },
-                                                    "{r.name}"
+                            }
+                            for c in rows {
+                                tr { key: "{c.api}-{c.path}",
+                                    td { class: "font-mono text-xs whitespace-nowrap",
+                                        if !c.satisfied {
+                                            span { class: "badge badge-error badge-sm mr-2", "blocked" }
+                                        }
+                                        "{c.path}"
+                                        // Why this call is here, when it is not
+                                        // the whole feature.
+                                        if let Some(role) = role_in(&c, &feature) {
+                                            span { class: "ml-2 text-xs text-base-content/60", "({role})" }
+                                        }
+                                    }
+                                    td {
+                                        span { class: "badge badge-ghost badge-sm font-mono", "{c.api}" }
+                                    }
+                                    td {
+                                        if c.rights.is_empty() {
+                                            // Needs nothing, which is a real
+                                            // answer and not a gap.
+                                            span { class: "text-xs text-base-content/50", "no right" }
+                                        } else {
+                                            div { class: "flex flex-wrap items-center gap-1",
+                                                for r in c.rights.iter() {
+                                                    span {
+                                                        key: "{r.name}",
+                                                        class: if r.satisfied {
+                                                            "badge badge-ghost badge-sm font-mono"
+                                                        } else {
+                                                            "badge badge-error badge-sm font-mono"
+                                                        },
+                                                        title: match r.value {
+                                                            Some(v) => format!("{} is {v} on this profile", r.name),
+                                                            None => format!("GLPI records no entry for {} on this profile", r.name),
+                                                        },
+                                                        "{r.name}"
+                                                    }
                                                 }
-                                            }
-                                            // Spelled out, because two badges
-                                            // side by side read as a choice.
-                                            if c.rights.len() > 1 {
-                                                span { class: "text-xs text-base-content/50", "(both required)" }
+                                                // Spelled out, because two
+                                                // badges side by side read as
+                                                // a choice.
+                                                if c.rights.len() > 1 {
+                                                    span { class: "text-xs text-base-content/50", "(both required)" }
+                                                }
                                             }
                                         }
                                     }
                                 }
-                                td { class: "text-xs text-base-content/70", "{c.used_for}" }
                             }
                         }
                     }
@@ -594,7 +655,10 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
             if blocked > 0 {
                 div { class: "alert alert-error mt-4",
                     div {
-                        div { class: "font-semibold", "{blocked} of this app's requests will be refused." }
+                        div { class: "font-semibold",
+                            "{blocked} of this app's requests will be refused, affecting "
+                            "{broken_features} of its features."
+                        }
                         div { class: "text-sm",
                             "Grant the rights marked in red to the active profile, in GLPI under "
                             "Administration → Profiles. Read is enough for every one of them - "
@@ -719,4 +783,39 @@ fn RightRow(entry: RightEntry) -> Element {
             }
         }
     }
+}
+
+/// Group the app's calls by the feature they serve.
+///
+/// Returns `(feature, calls)` in the order the backend lists them, which is
+/// the order `api_calls()` declares - deliberate running order rather than
+/// alphabetical, so the pages a reader is most likely to be looking at come
+/// first. A call serving several features is returned under each, because the
+/// point of this view is that one missing right can break more than one page.
+fn by_feature(calls: &[CallStatus]) -> Vec<(String, Vec<CallStatus>)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut map: std::collections::HashMap<String, Vec<CallStatus>> =
+        std::collections::HashMap::new();
+
+    for c in calls {
+        for f in &c.features {
+            if !map.contains_key(&f.name) {
+                order.push(f.name.clone());
+            }
+            map.entry(f.name.clone()).or_default().push(c.clone());
+        }
+    }
+
+    order
+        .into_iter()
+        .filter_map(|name| map.remove(&name).map(|rows| (name, rows)))
+        .collect()
+}
+
+/// What this call does for that feature, when it is not the whole of it.
+fn role_in(call: &CallStatus, feature: &str) -> Option<String> {
+    call.features
+        .iter()
+        .find(|f| f.name == feature)
+        .and_then(|f| f.role.clone())
 }

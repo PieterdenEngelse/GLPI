@@ -282,13 +282,25 @@ pub struct CallRight {
     pub satisfied: bool,
 }
 
+/// One feature a call serves. Mirrors the backend's CallFeature.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct CallFeature {
+    pub name: String,
+
+    /// What the call contributes, where it is not the whole feature.
+    pub role: Option<String>,
+}
+
 /// One of this app's calls, judged against the active profile. Mirrors the
 /// backend's CallStatus.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct CallStatus {
     pub path: String,
     pub api: String,
-    pub used_for: String,
+
+    /// Every feature this call serves. A call appears under each of them, so
+    /// one blocked right visibly breaks more than one page.
+    pub features: Vec<CallFeature>,
     pub rights: Vec<CallRight>,
     pub satisfied: bool,
 }

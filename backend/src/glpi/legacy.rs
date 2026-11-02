@@ -91,9 +91,14 @@ impl Legacy {
 
     /// GET a v1 path within a session, e.g. "Profile_User".
     ///
-    /// `range` is explicit because v1 defaults to 0-50 and silently truncates
-    /// past it - the same class of silent short answer the v2.3 client guards
-    /// against with its 206 check.
+    /// `range` is explicit because v1 applies a default limit and truncates
+    /// past it. Measured against 11.0.12, a rangeless
+    /// `GET /apirest.php/ProfileRight` returns 15 of 899 rows - not the 50
+    /// this comment used to claim.
+    ///
+    /// Truncation is REFUSED here rather than passed on, the same way the
+    /// v2.3 client refuses a 206. See `reject_partial` below for why v1's
+    /// status code is trustworthy enough to decide on.
     pub async fn get(
         &self,
         session: &Session,
@@ -119,12 +124,18 @@ impl Legacy {
             .with_context(|| format!("GET {url}"))?;
 
         let status = res.status();
+        // Read before the body is consumed; this header carries the only count
+        // of what was withheld.
+        let content_range = res
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
         let body = res.text().await.unwrap_or_default();
-        // 206 is normal here: v1 answers a ranged collection with Partial
-        // Content even when the range covers everything.
         if !status.is_success() {
             bail!("GLPI legacy {url} returned {status}: {body}");
         }
+        reject_partial(status, content_range.as_deref(), &url)?;
         serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
     }
 
@@ -139,5 +150,83 @@ impl Legacy {
         let (session, out) = f(session).await;
         self.kill_session(&session).await;
         out
+    }
+}
+
+/// Refuse a v1 collection that was only partly served.
+///
+/// This guard was missing, on the strength of a comment claiming "206 is
+/// normal here: v1 answers a ranged collection with Partial Content even when
+/// the range covers everything". That is not what it does. Measured against
+/// 11.0.12, on a 899-row collection:
+///
+///   range=0-9999  ->  200 OK              Content-Range: 0-898/899
+///   range=0-5     ->  206 Partial Content Content-Range: 0-5/899
+///   (no range)    ->  206 Partial Content Content-Range: 0-14/899
+///
+/// So v1 distinguishes complete from partial exactly as v2.3 does, and the
+/// status code alone is enough to decide. `reqwest`'s `is_success()` spans
+/// 200-299, so without this a 206 passed the check above and a short list
+/// rendered as the whole collection - the Authorizations table showing fewer
+/// authorizations than exist, with nothing to indicate it.
+///
+/// The ranges the callers pass are generous (0-999, 0-9999) and nothing here
+/// comes close today. That is the point: the limit is an assumption about
+/// somebody else's estate, and when it breaks it should break loudly and name
+/// the number to raise rather than quietly shorten a list.
+fn reject_partial(
+    status: reqwest::StatusCode,
+    content_range: Option<&str>,
+    url: &str,
+) -> Result<()> {
+    if status != reqwest::StatusCode::PARTIAL_CONTENT {
+        return Ok(());
+    }
+    let range = content_range.unwrap_or("no Content-Range header");
+    bail!(
+        "GLPI legacy {url} returned 206 Partial Content ({range}): this is part of the \
+         collection, not all of it. Refusing rather than showing a short list as a \
+         complete one - raise the `range` this call asks for."
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reject_partial;
+    use reqwest::StatusCode;
+
+    /// The operator needs the slice v1 actually served and the true total, or
+    /// the error says only that something was incomplete.
+    #[test]
+    fn a_206_is_refused_and_names_the_range() {
+        let err = reject_partial(
+            StatusCode::PARTIAL_CONTENT,
+            Some("0-14/899"),
+            "http://glpi/apirest.php/ProfileRight",
+        )
+        .expect_err("a partial collection must not pass as complete");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("0-14/899"), "served slice missing from: {msg}");
+        assert!(msg.contains("range"), "no hint at the fix in: {msg}");
+    }
+
+    /// A 206 is reason enough on its own; a proxy may strip the header.
+    #[test]
+    fn a_206_without_the_header_is_still_refused() {
+        assert!(reject_partial(StatusCode::PARTIAL_CONTENT, None, "u").is_err());
+    }
+
+    /// The case the old comment got wrong: a range covering the whole
+    /// collection comes back 200, carrying a Content-Range whose presence must
+    /// not be mistaken for truncation.
+    #[test]
+    fn a_complete_200_carrying_a_content_range_passes() {
+        assert!(reject_partial(StatusCode::OK, Some("0-898/899"), "u").is_ok());
+    }
+
+    /// Non-collection endpoints send no Content-Range at all.
+    #[test]
+    fn a_200_without_a_content_range_passes() {
+        assert!(reject_partial(StatusCode::OK, None, "u").is_ok());
     }
 }

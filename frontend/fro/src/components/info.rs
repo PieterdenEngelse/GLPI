@@ -137,7 +137,12 @@ pub fn InfoButton(
                     p { class: "text-sm leading-relaxed text-base-content/80", "{body}" }
 
                     if !sections.is_empty() {
-                        div { role: "tablist", class: "tabs tabs-border mt-4",
+                        // Scrollable rather than wrapping: a panel with several
+                        // sections would otherwise push its last tabs past the
+                        // edge of the modal, where they are unreachable.
+                        div {
+                            role: "tablist",
+                            class: "tabs tabs-border mt-4 flex-nowrap overflow-x-auto",
                             for (i, s) in sections.iter().enumerate() {
                                 button {
                                     key: "{s.heading}",
