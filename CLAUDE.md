@@ -83,6 +83,33 @@ quietly reach for SQL. Going direct to MariaDB bypasses GLPI's entity
 permissions and couples this app to GLPI's schema across upgrades, which is
 why the API is the default despite the gap.
 
+## Why this app speaks two GLPI APIs
+
+v2.3 for everything about inventory; **v1 (`/apirest.php`) only for rights and
+authorizations**, in `glpi/legacy.rs`. Verified by reading `src/Glpi/Api/HL/`,
+not assumed:
+
+- **`Profile_User` has zero occurrences anywhere under HL.** Who may use which
+  profile, on which entity, and whether that is recursive, is not modelled.
+- **HL's `Profile` schema carries neither `interface` nor any rights** — only
+  `id`, `name`, `comment`, `is_default`, `helpdesk_hardware`,
+  `helpdesk_item_type`, `managed_domainrecordtypes`, `mfa_enforced`.
+
+So v2.3 can describe the session it is already in and nothing else: it can say
+"something is missing" but never "this profile, on this entity, is the one to
+fix". That question is the whole point of the Status and Rights pages.
+
+This is a different trade from the MariaDB one above and must not be confused
+with it. **v1 does not bypass GLPI's permissions** — every call is still made
+as the service account and still filtered by its profile, which is the precise
+objection to going direct to SQL. What it does cost is stability: GLPI calls v1
+"closely tied to the GLPI source code ... no promise of stability between
+versions", and it needs its own authentication because it rejects the OAuth
+bearer outright.
+
+Do not reach for v1 for anything v2.3 already answers. The full reasoning, the
+endpoint-to-right mapping and fifteen traps are in `~/docs/gl-rights.md`.
+
 ## Conventions
 
 - **Field names mirror GLPI's schema exactly** (`deviceid`, not `device_id`),

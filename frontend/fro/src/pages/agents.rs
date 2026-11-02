@@ -56,9 +56,10 @@ pub fn Agents() -> Element {
                             "The columns",
                             "Status is the summary. Agent shows the name GLPI holds and, beneath \
                              it, the identifier the agent reports itself under - GLPI matches on \
-                             that identifier between runs, not on the hostname. Last contact is \
-                             the raw time of the last check-in and Age is the same figure in \
-                             plain words. Version is the agent's own version, useful for \
+                             that identifier between runs, not on the hostname - it is only shown when it \
+                             differs from the name. Age is how long since \
+                             the last check-in; hover it for the exact timestamp. Version is \
+                             the agent's own version, useful for \
                              spotting a fleet drifting apart. From is the address the last \
                              submission arrived from.",
                         ),
@@ -111,6 +112,13 @@ pub fn Agents() -> Element {
 
 #[component]
 fn AgentTable(agents: Vec<AgentStatus>) -> Element {
+    // GLPI sets tag only if services.glpi-agent.tag was configured, so on most
+    // installs the column is empty for every row. Dropping it when nothing has
+    // one keeps the table's width meaning something.
+    let any_tag = agents
+        .iter()
+        .any(|a| a.tag.as_deref().is_some_and(|t| !t.is_empty()));
+
     rsx! {
         // The table scrolls inside its own box; the page never scrolls sideways.
         div { class: "overflow-x-auto",
@@ -119,10 +127,11 @@ fn AgentTable(agents: Vec<AgentStatus>) -> Element {
                     tr {
                         th { "Status" }
                         th { "Agent" }
-                        th { "Last contact" }
                         th { "Age" }
                         th { "Version" }
-                        th { "Tag" }
+                        if any_tag {
+                            th { "Tag" }
+                        }
                         th { "From" }
                     }
                 }
@@ -138,10 +147,23 @@ fn AgentTable(agents: Vec<AgentStatus>) -> Element {
                             }
                             td {
                                 div { class: "font-medium", "{a.name.clone().unwrap_or_else(|| \"(unnamed)\".into())}" }
-                                div { class: "font-mono text-xs text-base-content/60", "{a.deviceid.clone().unwrap_or_default()}" }
+                                // GLPI names an agent after its deviceid unless
+                                // something else was set, so on most rows these
+                                // two strings are identical. Printing it twice
+                                // taught the reader nothing and cost a line.
+                                if a.deviceid.is_some() && a.deviceid != a.name {
+                                    div { class: "font-mono text-xs text-base-content/60",
+                                        "{a.deviceid.clone().unwrap_or_default()}"
+                                    }
+                                }
                             }
-                            td { class: "whitespace-nowrap text-base-content/80", "{a.last_contact.clone().unwrap_or_else(|| \"never\".into())}" }
-                            td { class: if a.stale { "whitespace-nowrap font-semibold text-error" } else { "whitespace-nowrap" },
+                            // The exact timestamp moves to the hover title. Age
+                            // is the question - "is this machine overdue" - and
+                            // the raw value was the widest column on the page
+                            // while answering it worst.
+                            td {
+                                class: if a.stale { "whitespace-nowrap font-semibold text-error" } else { "whitespace-nowrap" },
+                                title: "Last contact: {a.last_contact.clone().unwrap_or_else(|| \"never\".into())}",
                                 match a.hours_since_contact {
                                     Some(h) if h < 1 => "just now".to_string(),
                                     Some(h) if h < 48 => format!("{h}h ago"),
@@ -150,7 +172,9 @@ fn AgentTable(agents: Vec<AgentStatus>) -> Element {
                                 }
                             }
                             td { span { class: "badge badge-ghost badge-sm font-mono", "{a.version.clone().unwrap_or_default()}" } }
-                            td { class: "text-base-content/70", "{a.tag.clone().unwrap_or_default()}" }
+                            if any_tag {
+                                td { class: "text-base-content/70", "{a.tag.clone().unwrap_or_default()}" }
+                            }
                             td { class: "font-mono text-xs text-base-content/70", "{a.remote_address.clone().unwrap_or_default()}" }
                         }
                     }

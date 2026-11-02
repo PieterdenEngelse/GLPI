@@ -160,7 +160,6 @@ fn ComputerTable(computers: Vec<ComputerStatus>) -> Element {
                         th { "Agent" }
                         th { "Computer" }
                         th { "Type" }
-                        th { "Last inventory" }
                         th { "Age" }
                         th { "Serial" }
                         th { "Entity" }
@@ -178,15 +177,23 @@ fn ComputerTable(computers: Vec<ComputerStatus>) -> Element {
                             }
                             td {
                                 div { class: "font-medium", "{c.name.clone().unwrap_or_else(|| \"(unnamed)\".into())}" }
-                                div { class: "text-xs text-base-content/60",
-                                    "{Named::label(&c.manufacturer)} {Named::label(&c.model)}"
+                                // Skipped entirely when GLPI has neither, rather
+                                // than leaving a blank line under the name.
+                                if !Named::label(&c.manufacturer).is_empty()
+                                    || !Named::label(&c.model).is_empty()
+                                {
+                                    div { class: "text-xs text-base-content/60",
+                                        "{Named::label(&c.manufacturer)} {Named::label(&c.model)}"
+                                    }
                                 }
                             }
                             td { class: "text-base-content/80", "{Named::label(&c.kind)}" }
-                            td { class: "whitespace-nowrap text-base-content/80",
-                                "{c.last_inventory_update.clone().unwrap_or_else(|| \"never\".into())}"
-                            }
-                            td { class: "whitespace-nowrap",
+                            // Exact timestamp on hover, as on the Agents page: Age
+                            // answers the question, the raw value was the widest
+                            // column here and answered it worst.
+                            td {
+                                class: "whitespace-nowrap",
+                                title: "Last inventory: {c.last_inventory_update.clone().unwrap_or_else(|| \"never\".into())}",
                                 match c.hours_since_inventory {
                                     Some(h) if h < 1 => "just now".to_string(),
                                     Some(h) if h < 48 => format!("{h}h ago"),
