@@ -18,7 +18,7 @@ use axum::{
 use serde::Serialize;
 
 use crate::glpi::{
-    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, posture,
+    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, posture, refused::Db,
     rights::RightsReport, session::SessionInfo, Client,
 };
 
@@ -37,6 +37,11 @@ pub struct AppState {
     /// use which profile, on which entity, recursively or not. See
     /// glpi::legacy for why a second API is tolerated here.
     pub legacy: Legacy,
+
+    /// Direct database access, when configured. None is the normal case and
+    /// the app is fully functional without it - only the Refused page needs
+    /// it, because that data is in neither API.
+    pub db: Option<Db>,
     /// Where the dx-built web bundle lives, if it is being served.
     pub static_dir: Option<std::path::PathBuf>,
     /// Hours without contact before an agent is called stale. 26 rather than
@@ -54,6 +59,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/session", get(session))
         .route("/api/authorizations", get(authorizations))
         .route("/api/posture", get(security_posture))
+        .route("/api/refused", get(refused))
         .route("/api/rights", get(rights))
         .with_state(state.clone());
 
@@ -590,4 +596,46 @@ async fn security_posture(
         }),
         posture::versions(cfg_str("version"), &agents),
     ]))
+}
+
+/// What this app can say about refused submissions, including "nothing,
+/// because no database access is configured".
+#[derive(Serialize)]
+struct RefusedReport {
+    /// False when GLPI_DB_URL is unset. The page says so rather than showing
+    /// an empty table: "no refusals" and "cannot look" are opposite answers
+    /// and must not render the same.
+    configured: bool,
+    /// Entities the rows were restricted to, so the page can state its scope
+    /// the way every other page does.
+    entities: Vec<i64>,
+    rows: Vec<crate::glpi::refused::Refused>,
+}
+
+/// Submissions GLPI refused - the third failure, invisible to both APIs.
+async fn refused(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let Some(db) = state.db.as_ref() else {
+        return Ok(Json(RefusedReport {
+            configured: false,
+            entities: Vec::new(),
+            rows: Vec::new(),
+        }));
+    };
+
+    // Scope comes from the API, not the database. The database account has no
+    // notion of entities and could read every row; restricting to what the
+    // API already shows keeps this page meaning the same thing by
+    // "everything" as the others.
+    let raw = state.glpi.get("Administration/Entity").await?;
+    let entities: Vec<i64> = collection(&raw)
+        .iter()
+        .filter_map(|e| e.get("id").and_then(|v| v.as_i64()))
+        .collect();
+
+    let rows = db.refused(&entities).await?;
+    Ok(Json(RefusedReport {
+        configured: true,
+        entities,
+        rows,
+    }))
 }

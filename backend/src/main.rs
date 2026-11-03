@@ -42,6 +42,21 @@ async fn main() -> Result<()> {
         static_dir,
         glpi_url: cfg.glpi_url.clone(),
         bind: cfg.bind.clone(),
+        // A bad URL disables the feature with a warning rather than refusing
+        // to start: the other five pages do not need it.
+        db: cfg
+            .db_url
+            .as_deref()
+            .and_then(|u| match glpi::refused::Db::new(u) {
+                Ok(db) => {
+                    tracing::info!("GLPI database configured for refused submissions");
+                    Some(db)
+                }
+                Err(e) => {
+                    tracing::warn!("GLPI_DB_URL unusable, Refused page disabled: {e:#}");
+                    None
+                }
+            }),
         legacy: glpi::legacy::Legacy::new(
             &cfg.glpi_url,
             cfg.username.clone(),

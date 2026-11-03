@@ -27,6 +27,7 @@ pub mod computers;
 pub mod entities;
 pub mod legacy;
 pub mod posture;
+pub mod refused;
 pub mod rights;
 pub mod session;
 

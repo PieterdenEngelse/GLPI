@@ -28,6 +28,20 @@ pub struct Config {
     /// super-admin: this app only ever reads.
     pub username: String,
     pub password: String,
+
+    /// Optional direct read of GLPI's database, for the two tables neither
+    /// API exposes: refused submissions and field-level history.
+    ///
+    /// Absent by default and the app is fully functional without it - the
+    /// Refused page then says it is not configured rather than showing an
+    /// empty table, because "no refusals" and "cannot look" mean opposite
+    /// things.
+    ///
+    /// Expected to use socket authentication, which needs no password:
+    ///   mysql://pde@localhost/glpi?socket=/run/mysqld/mysqld.sock
+    /// The account should hold SELECT on glpi_refusedequipments and
+    /// glpi_logs and nothing else.
+    pub db_url: Option<String>,
 }
 
 impl Config {
@@ -42,6 +56,9 @@ impl Config {
             username: std::env::var("GLPI_USERNAME")
                 .context("GLPI_USERNAME is not set - the API authorises per user")?,
             password: std::env::var("GLPI_PASSWORD").context("GLPI_PASSWORD is not set")?,
+            db_url: std::env::var("GLPI_DB_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
         })
     }
 }

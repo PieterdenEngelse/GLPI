@@ -398,3 +398,41 @@ pub async fn fetch_posture() -> Result<Vec<PostureTile>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// One submission GLPI refused.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Refused {
+    pub id: i64,
+    pub name: Option<String>,
+    pub itemtype: Option<String>,
+    pub serial: Option<String>,
+    pub uuid: Option<String>,
+    pub ip: Option<String>,
+    pub mac: Option<String>,
+    pub method: Option<String>,
+    /// The rule that refused it - the actionable field.
+    pub rules_id: Option<i64>,
+    pub agents_id: Option<i64>,
+    pub entities_id: Option<i64>,
+    pub date_creation: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct RefusedReport {
+    /// False when no database access is configured. "No refusals" and
+    /// "cannot look" are opposite answers and the page renders them
+    /// differently.
+    pub configured: bool,
+    pub entities: Vec<i64>,
+    pub rows: Vec<Refused>,
+}
+
+/// Submissions GLPI refused - the one thing neither API exposes.
+pub async fn fetch_refused() -> Result<RefusedReport, String> {
+    reqwest::get(api_url("/api/refused"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<RefusedReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
