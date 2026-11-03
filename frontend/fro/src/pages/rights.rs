@@ -1040,14 +1040,23 @@ fn SortHeader(
                 },
                 onclick: move |_| on_pick.call(column),
                 "{label}"
-                span { class: "text-xs",
-                    if is_active {
-                        if desc { "\u{25BC}" } else { "\u{25B2}" }
+                // Always a triangle, never the up-down arrow this used to
+                // carry: at this size that glyph read as a colon after the
+                // label rather than as a control. A faded triangle pointing
+                // the way a click would sort says "sortable, not active"
+                // without introducing a second shape to learn.
+                //
+                // text-2xl is twice text-xs, which is what it was.
+                span {
+                    class: if is_active {
+                        "text-2xl leading-none"
                     } else {
-                        // A dim marker on every sortable column, so a reader
-                        // can tell which headings do something before
-                        // clicking one.
-                        "\u{2195}"
+                        "text-2xl leading-none text-base-content/30"
+                    },
+                    if is_active && desc {
+                        "\u{25BC}"
+                    } else {
+                        "\u{25B2}"
                     }
                 }
             }
