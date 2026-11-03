@@ -352,14 +352,69 @@ fn RightsTable(
     // so switching profiles rebuilds this component rather than reusing it.
     let mut query = use_signal(String::new);
     let mut granted_only = use_signal(|| false);
+    let mut sort_key = use_signal(|| SortKey::Name);
+    let mut sort_desc = use_signal(|| false);
+
+    // Which permission bits the Permissions sort ranks by. Empty means "rank
+    // by how many bits a right grants at all", which is the useful default:
+    // it brings the most permissive rights to the top.
+    let mut picked = use_signal(std::collections::BTreeSet::<String>::new);
+
+    // The bits that actually occur on THIS profile, read bits before write
+    // bits. Taken from the data rather than from a list held here: the
+    // backend already classifies each bit, and a second list in the frontend
+    // is a second thing to get wrong when GLPI adds one.
+    let bit_universe: Vec<(String, bool)> = {
+        let mut seen: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+        for e in &entries {
+            for b in &e.bits {
+                seen.insert(b.name.clone(), b.writes);
+            }
+        }
+        let mut v: Vec<(String, bool)> = seen.into_iter().collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        v
+    };
 
     let q = query().to_lowercase();
-    let visible: Vec<RightEntry> = entries
+    let mut visible: Vec<RightEntry> = entries
         .iter()
         .filter(|e| !granted_only() || e.granted())
         .filter(|e| q.is_empty() || e.name.to_lowercase().contains(&q))
         .cloned()
         .collect();
+
+    // Sorted before grouping, because group_rows preserves the order it is
+    // given within each heading - so the sort applies inside each tab rather
+    // than flattening the grouping the page just established.
+    {
+        let chosen = picked();
+        let desc = sort_desc();
+        visible.sort_by(|a, b| {
+            let ord = match sort_key() {
+                SortKey::Name => std::cmp::Ordering::Equal,
+                SortKey::Value => a.value.cmp(&b.value),
+                SortKey::Permissions => {
+                    // With bits chosen, rank by how many of THOSE a right
+                    // has; without, by how many it has in total. Ties fall
+                    // through to the raw value, so two rights that match
+                    // equally still order predictably.
+                    let score = |e: &RightEntry| {
+                        if chosen.is_empty() {
+                            e.bits.len()
+                        } else {
+                            e.bits.iter().filter(|b| chosen.contains(&b.name)).count()
+                        }
+                    };
+                    score(a).cmp(&score(b)).then(a.value.cmp(&b.value))
+                }
+            };
+            // Name is always the final tie-break, so the order is total and
+            // the table never reshuffles between renders.
+            let ord = if desc { ord.reverse() } else { ord };
+            ord.then(a.name.cmp(&b.name))
+        });
+    }
 
     let interface = profile
         .interface
@@ -432,6 +487,54 @@ fn RightsTable(
                 }
             }
 
+            // Only while sorting by Permissions. A row of twelve chips is a
+            // lot of furniture to carry on a column nobody is ordering by,
+            // and hiding it keeps the default table as plain as it was.
+            if sort_key() == SortKey::Permissions && !bit_universe.is_empty() {
+                div { class: "mb-3 flex flex-wrap items-center gap-2",
+                    span { class: "text-xs text-base-content/60", "Rank by:" }
+                    for (name, writes) in bit_universe.iter().cloned() {
+                        {
+                            let on = picked().contains(&name);
+                            let label = name.clone();
+                            rsx! {
+                                button {
+                                    key: "{label}",
+                                    class: if on {
+                                        if writes { "badge badge-warning badge-sm font-mono cursor-pointer" }
+                                        else { "badge badge-neutral badge-sm font-mono cursor-pointer" }
+                                    } else {
+                                        "badge badge-outline badge-sm font-mono cursor-pointer"
+                                    },
+                                    onclick: move |_| {
+                                        let mut set = picked();
+                                        if !set.remove(&label) {
+                                            set.insert(label.clone());
+                                        }
+                                        picked.set(set);
+                                    },
+                                    "{name}"
+                                }
+                            }
+                        }
+                    }
+                    if !picked().is_empty() {
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            onclick: move |_| picked.set(std::collections::BTreeSet::new()),
+                            "clear"
+                        }
+                    } else {
+                        // Says what the empty state means, rather than
+                        // leaving the reader to infer it from an unchanged
+                        // table.
+                        span { class: "text-xs text-base-content/50",
+                            "nothing picked - ranking by how many permissions each right grants"
+                        }
+                    }
+                }
+            }
+
             if visible.is_empty() {
                 // Distinct from the error state on purpose: this is an empty
                 // filter result or a genuinely empty profile, not a failure to
@@ -448,9 +551,33 @@ fn RightsTable(
                     table { class: "table table-sm",
                         thead {
                             tr {
-                                th { "Right" }
-                                th { "Value" }
-                                th { "Permissions" }
+                                SortHeader {
+                                    label: "Right".to_string(),
+                                    column: SortKey::Name,
+                                    active: sort_key(),
+                                    desc: sort_desc(),
+                                    on_pick: move |k| {
+                                        if sort_key() == k { sort_desc.toggle() } else { sort_key.set(k); sort_desc.set(false) }
+                                    },
+                                }
+                                SortHeader {
+                                    label: "Value".to_string(),
+                                    column: SortKey::Value,
+                                    active: sort_key(),
+                                    desc: sort_desc(),
+                                    on_pick: move |k| {
+                                        if sort_key() == k { sort_desc.toggle() } else { sort_key.set(k); sort_desc.set(false) }
+                                    },
+                                }
+                                SortHeader {
+                                    label: "Permissions".to_string(),
+                                    column: SortKey::Permissions,
+                                    active: sort_key(),
+                                    desc: sort_desc(),
+                                    on_pick: move |k| {
+                                        if sort_key() == k { sort_desc.toggle() } else { sort_key.set(k); sort_desc.set(false) }
+                                    },
+                                }
                             }
                         }
                         // One tbody per heading. With no taxonomy committed
@@ -874,4 +1001,56 @@ fn role_in(call: &CallStatus, feature: &str) -> Option<String> {
         .iter()
         .find(|f| f.name == feature)
         .and_then(|f| f.role.clone())
+}
+
+/// Which column the rights table is ordered by.
+///
+/// `Name` is the default and sorts on nothing of its own - every comparison
+/// falls through to the name tie-break, which is the order the table had
+/// before sorting existed.
+#[derive(Clone, Copy, PartialEq)]
+enum SortKey {
+    Name,
+    Value,
+    Permissions,
+}
+
+/// A clickable column heading.
+///
+/// Carries its own arrow so the active column and direction are visible
+/// without a legend. Clicking the active column reverses it; clicking another
+/// switches to it ascending, rather than inheriting the previous direction -
+/// a reversed sort you did not ask for reads as wrong data.
+#[component]
+fn SortHeader(
+    label: String,
+    column: SortKey,
+    active: SortKey,
+    desc: bool,
+    on_pick: EventHandler<SortKey>,
+) -> Element {
+    let is_active = active == column;
+    rsx! {
+        th {
+            button {
+                class: if is_active {
+                    "flex items-center gap-1 font-semibold cursor-pointer"
+                } else {
+                    "flex items-center gap-1 cursor-pointer text-base-content/70 hover:text-base-content"
+                },
+                onclick: move |_| on_pick.call(column),
+                "{label}"
+                span { class: "text-xs",
+                    if is_active {
+                        if desc { "\u{25BC}" } else { "\u{25B2}" }
+                    } else {
+                        // A dim marker on every sortable column, so a reader
+                        // can tell which headings do something before
+                        // clicking one.
+                        "\u{2195}"
+                    }
+                }
+            }
+        }
+    }
 }
