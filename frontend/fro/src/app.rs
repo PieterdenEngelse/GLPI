@@ -9,7 +9,10 @@
 //! link - without that fallback every path but / would 404 from the server
 //! before the router ever ran.
 use crate::components::{GlobalErrorBar, Header};
-use crate::pages::{About, Agents, Computers, Db, PageNotFound, Rights, Sec, Status};
+use crate::pages::{
+    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware,
+    PageNotFound, Rights, Sec, Status,
+};
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
 
@@ -23,6 +26,19 @@ pub enum Route {
         Computers {},
         #[route("/status")]
         Status {},
+        // The inventory section: a landing page and four views under it. Flat
+        // routes rather than nested - the sub-header is one component used by
+        // all five, so there is nothing a nested layout would factor out.
+        #[route("/inv")]
+        Inv {},
+        #[route("/inv/hardware")]
+        InvHardware {},
+        #[route("/inv/software")]
+        InvSoftware {},
+        #[route("/inv/network")]
+        InvNetwork {},
+        #[route("/inv/refused")]
+        InvRefused {},
         #[route("/rights")]
         Rights {},
         #[route("/db")]

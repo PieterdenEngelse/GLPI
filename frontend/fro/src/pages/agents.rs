@@ -137,10 +137,25 @@ fn AgentTable(agents: Vec<AgentStatus>) -> Element {
                 }
                 tbody {
                     for a in agents.iter() {
-                        tr { class: if a.stale { "bg-error/5" } else { "" },
+                        tr {
+                            class: if a.stale {
+                                "bg-error/5"
+                            } else if a.not_landing {
+                                "bg-warning/5"
+                            } else {
+                                ""
+                            },
                             td {
                                 if a.stale {
                                     span { class: "badge badge-error badge-sm", "stale" }
+                                } else if a.not_landing {
+                                    // Amber, not red: this agent is doing its job.
+                                    // Something downstream is discarding the result.
+                                    span {
+                                        class: "badge badge-warning badge-sm",
+                                        title: "Reporting normally, but its asset is not being updated",
+                                        "not landing"
+                                    }
                                 } else {
                                     span { class: "badge badge-success badge-sm", "ok" }
                                 }

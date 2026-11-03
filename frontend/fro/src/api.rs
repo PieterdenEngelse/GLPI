@@ -26,6 +26,12 @@ pub struct AgentStatus {
     pub remote_address: Option<String>,
     pub hours_since_contact: Option<i64>,
     pub stale: bool,
+
+    /// Reporting, but nothing it sends is being stored. Defaults to false so
+    /// a backend that predates this field degrades to the old two states
+    /// rather than failing to parse.
+    #[serde(default)]
+    pub not_landing: bool,
 }
 
 /// Absolute URL for a backend path, resolved against the page's own origin.

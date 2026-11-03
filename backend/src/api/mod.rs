@@ -123,14 +123,46 @@ impl From<anyhow::Error> for ApiError {
 async fn agents(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let raw = state.glpi.get("Inventory/Agent").await?;
 
-    let list = collection(&raw);
+    // Computers too, for the third failure state. An agent whose submissions
+    // are all refused keeps a current last_contact - GLPI stamps it from the
+    // metadata before the import rules run - so the only way to notice is
+    // that the asset it points at stopped being updated. See
+    // glpi::agents::not_landing.
+    //
+    // A failure here degrades rather than failing the page: without the
+    // computer list every agent simply reports no inventory age, which the
+    // check treats as "cannot say" and leaves unflagged. Losing one state is
+    // better than losing the fleet view that already works.
+    let inventory_age: std::collections::HashMap<i64, i64> =
+        match state.glpi.get("Assets/Computer").await {
+            Ok(raw) => collection(&raw)
+                .iter()
+                .filter_map(|c| {
+                    let computer: Computer = serde_json::from_value(c.clone()).ok()?;
+                    let hours = computer.hours_since_inventory()?;
+                    Some((computer.id, hours))
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("no computer list, so no not-landing detection: {e:#}");
+                Default::default()
+            }
+        };
 
-    let mut out = Vec::with_capacity(list.len());
-    for item in list {
+    let mut out = Vec::new();
+    for item in collection(&raw) {
         // Skip rather than fail the whole request: one agent row GLPI
         // reports in an unexpected shape should not blank the dashboard.
         match serde_json::from_value::<Agent>(item.clone()) {
-            Ok(a) => out.push(a.status(state.stale_after_hours)),
+            Ok(a) => {
+                // Only an agent attached to a Computer can be matched; GLPI
+                // can attach one to other itemtypes, where an id collision
+                // across types would otherwise read the wrong asset's age.
+                let hours = (a.itemtype.as_deref() == Some("Computer"))
+                    .then(|| a.items_id.and_then(|id| inventory_age.get(&id).copied()))
+                    .flatten();
+                out.push(a.status(state.stale_after_hours, hours));
+            }
             Err(e) => tracing::warn!("skipping unparseable agent row: {e}; raw={item}"),
         }
     }

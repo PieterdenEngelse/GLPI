@@ -12,6 +12,7 @@ use dioxus::prelude::*;
 pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
     let total = agents.len();
     let stale = agents.iter().filter(|a| a.stale).count();
+    let not_landing = agents.iter().filter(|a| a.not_landing).count();
     let reporting = total - stale;
 
     let oldest = agents
@@ -114,6 +115,41 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 links: vec![InfoLink::new("Agents", "front/agent.php")],
             }
 
+            StatTile {
+                title: "Not landing".to_string(),
+                value: not_landing.to_string(),
+                alarm: not_landing > 0,
+                desc: "reporting, nothing stored".to_string(),
+                body: "Agents that are checking in normally while nothing they send is \
+                       being kept."
+                    .to_string(),
+                sections: vec![
+                    InfoSection::new(
+                        "Why this looks healthy everywhere else",
+                        "GLPI records the moment of contact from the submission's own \
+                         header, before it inspects what was sent. If an import rule then \
+                         throws the submission away, the contact time has already been \
+                         written - so the agent appears to be reporting, because it is. \
+                         Nothing in GLPI's asset list says the data was discarded.",
+                    ),
+                    InfoSection::new(
+                        "How it is detected",
+                        "By comparing two dates GLPI does keep honestly: when the agent \
+                         last made contact, and when its machine's record was last \
+                         actually written. A machine whose details have not changed still \
+                         gets its record stamped, so a gap between the two means the \
+                         submissions are arriving and not being stored.",
+                    ),
+                    InfoSection::new(
+                        "What to do",
+                        "Look at the import rules in GLPI - something is matching this \
+                         machine and refusing it. The refusal itself is recorded in GLPI's \
+                         database but is not available through its API, so this page can \
+                         say that it is happening but not yet which rule is responsible.",
+                    ),
+                ],
+                links: vec![InfoLink::new("Import rules", "front/ruleimportasset.php")],
+            }
             StatTile {
                 title: "Oldest contact".to_string(),
                 value: oldest,
