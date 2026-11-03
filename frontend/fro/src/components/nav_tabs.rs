@@ -27,7 +27,7 @@ pub fn NavTabs() -> Element {
         (Route::Agents {}, "Agents"),
         (Route::Computers {}, "Computers"),
         (Route::Status {}, "Status"),
-        (Route::Inv {}, "inv"),
+        (Route::Inv {}, "Inv"),
         (Route::Rights {}, "Rights"),
         (Route::Db {}, "DB"),
         (Route::Sec {}, "Security"),
