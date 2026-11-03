@@ -409,10 +409,20 @@ fn RightsTable(
                     score(a).cmp(&score(b)).then(a.value.cmp(&b.value))
                 }
             };
-            // Name is always the final tie-break, so the order is total and
-            // the table never reshuffles between renders.
-            let ord = if desc { ord.reverse() } else { ord };
-            ord.then(a.name.cmp(&b.name))
+            // Name is the final tie-break, so the order is total and the
+            // table never reshuffles between renders.
+            //
+            // The reverse is applied AFTER that tie-break, not before it.
+            // Reversing first was a bug: the Name sort's primary comparison is
+            // Equal, and Equal.reverse() is still Equal, so the name tie-break
+            // ran ascending whatever the direction and clicking the Right
+            // heading a second time did nothing at all.
+            let ord = ord.then(a.name.cmp(&b.name));
+            if desc {
+                ord.reverse()
+            } else {
+                ord
+            }
         });
     }
 
@@ -583,7 +593,13 @@ fn RightsTable(
                         // One tbody per heading. With no taxonomy committed
                         // there is a single unheaded body, which is the flat
                         // list this page had before grouping existed.
-                        for (heading, rows) in group_rows(&visible, grouped) {
+                        // Grouping and sorting are competing orders, so an
+                        // explicit sort flattens the headings. Sorting by
+                        // Value inside 18 tab blocks leaves the first rows
+                        // unchanged and reads as a sort that did nothing -
+                        // which is exactly how it was reported. Name is the
+                        // default and keeps the grouped view.
+                        for (heading, rows) in group_rows(&visible, grouped && sort_key() == SortKey::Name) {
                             tbody { key: "{heading.clone().unwrap_or_default()}",
                                 if let Some(h) = heading {
                                     tr {
