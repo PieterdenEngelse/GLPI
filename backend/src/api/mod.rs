@@ -18,8 +18,8 @@ use axum::{
 use serde::Serialize;
 
 use crate::glpi::{
-    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, rights::RightsReport,
-    session::SessionInfo, Client,
+    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, posture,
+    rights::RightsReport, session::SessionInfo, Client,
 };
 
 pub struct AppState {
@@ -28,6 +28,10 @@ pub struct AppState {
     /// own screens. Not a secret - it is the address the user already types -
     /// unlike the credentials beside it, which never leave this process.
     pub glpi_url: String,
+
+    /// What this dashboard binds to, reported by the posture page. Loopback
+    /// is the default and anything wider is a deliberate choice worth seeing.
+    pub bind: String,
 
     /// The legacy v1 client, used only for what v2.3 does not expose: who may
     /// use which profile, on which entity, recursively or not. See
@@ -49,6 +53,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/computers", get(computers))
         .route("/api/session", get(session))
         .route("/api/authorizations", get(authorizations))
+        .route("/api/posture", get(security_posture))
         .route("/api/rights", get(rights))
         .with_state(state.clone());
 
@@ -427,4 +432,130 @@ async fn collect_authorizations(
     // for when something is refused.
     out.sort_by_key(|a| std::cmp::Reverse(a.is_active));
     Ok(out)
+}
+
+/// Security posture: four tiles, each judged by glpi::posture from data GLPI
+/// already reports.
+///
+/// One handler rather than four, and one legacy session rather than several:
+/// the tiles are read together, and GLPI allocates server-side state per
+/// session that must be handed back.
+async fn security_posture(
+    State(state): State<Arc<AppState>>,
+) -> Result<impl IntoResponse, ApiError> {
+    // v2.3 first - if these fail the whole page is wrong anyway, and failing
+    // before opening a legacy session means there is none to leak.
+    let users_raw = state.glpi.get("Administration/User").await?;
+    let agents_raw = state.glpi.get("Inventory/Agent").await?;
+    let session_raw = state.glpi.get("session").await?;
+    let active_profile_id = session_raw
+        .get("active_profile")
+        .and_then(|p| p.get("id"))
+        .and_then(|v| v.as_i64());
+
+    let inner = Arc::clone(&state);
+    let (report, auths, config) = state
+        .legacy
+        .with_session(|session| async move {
+            let out = async {
+                let report = collect_rights(&inner.legacy, &session, active_profile_id).await?;
+                let auths = collect_authorizations(&inner.legacy, &session).await?;
+                let config = inner.legacy.get(&session, "getGlpiConfig", None).await?;
+                anyhow::Ok((report, auths, config))
+            }
+            .await;
+            (session, out)
+        })
+        .await?;
+
+    let cfg = config.get("cfg_glpi");
+    let cfg_str = |k: &str| cfg.and_then(|c| c.get(k)).and_then(|v| v.as_str());
+    // GLPI returns config values as STRINGS, including numeric ones:
+    // system_user comes back as "6", not 6. Taking as_i64() alone yields None
+    // and the caller silently loses the setting - which is how GLPI's own
+    // system account stayed flagged on this page after being excluded.
+    let cfg_i64 = |k: &str| {
+        cfg.and_then(|c| c.get(k)).and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        })
+    };
+    // GLPI writes these as 1/0, and has used strings for them historically.
+    let cfg_bool = |k: &str| {
+        cfg.and_then(|c| c.get(k)).and_then(|v| {
+            v.as_bool()
+                .or_else(|| v.as_i64().map(|n| n != 0))
+                .or_else(|| v.as_str().map(|s| s != "0" && !s.is_empty()))
+        })
+    };
+
+    let active = report.profiles.iter().find(|p| p.is_active);
+    let write_rights: Vec<String> = active
+        .map(|p| {
+            p.entries
+                .iter()
+                // `writes` travels with the bit on purpose - see RightBit.
+                // Re-deriving it from the right's name here would be the
+                // exact split that comment warns about.
+                .filter(|e| e.bits.iter().any(|b| b.writes))
+                .map(|e| e.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let spare: Vec<String> = auths
+        .iter()
+        .filter(|a| !a.is_active)
+        .map(|a| format!("{} on {}", a.profile, a.entity))
+        .collect();
+
+    let access = posture::access(&posture::AccessInput {
+        profile_name: active.and_then(|p| p.name.as_deref()),
+        interface: active.and_then(|p| p.interface.as_deref()),
+        write_rights,
+        spare_authorizations: spare,
+    });
+
+    let users: Vec<posture::UserRow> = collection(&users_raw)
+        .iter()
+        .map(|u| {
+            let text = |k: &str| u.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            let flag = |k: &str| u.get(k).and_then(|v| v.as_bool()).unwrap_or(false);
+            posture::UserRow {
+                id: u.get("id").and_then(|v| v.as_i64()).unwrap_or(-1),
+                name: text("username")
+                    .or_else(|| text("name"))
+                    .unwrap_or_default(),
+                is_active: flag("is_active"),
+                is_deleted: flag("is_deleted"),
+                last_login: text("last_login"),
+                password_changed: text("date_password_change"),
+            }
+        })
+        .collect();
+
+    let agents: Vec<(String, Option<String>)> = collection(&agents_raw)
+        .iter()
+        .map(|a| {
+            let text = |k: &str| a.get(k).and_then(|v| v.as_str()).map(str::to_string);
+            (
+                text("name")
+                    .or_else(|| text("deviceid"))
+                    .unwrap_or_default(),
+                text("version"),
+            )
+        })
+        .collect();
+
+    Ok(Json(vec![
+        access,
+        posture::accounts(&users, cfg_i64("system_user")),
+        posture::exposure(&posture::ExposureInput {
+            bind: &state.bind,
+            url_base: cfg_str("url_base"),
+            enable_api: cfg_bool("enable_api"),
+            enable_api_login_credentials: cfg_bool("enable_api_login_credentials"),
+        }),
+        posture::versions(cfg_str("version"), &agents),
+    ]))
 }

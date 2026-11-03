@@ -78,10 +78,18 @@ GLPI 11.0.12, not assumed:
   changed between runs" is unreachable too.
 
 Both live in the database. The options are a read-only MariaDB user scoped to
-those two tables, or doing without. **That choice has not been made** — do not
-quietly reach for SQL. Going direct to MariaDB bypasses GLPI's entity
+those two tables, or doing without. **Still not decided for those two** — do
+not quietly reach for SQL. Going direct to MariaDB bypasses GLPI's entity
 permissions and couples this app to GLPI's schema across upgrades, which is
 why the API is the default despite the gap.
+
+What *has* been settled, in `~/docs/gl-db-api.md`: a database account does not
+help with anything about the API itself. The endpoint list, each endpoint's
+field list, the right → (tab, group) taxonomy, and which right an endpoint
+requires are all PHP, not rows. And where a question *is* answerable outside
+v2.3, the legacy v1 API answers it at lower cost — same account, same profile
+rights, same entity scope, none of which direct SQL preserves. So the open
+question is now narrow: `RefusedEquipment` and `glpi_logs` only.
 
 ## Why this app speaks two GLPI APIs
 

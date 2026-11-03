@@ -26,6 +26,7 @@ pub mod agents;
 pub mod computers;
 pub mod entities;
 pub mod legacy;
+pub mod posture;
 pub mod rights;
 pub mod session;
 

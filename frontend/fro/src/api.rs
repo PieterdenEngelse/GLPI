@@ -360,3 +360,35 @@ pub async fn fetch_authorizations() -> Result<Vec<Authorization>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// One observation inside a posture tile.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Finding {
+    /// "ok", "attention" or "unknown". Kept as a string rather than an enum:
+    /// a state this build does not recognise should render as unknown, not
+    /// fail the whole page to a parse error.
+    pub state: String,
+    pub label: String,
+    pub detail: String,
+    /// Path into GLPI where this is changed, relative to its base URL.
+    pub link: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PostureTile {
+    pub id: String,
+    pub title: String,
+    pub state: String,
+    pub findings: Vec<Finding>,
+    pub cannot_check: String,
+}
+
+/// The four posture tiles.
+pub async fn fetch_posture() -> Result<Vec<PostureTile>, String> {
+    reqwest::get(api_url("/api/posture"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<PostureTile>>()
+        .await
+        .map_err(|e| e.to_string())
+}
