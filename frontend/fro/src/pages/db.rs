@@ -30,20 +30,207 @@ pub fn Db() -> Element {
         _ => None,
     };
 
+    let mut tab = use_signal(|| 0usize);
+
     rsx! {
-        match counts {
-            Some(c) => rsx! { Counts { counts: c } },
-            None => rsx! {
-                div { class: "mb-5 text-sm text-base-content/60",
-                    "The figures on this page are read live and are not available right now; "
-                    "the rest of the page is reference and is unaffected."
-                }
-            },
+        div { role: "tablist", class: "tabs tabs-border mb-5",
+            button {
+                role: "tab",
+                class: if tab() == 0 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(0),
+                "Overview"
+            }
+            button {
+                role: "tab",
+                class: if tab() == 1 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(1),
+                "Schema"
+            }
         }
 
-        WhereItLives {}
-        div { class: "mt-5", NotInTheDatabase {} }
-        div { class: "mt-5", CustomObjects {} }
+        if tab() == 1 {
+            Schema {}
+        } else {
+            match counts {
+                Some(c) => rsx! { Counts { counts: c } },
+                None => rsx! {
+                    div { class: "mb-5 text-sm text-base-content/60",
+                        "The figures on this page are read live and are not available right now; "
+                        "the rest of the page is reference and is unaffected."
+                    }
+                },
+            }
+
+            WhereItLives {}
+            div { class: "mt-5", NotInTheDatabase {} }
+            div { class: "mt-5", CustomObjects {} }
+        }
+    }
+}
+
+/// The schema this app is coupled to, column by column.
+///
+/// Worth a tab of its own because it is the whole cost of reading the database
+/// rather than the API. The API names a field it no longer has; SQL does not -
+/// a renamed column returns nothing and the page shows a blank. So the columns
+/// depended on are written down where someone can compare them against a GLPI
+/// release, rather than left to be discovered from an empty table.
+///
+/// Read from GLPI's own install SQL, not queried from the live database. The
+/// grant is two tables of SELECT and gives no way to ask what the columns are.
+#[component]
+fn Schema() -> Element {
+    rsx! {
+        Panel {
+            title: "glpi_refusedequipments".to_string(),
+            subtitle: "Granted, and read - 12 of its 14 columns".to_string(),
+            info: "The submissions GLPI threw away. This is the table the refused view reads, \
+                   and the only source for it anywhere."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why the columns are listed at all",
+                    "Because this is the cost of reading a database instead of an API. An API \
+                     that drops a field says which field; a query for a column that no longer \
+                     exists just fails, and a column quietly renamed returns nothing. Every \
+                     column here is treated as optional and renders blank rather than failing \
+                     the page, so the failure mode is a gap on screen - which is only \
+                     diagnosable if the expected columns are written down somewhere.",
+                ),
+                InfoSection::new(
+                    "The name is plural, and that cost a GRANT",
+                    "The table is glpi_refusedequipments. GLPI pluralises its table names, so \
+                     searching the source for the singular matches every occurrence of the \
+                     plural as a prefix and reads back as confirmation that the singular is \
+                     right. That mistake reached a real GRANT statement, which failed with \
+                     \u{201c}Table glpi.glpi_refusedequipment doesn't exist\u{201d}.",
+                ),
+                InfoSection::new(
+                    "Where this comes from",
+                    "GLPI's own install SQL for 11.0.12, not the live database. The grant is \
+                     SELECT on two tables and carries no way to ask what columns they have, so \
+                     this list is as current as the GLPI release it was read from - which is \
+                     the honest limit of it.",
+                ),
+            ],
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Column" }
+                            th { "Type" }
+                            th { "Used" }
+                        }
+                    }
+                    tbody {
+                        Col { name: "id".to_string(), ty: "int unsigned".to_string(), used: Some("row identity".to_string()) }
+                        Col { name: "name".to_string(), ty: "varchar(255)".to_string(), used: Some("what was refused".to_string()) }
+                        Col { name: "itemtype".to_string(), ty: "varchar(100)".to_string(), used: Some("what kind of thing".to_string()) }
+                        Col { name: "entities_id".to_string(), ty: "int unsigned".to_string(), used: Some("the entity restriction".to_string()) }
+                        Col { name: "ip".to_string(), ty: "text".to_string(), used: Some("where it came from".to_string()) }
+                        Col { name: "mac".to_string(), ty: "text".to_string(), used: Some("where it came from".to_string()) }
+                        Col { name: "rules_id".to_string(), ty: "int unsigned".to_string(), used: Some("which rule refused it".to_string()) }
+                        Col { name: "method".to_string(), ty: "varchar(255)".to_string(), used: Some("how it was submitted".to_string()) }
+                        Col { name: "serial".to_string(), ty: "varchar(255)".to_string(), used: Some("identifying the machine".to_string()) }
+                        Col { name: "uuid".to_string(), ty: "varchar(255)".to_string(), used: Some("identifying the machine".to_string()) }
+                        Col { name: "agents_id".to_string(), ty: "int unsigned".to_string(), used: Some("which agent sent it".to_string()) }
+                        Col { name: "date_creation".to_string(), ty: "timestamp".to_string(), used: Some("when, and the sort order".to_string()) }
+                        Col { name: "date_mod".to_string(), ty: "timestamp".to_string(), used: None }
+                        Col { name: "autoupdatesystems_id".to_string(), ty: "int unsigned".to_string(), used: None }
+                    }
+                }
+            }
+        }
+
+        div { class: "mt-5",
+            Panel {
+                title: "glpi_logs".to_string(),
+                subtitle: "Granted, and not read by anything yet".to_string(),
+                info: "GLPI's own change history. The grant covers it; no query in this app \
+                       touches it."
+                    .to_string(),
+                info_sections: vec![
+                    InfoSection::new(
+                        "Why grant a table nothing reads",
+                        "It was granted alongside the refused table because it is the other \
+                         thing neither API exposes, and because widening a grant later means \
+                         another round of deciding. That is a defensible trade and also a real \
+                         one: a grant wider than the code that uses it is access nobody is \
+                         checking the need for. It is listed here rather than left implicit so \
+                         the gap is visible - either something comes to use it, or it should \
+                         come out of the grant.",
+                    ),
+                    InfoSection::new(
+                        "What it would answer",
+                        "What changed on an asset between two inventory runs. The API exposes \
+                         no field-level history at all, so \u{201c}this machine's memory \
+                         halved last Tuesday\u{201d} is unanswerable without this table.",
+                    ),
+                ],
+
+                div { class: "overflow-x-auto",
+                    table { class: "table table-sm",
+                        thead {
+                            tr {
+                                th { "Column" }
+                                th { "Type" }
+                                th { "Used" }
+                            }
+                        }
+                        tbody {
+                            Col { name: "id".to_string(), ty: "int unsigned".to_string(), used: None }
+                            Col { name: "itemtype".to_string(), ty: "varchar(100)".to_string(), used: None }
+                            Col { name: "items_id".to_string(), ty: "int unsigned".to_string(), used: None }
+                            Col { name: "itemtype_link".to_string(), ty: "varchar(100)".to_string(), used: None }
+                            Col { name: "linked_action".to_string(), ty: "int".to_string(), used: None }
+                            Col { name: "user_name".to_string(), ty: "varchar(255)".to_string(), used: None }
+                            Col { name: "date_mod".to_string(), ty: "timestamp".to_string(), used: None }
+                            Col { name: "id_search_option".to_string(), ty: "int".to_string(), used: None }
+                            Col { name: "old_value".to_string(), ty: "varchar(255)".to_string(), used: None }
+                            Col { name: "new_value".to_string(), ty: "varchar(255)".to_string(), used: None }
+                            Col { name: "old_id".to_string(), ty: "int unsigned".to_string(), used: None }
+                            Col { name: "new_id".to_string(), ty: "int unsigned".to_string(), used: None }
+                        }
+                    }
+                }
+            }
+        }
+
+        div { class: "mt-5 max-w-prose text-sm text-base-content/70",
+            "No other table is granted, so no other table has a schema this app can be broken              by. The rights values on the Rights page come from GLPI's API, not from "
+            span { class: "font-mono", "glpi_profilerights" }
+            " - reading them over SQL would have skipped the entity filtering every other page              passes through."
+        }
+    }
+}
+
+/// One column, and whether this app depends on it.
+#[component]
+fn Col(name: String, ty: String, used: Option<String>) -> Element {
+    // Read before the match consumes it, so the row class and the cell cannot
+    // disagree about whether this column is used.
+    let is_read = used.is_some();
+    rsx! {
+        tr { class: if is_read { "" } else { "opacity-50" },
+            td { class: "font-mono text-xs whitespace-nowrap", "{name}" }
+            td { class: "font-mono text-xs text-base-content/60", "{ty}" }
+            td {
+                match used {
+                    Some(why) => rsx! {
+                        div { class: "flex flex-wrap items-center gap-2",
+                            span { class: "badge badge-success badge-sm", "read" }
+                            span { class: "text-xs text-base-content/70", "{why}" }
+                        }
+                    },
+                    // Present in GLPI, not depended on - so a change to it
+                    // cannot break this app, which is worth knowing too.
+                    None => rsx! {
+                        span { class: "text-xs text-base-content/50", "not read" }
+                    },
+                }
+            }
+        }
     }
 }
 
