@@ -412,6 +412,7 @@ pub fn api_calls() -> Vec<ApiCall> {
     const STATUS: &str = "Status page";
     const RIGHTS: &str = "Rights page";
     const AUTHS: &str = "Authorizations table";
+    const SEC: &str = "Security page";
 
     vec![
         // Serves two features, which is exactly the fan-out the old prose
@@ -420,13 +421,29 @@ pub fn api_calls() -> Vec<ApiCall> {
             "Inventory/Agent",
             "v2.3",
             &["agent"],
-            &[(AGENTS, None), (COMPUTERS, Some("orphan check"))],
+            &[
+                (AGENTS, None),
+                (COMPUTERS, Some("orphan check")),
+                (SEC, Some("the agent-version check")),
+            ],
         ),
         call(
             "Assets/Computer",
             "v2.3",
             &["computer"],
             &[(COMPUTERS, None)],
+        ),
+        // Added once the Security page began reading it. This list is
+        // hand-maintained, so this is exactly the drift the module doc warns
+        // about: it was found by grepping every glpi.get in api/mod.rs
+        // against this list, not by anything failing. The right it needs was
+        // already required elsewhere, so nothing was broken - the page was
+        // simply understating what the app asks for.
+        call(
+            "Administration/User",
+            "v2.3",
+            &["user"],
+            &[(SEC, Some("the shipped-account and stale-login checks"))],
         ),
         call(
             "Administration/Entity",
@@ -441,7 +458,11 @@ pub fn api_calls() -> Vec<ApiCall> {
             "session",
             "v2.3",
             &[],
-            &[(STATUS, None), (RIGHTS, Some("which profile is active"))],
+            &[
+                (STATUS, None),
+                (RIGHTS, Some("which profile is active")),
+                (SEC, Some("the active profile's own rights")),
+            ],
         ),
         // Both of these are read twice over: once to build this page, once by
         // the authorizations handler. Verified against the call sites in
