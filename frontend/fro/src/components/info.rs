@@ -93,6 +93,15 @@ pub fn InfoButton(
     body: String,
     #[props(default = vec![])] sections: Vec<InfoSection>,
     #[props(default = vec![])] links: Vec<InfoLink>,
+    /// Draws the trigger as a named text link instead of the icon.
+    ///
+    /// For the one explanation that is about a whole page rather than the
+    /// figure beside it. The icon works when it sits next to the thing it
+    /// explains - there is no doubt what it refers to - but a page-level
+    /// icon floating above the tabs refers to nothing in particular and is
+    /// found only by hovering it. A named link says what it will tell you.
+    #[props(default = None)]
+    label: Option<String>,
 ) -> Element {
     let mut open = use_signal(|| false);
     let mut tab = use_signal(|| 0usize);
@@ -105,16 +114,32 @@ pub fn InfoButton(
         .collect();
 
     rsx! {
-        button {
-            class: "{PARAM_ICON_BUTTON_CLASS}",
-            style: "{PARAM_ICON_BUTTON_STYLE}",
-            title: "What this is",
-            aria_label: "What \"{title}\" means",
-            onclick: move |_| {
-                tab.set(0);
-                open.set(true);
+        // Both triggers do the same thing and reset to the first tab, so a
+        // second opening does not start wherever the last reader left off.
+        match label {
+            Some(l) => rsx! {
+                button {
+                    class: "link link-primary text-sm",
+                    onclick: move |_| {
+                        tab.set(0);
+                        open.set(true);
+                    },
+                    "{l}"
+                }
             },
-            InfoIcon {}
+            None => rsx! {
+                button {
+                    class: "{PARAM_ICON_BUTTON_CLASS}",
+                    style: "{PARAM_ICON_BUTTON_STYLE}",
+                    title: "What this is",
+                    aria_label: "What \"{title}\" means",
+                    onclick: move |_| {
+                        tab.set(0);
+                        open.set(true);
+                    },
+                    InfoIcon {}
+                }
+            },
         }
 
         if open() {

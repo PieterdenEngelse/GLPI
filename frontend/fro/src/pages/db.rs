@@ -8,13 +8,13 @@
 //! PHP rather than data. Writing it down stops the question being re-opened
 //! from memory.
 //!
-//! Every table and path named here was read in the GLPI 11.0.12 source or
+//! Every table and path named here was read in the GLPI 12.0.1 source or
 //! observed against the live instance. The counts, though, are computed from
 //! the live /api/rights response rather than quoted - a number nobody
 //! re-checks rots into a lie, and this app has already shipped one wrong
 //! denominator for exactly that reason.
 use crate::api::{self, RightsReport};
-use crate::components::{InfoLink, InfoSection, Panel, StatTile};
+use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
 
 #[component]
@@ -33,6 +33,61 @@ pub fn Db() -> Element {
     let mut tab = use_signal(|| 0usize);
 
     rsx! {
+        // Above the tabs, not inside either one: what this page covers is the
+        // same question whichever tab is open. It is a named link rather than
+        // the usual icon because the mistake it heads off - reading this as a
+        // map of GLPI's database, or as the API's schemas - is made before a
+        // reader has anything to hover.
+        div { class: "mb-3",
+            InfoButton {
+                label: "What is this".to_string(),
+                title: "What this page is".to_string(),
+                body: "The part of GLPI's database this app is allowed to read - and the two \
+                       much larger things this page is not."
+                    .to_string(),
+                sections: vec![
+                    InfoSection::new(
+                        "What is on it",
+                        "Two tables of GLPI's database, column by column, with each column \
+                         marked according to whether anything in this app actually reads it. \
+                         The rest of the page is the reasoning around them: what GLPI keeps \
+                         as data, what it keeps as program, and what a database account \
+                         therefore cannot answer however wide you make it.",
+                    ),
+                    InfoSection::new(
+                        "Why only two tables",
+                        "Because two is all that is granted. This app may run SELECT on \
+                         glpi_refusedequipments and on glpi_logs, and on nothing else. A \
+                         GLPI 12.0.1 install creates 447 tables; the other 445 are reached \
+                         through GLPI's API, which applies the entity and profile rules that \
+                         direct database access would step around, or they are not reached at \
+                         all. So this is the whole of the granted surface rather than a \
+                         sample of a larger one, and it is complete when both tables are here \
+                         with every column listed.",
+                    ),
+                    InfoSection::new(
+                        "Not a map of GLPI",
+                        "Nothing here describes GLPI's database as a whole, and it is not \
+                         meant to grow into that. A table this app cannot read is a table it \
+                         cannot be broken by, which is exactly why it is left out: the list is \
+                         the app's own coupling to GLPI's schema, written down so it can be \
+                         compared against a GLPI release, not documentation of GLPI.",
+                    ),
+                    InfoSection::new(
+                        "\u{201c}Schema\u{201d} also means something else",
+                        "GLPI's API publishes a description of itself, and that description \
+                         declares around 330 schemas - Computer, User, Agent, and so on. \
+                         Those are shapes of API responses, not tables, and none of them \
+                         appear on this page. The app compares five of them against what it \
+                         is really sent, which is how it catches a field GLPI's permissions \
+                         quietly drop instead of refusing; that comparison is a diagnostic \
+                         run on demand and has no page of its own. If you came here expecting \
+                         330 of anything, that is the list you were thinking of.",
+                    ),
+                ],
+            }
+        }
+
         div { role: "tablist", class: "tabs tabs-border mb-5",
             button {
                 role: "tab",
@@ -44,12 +99,12 @@ pub fn Db() -> Element {
                 role: "tab",
                 class: if tab() == 1 { "tab text-base tab-active" } else { "tab text-base" },
                 onclick: move |_| tab.set(1),
-                "Schema"
+                "db-read"
             }
         }
 
         if tab() == 1 {
-            Schema {}
+            DbRead {}
         } else {
             match counts {
                 Some(c) => rsx! { Counts { counts: c } },
@@ -68,7 +123,7 @@ pub fn Db() -> Element {
     }
 }
 
-/// The schema this app is coupled to, column by column.
+/// Every database column this app reads, and every one it does not.
 ///
 /// Worth a tab of its own because it is the whole cost of reading the database
 /// rather than the API. The API names a field it no longer has; SQL does not -
@@ -79,7 +134,7 @@ pub fn Db() -> Element {
 /// Read from GLPI's own install SQL, not queried from the live database. The
 /// grant is two tables of SELECT and gives no way to ask what the columns are.
 #[component]
-fn Schema() -> Element {
+fn DbRead() -> Element {
     rsx! {
         Panel {
             title: "glpi_refusedequipments".to_string(),
@@ -107,7 +162,7 @@ fn Schema() -> Element {
                 ),
                 InfoSection::new(
                     "Where this comes from",
-                    "GLPI's own install SQL for 11.0.12, not the live database. The grant is \
+                    "GLPI's own install SQL for 12.0.1, not the live database. The grant is \
                      SELECT on two tables and carries no way to ask what columns they have, so \
                      this list is as current as the GLPI release it was read from - which is \
                      the honest limit of it.",
@@ -126,7 +181,7 @@ fn Schema() -> Element {
                     tbody {
                         Col { name: "id".to_string(), ty: "int unsigned".to_string(), used: Some("row identity".to_string()) }
                         Col { name: "name".to_string(), ty: "varchar(255)".to_string(), used: Some("what was refused".to_string()) }
-                        Col { name: "itemtype".to_string(), ty: "varchar(100)".to_string(), used: Some("what kind of thing".to_string()) }
+                        Col { name: "itemtype".to_string(), ty: "varchar(255)".to_string(), used: Some("what kind of thing".to_string()) }
                         Col { name: "entities_id".to_string(), ty: "int unsigned".to_string(), used: Some("the entity restriction".to_string()) }
                         Col { name: "ip".to_string(), ty: "text".to_string(), used: Some("where it came from".to_string()) }
                         Col { name: "mac".to_string(), ty: "text".to_string(), used: Some("where it came from".to_string()) }
@@ -135,9 +190,9 @@ fn Schema() -> Element {
                         Col { name: "serial".to_string(), ty: "varchar(255)".to_string(), used: Some("identifying the machine".to_string()) }
                         Col { name: "uuid".to_string(), ty: "varchar(255)".to_string(), used: Some("identifying the machine".to_string()) }
                         Col { name: "agents_id".to_string(), ty: "int unsigned".to_string(), used: Some("which agent sent it".to_string()) }
+                        Col { name: "autoupdatesystems_id".to_string(), ty: "int unsigned".to_string(), used: None }
                         Col { name: "date_creation".to_string(), ty: "timestamp".to_string(), used: Some("when, and the sort order".to_string()) }
                         Col { name: "date_mod".to_string(), ty: "timestamp".to_string(), used: None }
-                        Col { name: "autoupdatesystems_id".to_string(), ty: "int unsigned".to_string(), used: None }
                     }
                 }
             }
@@ -180,9 +235,9 @@ fn Schema() -> Element {
                         }
                         tbody {
                             Col { name: "id".to_string(), ty: "int unsigned".to_string(), used: None }
-                            Col { name: "itemtype".to_string(), ty: "varchar(100)".to_string(), used: None }
+                            Col { name: "itemtype".to_string(), ty: "varchar(255)".to_string(), used: None }
                             Col { name: "items_id".to_string(), ty: "int unsigned".to_string(), used: None }
-                            Col { name: "itemtype_link".to_string(), ty: "varchar(100)".to_string(), used: None }
+                            Col { name: "itemtype_link".to_string(), ty: "varchar(255)".to_string(), used: None }
                             Col { name: "linked_action".to_string(), ty: "int".to_string(), used: None }
                             Col { name: "user_name".to_string(), ty: "varchar(255)".to_string(), used: None }
                             Col { name: "date_mod".to_string(), ty: "timestamp".to_string(), used: None }
