@@ -399,6 +399,53 @@ pub async fn fetch_posture() -> Result<Vec<PostureTile>, String> {
         .map_err(|e| e.to_string())
 }
 
+/// One field the API's schema promised that the response did not carry, or
+/// carried without promising. Mirrors the backend's `schema_check::FieldGap`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FieldGap {
+    pub field: String,
+    /// "suppressed" or "undeclared". A string for the same reason
+    /// `Finding::state` is: a kind this build does not know should render as
+    /// itself, not fail the page.
+    pub kind: String,
+}
+
+/// One audited endpoint's comparison of declared fields against received
+/// ones. Mirrors the backend's `schema_check::SchemaReport`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SchemaReport {
+    pub schema: String,
+    pub state: String,
+    pub declared: usize,
+    pub readable: usize,
+    pub received: usize,
+    pub gaps: Vec<FieldGap>,
+    pub write_only: Vec<String>,
+    pub cannot_check: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct FieldGapReport {
+    /// False means GLPI served no usable schema document, so nothing could be
+    /// compared. Distinct from "compared and found nothing".
+    pub doc_available: bool,
+    pub reports: Vec<SchemaReport>,
+}
+
+/// Fields GLPI's own schema declares that this account does not receive.
+///
+/// Slow by nature - the backend fetches GLPI's whole OpenAPI document, about
+/// 4.6 MB on 12.0.1 - so this is fetched on demand from the Api tab rather
+/// than with the rest of the page.
+pub async fn fetch_field_gaps() -> Result<FieldGapReport, String> {
+    reqwest::get(api_url("/api/field-gaps"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<FieldGapReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// One submission GLPI refused.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Refused {

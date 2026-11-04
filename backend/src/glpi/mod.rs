@@ -30,6 +30,7 @@ pub mod legacy;
 pub mod posture;
 pub mod refused;
 pub mod rights;
+pub mod schema_check;
 pub mod session;
 
 /// An OAuth2 access token with the instant it stops being valid.

@@ -60,6 +60,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/authorizations", get(authorizations))
         .route("/api/posture", get(security_posture))
         .route("/api/refused", get(refused))
+        .route("/api/field-gaps", get(field_gaps))
         .route("/api/rights", get(rights))
         .route("/api/hardware", get(hardware))
         .route("/api/software", get(software))
@@ -688,6 +689,58 @@ struct RefusedReport {
     /// the way every other page does.
     entities: Vec<i64>,
     rows: Vec<crate::glpi::refused::Refused>,
+}
+
+#[derive(Serialize)]
+struct FieldGapReport {
+    /// Whether GLPI served a usable schema document. False is a finding, not
+    /// an error: an install that does not serve `doc.json` cannot be checked
+    /// this way, and saying so beats reporting every endpoint as clean.
+    doc_available: bool,
+    reports: Vec<crate::glpi::schema_check::SchemaReport>,
+}
+
+/// Fields the API's own schema promises that this account does not receive.
+///
+/// GLPI's `x-rights-conditions` drop a field the caller may not read instead
+/// of refusing the call, and 12.0.1 adds ten more of them than 11.0.12 has.
+/// An absent field is indistinguishable from a null one on a UI whose fields
+/// are all `Option`, so without this the suppression is invisible. See
+/// glpi::schema_check.
+///
+/// COST. `doc.json` is about 4.6 MB on 12.0.1 and is fetched per request, so
+/// this is deliberately a diagnostic endpoint rather than something a page
+/// polls. Caching it would mean holding a copy that goes stale exactly when it
+/// matters - across an upgrade - which is the moment this answer has to be
+/// current.
+async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    use crate::glpi::schema_check as sc;
+
+    let doc = state.glpi.get("doc.json").await?;
+
+    // Probe with a schema every supported version declares. If that is absent
+    // the document is not what we think it is, and comparing against it would
+    // report every field of every endpoint as suppressed.
+    if sc::schema_from_doc(&doc, "User").is_none() {
+        return Ok(Json(FieldGapReport {
+            doc_available: false,
+            reports: Vec::new(),
+        }));
+    }
+
+    let mut reports = Vec::with_capacity(sc::AUDITED.len());
+    for (path, schema_name) in sc::AUDITED {
+        let received = state.glpi.get(path).await?;
+        let declared = sc::schema_from_doc(&doc, schema_name)
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        reports.push(sc::compare(schema_name, &declared, &received));
+    }
+
+    Ok(Json(FieldGapReport {
+        doc_available: true,
+        reports,
+    }))
 }
 
 /// Submissions GLPI refused - the third failure, invisible to both APIs.
