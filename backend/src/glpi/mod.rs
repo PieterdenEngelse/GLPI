@@ -157,14 +157,13 @@ impl Client {
             .with_context(|| format!("GET {url}"))
     }
 
-    /// GET a v2.3 path, e.g. "Inventory/Agent".
-    pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
-        let url = format!(
-            "{}/api.php/v2.3/{}",
-            self.base,
-            path.trim_start_matches('/')
-        );
-        let mut res = self.send(&url, self.token().await?).await?;
+    /// One authorised GET, with the 401 retry. Returns the status, the
+    /// `Content-Range` header and the body.
+    ///
+    /// Separate from `get` so every page of a walked collection gets the retry
+    /// independently - a token can age out between page three and page four.
+    async fn fetch(&self, url: &str) -> Result<(reqwest::StatusCode, Option<String>, String)> {
+        let mut res = self.send(url, self.token().await?).await?;
 
         // One retry on 401, with the cached token thrown away first.
         //
@@ -185,7 +184,7 @@ impl Client {
         if res.status() == reqwest::StatusCode::UNAUTHORIZED {
             tracing::info!("GLPI {url} returned 401; retrying once with a fresh token");
             self.invalidate_token().await;
-            res = self.send(&url, self.token().await?).await?;
+            res = self.send(url, self.token().await?).await?;
         }
 
         let status = res.status();
@@ -197,81 +196,209 @@ impl Client {
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let body = res.text().await.unwrap_or_default();
-        if !status.is_success() {
-            bail!("GLPI {url} returned {status}: {body}");
+        Ok((status, content_range, body))
+    }
+
+    /// GET a v2.3 path, e.g. "Inventory/Agent", walking it to the end.
+    ///
+    /// WHY THIS PAGES. v2.3 caps a collection at 100 rows by default and says
+    /// so with 206 plus `Content-Range: start-end/total`. This client used to
+    /// send no paging parameters at all and refuse any 206, on the stated
+    /// grounds that "GLPI returns every row with a 200" - which was simply
+    /// false, and invisible only because every collection on the install it
+    /// was written against held fewer than 100 rows. Measured on 11.0.12:
+    ///
+    ///   Assets/Software                  ->  206  Content-Range: 0-99/1330
+    ///   Assets/Software?limit=500        ->  206  Content-Range: 0-499/1330
+    ///   Assets/Software?start=1300       ->  200  Content-Range: 1300-1329/1330
+    ///
+    /// So the old behaviour would have turned the Agents and Computers pages
+    /// into a 502 on any GLPI holding more than a hundred of either - which is
+    /// to say on any real fleet.
+    ///
+    /// `limit` is honoured rather than clamped, so `PAGE` is a round-trip
+    /// tuning choice and nothing more. That is the point of walking: with a
+    /// loop, no page size can truncate the answer, where before the size WAS
+    /// the answer's limit.
+    ///
+    /// Non-collection paths are unaffected. `/session` ignores the parameters
+    /// and returns no `Content-Range`, which is how this tells the two apart -
+    /// verified, not assumed.
+    pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
+        let base = format!(
+            "{}/api.php/v2.3/{}",
+            self.base,
+            path.trim_start_matches('/')
+        );
+        let sep = if base.contains('?') { '&' } else { '?' };
+
+        let mut collected: Vec<serde_json::Value> = Vec::new();
+        let mut start: i64 = 0;
+
+        loop {
+            let url = format!("{base}{sep}start={start}&limit={PAGE}");
+            let (status, content_range, body) = self.fetch(&url).await?;
+            if !status.is_success() {
+                bail!("GLPI {url} returned {status}: {body}");
+            }
+            let value: serde_json::Value =
+                serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))?;
+
+            // No Content-Range means this is not a paged collection - an
+            // object endpoint like /session. Hand it back untouched.
+            let Some((got_start, got_end, total)) =
+                content_range.as_deref().and_then(parse_content_range)
+            else {
+                if start == 0 {
+                    return Ok(value);
+                }
+                bail!(
+                    "GLPI {url} dropped its Content-Range midway through a collection, so \
+                     there is no way to tell whether the rest arrived. Refusing rather than \
+                     returning {} rows of an unknown total.",
+                    collected.len()
+                );
+            };
+
+            let page: Vec<serde_json::Value> = match value {
+                serde_json::Value::Array(a) => a,
+                // A single-page collection in some envelope other than a bare
+                // array: give it back whole and let the caller unwrap it, as
+                // it did before paging existed.
+                other => {
+                    if start == 0 && got_end + 1 >= total {
+                        return Ok(other);
+                    }
+                    bail!(
+                        "GLPI {url} answered a multi-page collection with something other \
+                         than an array, so the pages cannot be joined"
+                    );
+                }
+            };
+
+            let empty = page.is_empty();
+            collected.extend(page);
+
+            // Done when the window reaches the end. `total` is re-read every
+            // page rather than remembered, so a collection that shrinks under
+            // us finishes early instead of looping for rows that no longer
+            // exist.
+            if got_end + 1 >= total {
+                break;
+            }
+
+            // A page that advances nothing would otherwise loop forever. This
+            // fires if GLPI reports more rows than it will serve.
+            if empty {
+                bail!(
+                    "GLPI {url} reported rows {got_start}-{got_end} of {total} but returned \
+                     none, so walking it cannot progress. Refusing rather than returning \
+                     {} rows as the whole collection.",
+                    collected.len()
+                );
+            }
+
+            start = got_end + 1;
         }
-        reject_partial(status, content_range.as_deref(), &url)?;
-        serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
+
+        Ok(serde_json::Value::Array(collected))
     }
 }
 
-/// Refuse a collection GLPI only partly served.
+/// Rows to ask for per request when walking a collection.
 ///
-/// GLPI answers a truncated collection with 206 and a `Content-Range` of
-/// `start-end/total` - ResourceAccessor.php:386-393 in 11.0.12:
+/// Not a cap on anything: `get` loops until GLPI says the window reached the
+/// end, so this only decides how many round trips that takes. 500 because
+/// GLPI honours it - `limit` is not clamped to the default 100 - and because
+/// three requests for a 1330-row collection is a reasonable trade against
+/// holding a larger response in memory.
+const PAGE: i64 = 500;
+
+/// Pull `start`, `end` and `total` out of a `Content-Range: start-end/total`.
+///
+/// GLPI builds it in ResourceAccessor.php:386-393 of 11.0.12:
 ///
 ///   $has_more = $results['start'] + $results['limit'] < $results['total'];
 ///   return new JSONResponse($results['results'], $has_more ? 206 : 200, [
 ///       'Content-Range' => $results['start'] . '-' . $end . '/' . $results['total'],
 ///   ]);
 ///
-/// reqwest's `is_success()` spans 200-299, so a 206 passes the status check
-/// above untouched and the short array renders as the entire fleet. For an app
-/// whose only job is noticing which agents stopped reporting, a silently short
-/// list is the worst available answer: a missing agent and an unlisted one look
-/// identical, and the page reads as a healthy fleet either way.
-///
-/// This cannot fire today. The client sends no `start` or `limit`, and
-/// Search.php:581 adds a SQL LIMIT only when one of those is numeric, so GLPI
-/// returns every row with a 200. That is precisely why the guard is here: the
-/// invariant is an assumption about an upstream nobody here controls, and when
-/// it breaks it does so quietly.
-fn reject_partial(
-    status: reqwest::StatusCode,
-    content_range: Option<&str>,
-    url: &str,
-) -> Result<()> {
-    if status != reqwest::StatusCode::PARTIAL_CONTENT {
-        return Ok(());
-    }
-    let range = content_range.unwrap_or("no Content-Range header");
-    bail!(
-        "GLPI {url} returned 206 Partial Content ({range}): this is part of the \
-         collection, not all of it. This client requests no pagination, so every \
-         row should arrive with a 200 - refusing rather than showing a short \
-         fleet as the whole fleet. Paginate explicitly if this is now expected."
-    )
+/// Returns None for anything that does not parse, which `get` treats as "not a
+/// paged collection" on the first page and as a hard error later - a header
+/// that stops being readable midway is not something to guess about.
+fn parse_content_range(h: &str) -> Option<(i64, i64, i64)> {
+    let (range, total) = h.trim().split_once('/')?;
+    let (start, end) = range.split_once('-')?;
+    Some((
+        start.trim().parse().ok()?,
+        end.trim().parse().ok()?,
+        total.trim().parse().ok()?,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::reject_partial;
-    use reqwest::StatusCode;
+    use super::parse_content_range;
 
-    /// The operator needs the slice GLPI actually served, or the error says
-    /// only that something was incomplete.
+    /// The shapes GLPI 11.0.12 actually sends, measured.
     #[test]
-    fn a_206_is_refused_and_names_the_range() {
-        let err = reject_partial(
-            StatusCode::PARTIAL_CONTENT,
-            Some("0-49/327"),
-            "http://glpi/api.php/v2.3/Inventory/Agent",
-        )
-        .expect_err("a partial collection must not pass as complete");
-        let msg = format!("{err:#}");
-        assert!(msg.contains("0-49/327"), "served slice missing from: {msg}");
+    fn parses_the_header_glpi_sends() {
+        assert_eq!(parse_content_range("0-99/1330"), Some((0, 99, 1330)));
+        assert_eq!(parse_content_range("0-499/1330"), Some((0, 499, 1330)));
+        assert_eq!(
+            parse_content_range("1300-1329/1330"),
+            Some((1300, 1329, 1330))
+        );
+        // A single row, and an empty collection.
+        assert_eq!(parse_content_range("0-0/1"), Some((0, 0, 1)));
+        assert_eq!(parse_content_range("0-0/0"), Some((0, 0, 0)));
     }
 
-    /// A 206 is reason enough on its own; a proxy may strip the header.
+    /// Whitespace from a proxy must not defeat it.
     #[test]
-    fn a_206_without_the_header_is_still_refused() {
-        assert!(reject_partial(StatusCode::PARTIAL_CONTENT, None, "u").is_err());
+    fn tolerates_surrounding_whitespace() {
+        assert_eq!(parse_content_range(" 0-99/1330 "), Some((0, 99, 1330)));
     }
 
-    /// GLPI sets Content-Range on every collection response, 200 included, so
-    /// its presence must not be mistaken for truncation.
+    /// Anything unparseable yields None rather than a guess. `get` reads that
+    /// as "not a paged collection" on the first page and refuses outright
+    /// later, which is the whole point: a header that stops being readable
+    /// midway through a walk is not something to assume about.
     #[test]
-    fn a_complete_200_carrying_a_content_range_passes() {
-        assert!(reject_partial(StatusCode::OK, Some("0-0/1"), "u").is_ok());
+    fn refuses_to_guess_at_a_header_it_cannot_read() {
+        for h in [
+            "",
+            "items 0-99/1330",
+            "0-99",
+            "1330",
+            "0/1330",
+            "a-b/c",
+            "0-99/",
+            "-/-",
+        ] {
+            assert_eq!(parse_content_range(h), None, "should not parse: {h:?}");
+        }
+    }
+
+    /// The arithmetic `get` loops on, stated as a test so the end condition is
+    /// pinned rather than inferred from the loop body.
+    ///
+    /// GLPI's own rule is `start + limit < total` means more remain; this
+    /// client works from the end of the served window instead, because that is
+    /// what the header reports and it stays correct when GLPI serves fewer
+    /// rows than the limit asked for - which is exactly what the last page
+    /// does.
+    #[test]
+    fn the_walk_ends_when_the_window_reaches_the_total() {
+        let more = |h: &str| {
+            let (_, end, total) = parse_content_range(h).unwrap();
+            end + 1 < total
+        };
+        assert!(more("0-99/1330"), "100 of 1330 is not the end");
+        assert!(more("0-499/1330"));
+        assert!(more("500-999/1330"));
+        assert!(!more("1000-1329/1330"), "the window reached the total");
+        assert!(!more("0-0/1"), "a single row is already complete");
+        assert!(!more("0-0/0"), "an empty collection is complete");
     }
 }
