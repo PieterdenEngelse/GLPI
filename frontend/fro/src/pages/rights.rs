@@ -87,9 +87,19 @@ fn Report(report: RightsReport) -> Element {
                 onclick: move |_| tab.set(1),
                 "Api"
             }
+            button {
+                role: "tab",
+                class: if tab() == 2 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(2),
+                "Db"
+            }
         }
 
-        if tab() == 1 {
+        if tab() == 2 {
+            // Fetches on its own, inside the tab, so opening Profiles or Api
+            // costs no database round trip.
+            DbRightsPanel {}
+        } else if tab() == 1 {
             CallPanel { calls: report.calls.clone() }
         } else if profiles.is_empty() {
             div { class: "alert alert-warning",
@@ -1076,6 +1086,188 @@ fn SortHeader(
                     }
                 }
             }
+        }
+    }
+}
+
+/// The third layer of permission this app depends on: a database grant.
+///
+/// Profiles covers what GLPI's own permission system allows, Api covers which
+/// request needs which of those rights. Neither reaches this one, because it
+/// is not GLPI's to enforce - it is MariaDB's, and it exists only because two
+/// things GLPI holds are exposed by neither of its APIs.
+#[component]
+fn DbRightsPanel() -> Element {
+    let report = use_resource(|| async move { api::fetch_refused().await });
+
+    // Live state where there is any, documentation where there is not. The
+    // grant below is what the app expects; whether it is actually in place is
+    // answered by whether the query works.
+    let state = match &*report.read_unchecked() {
+        Some(Ok(r)) => Some((r.configured, r.entities.len(), r.rows.len(), None)),
+        Some(Err(e)) => Some((true, 0, 0, Some(e.clone()))),
+        None => None,
+    };
+
+    rsx! {
+        Panel {
+            title: "Database access".to_string(),
+            subtitle: "Two tables, SELECT only".to_string(),
+            info: "This app reads GLPI's database directly for two things, and only two. \
+                   Everything else on every other page comes through GLPI's API."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why there is a database account at all",
+                    "Two things GLPI records are exposed by neither of its APIs: the \
+                     submissions it refused, and its own change history. Refused submissions \
+                     are the failure this dashboard most wants to show - the agent reports \
+                     success and exits clean, GLPI throws the submission away, and no asset \
+                     appears. The table is the only place that is written down.",
+                ),
+                InfoSection::new(
+                    "Why it is only two tables",
+                    "Because a grant is easier to widen than to narrow, and because every \
+                     table added is another piece of GLPI's internal layout this app depends \
+                     on. The rule that refused a submission is shown by its id and linked \
+                     into GLPI rather than by name, specifically so a third table does not \
+                     have to be granted to print one string.",
+                ),
+                InfoSection::new(
+                    "What it costs",
+                    "Two things. A renamed column breaks this silently, where the API would \
+                     have named the missing field - so every column is treated as optional \
+                     and renders blank rather than failing. And SQL has no notion of GLPI's \
+                     entities, so the account could read every row regardless of scope: the \
+                     rows shown are restricted afterwards, to the entities the API says this \
+                     account may see, so that \u{201c}everything\u{201d} means the same here \
+                     as on every other page.",
+                ),
+                InfoSection::new(
+                    "No password is stored",
+                    "The account is expected to authenticate through the unix socket, which \
+                     means there is no secret in this app's configuration to leak and nothing \
+                     to rotate. Reading the config file tells an attacker the account name and \
+                     nothing they could use from another machine.",
+                ),
+            ],
+
+            match state {
+                None => rsx! {
+                    div { class: "flex items-center gap-2 text-base-content/60",
+                        span { class: "loading loading-spinner loading-sm" }
+                        "Checking…"
+                    }
+                },
+                Some((false, _, _, _)) => rsx! {
+                    // Not an error. The app runs perfectly well without this;
+                    // only the refused view goes dark.
+                    div { class: "alert alert-info",
+                        div {
+                            div { class: "font-semibold", "No database access is configured." }
+                            div { class: "text-sm",
+                                "Every other page works without it. The one thing that does not "
+                                "is the refused view, which has no other source - so it says "
+                                "\u{201c}cannot look\u{201d} rather than showing an empty table, "
+                                "because no refusals and no access are opposite answers."
+                            }
+                        }
+                    }
+                },
+                Some((true, _, _, Some(err))) => rsx! {
+                    div { class: "alert alert-error",
+                        div {
+                            div { class: "font-semibold", "Configured, but the query failed." }
+                            div { class: "text-sm",
+                                "The grant below is the likely gap - a missing SELECT reads as "
+                                "a failed query, not as an empty result."
+                            }
+                            pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{err}" }
+                        }
+                    }
+                },
+                Some((true, entities, rows, None)) => rsx! {
+                    div { class: "mb-4 flex flex-wrap items-center gap-2 text-sm",
+                        span { class: "badge badge-success badge-sm", "working" }
+                        span { class: "text-base-content/70",
+                            "The grant is in place: the refused table answered, "
+                            "{rows} row(s) within the {entities} entity scope this account may see."
+                        }
+                    }
+                },
+            }
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Table" }
+                            th { "Right" }
+                            th { "What it is for" }
+                        }
+                    }
+                    tbody {
+                        DbRightRow {
+                            table_: "glpi_refusedequipments".to_string(),
+                            right: "SELECT".to_string(),
+                            why: "Submissions GLPI threw away. Exposed by neither API.".to_string(),
+                            granted: true,
+                        }
+                        DbRightRow {
+                            table_: "glpi_logs".to_string(),
+                            right: "SELECT".to_string(),
+                            why: "GLPI's own change history - what altered between runs.".to_string(),
+                            granted: true,
+                        }
+                        DbRightRow {
+                            table_: "glpi_rules".to_string(),
+                            right: "not granted".to_string(),
+                            why: "Would turn a rule id into its name. Deliberately left out -                                   the id is shown and linked into GLPI instead."
+                                .to_string(),
+                            granted: false,
+                        }
+                        DbRightRow {
+                            table_: "everything else".to_string(),
+                            right: "not granted".to_string(),
+                            why: "Including every table the API already answers for. Entity                                   names come from /api/entities, not from glpi_entities."
+                                .to_string(),
+                            granted: false,
+                        }
+                    }
+                }
+            }
+
+            div { class: "mt-4",
+                div { class: "mb-1 text-xs text-base-content/60",
+                    "The grant this expects, in full:"
+                }
+                pre { class: "overflow-x-auto rounded bg-base-200 p-3 text-xs",
+                    "CREATE USER 'pde'@'localhost' IDENTIFIED VIA unix_socket;\n"
+                    "GRANT SELECT ON glpi.glpi_refusedequipments TO 'pde'@'localhost';\n"
+                    "GRANT SELECT ON glpi.glpi_logs              TO 'pde'@'localhost';\n"
+                    "FLUSH PRIVILEGES;"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn DbRightRow(table_: String, right: String, why: String, granted: bool) -> Element {
+    rsx! {
+        tr { class: if granted { "" } else { "opacity-60" },
+            td { class: "font-mono text-xs whitespace-nowrap", "{table_}" }
+            td {
+                span {
+                    class: if granted {
+                        "badge badge-success badge-sm font-mono"
+                    } else {
+                        "badge badge-ghost badge-sm font-mono"
+                    },
+                    "{right}"
+                }
+            }
+            td { class: "text-xs text-base-content/70", "{why}" }
         }
     }
 }
