@@ -1285,10 +1285,22 @@ fn DbDefinedRights() -> Element {
                     "Because it means the Profiles tab is listing a set that can grow without \
                      anything being upgraded. That tab counts its right names from what GLPI \
                      reports rather than from a list held in this app, so a new type appears \
-                     there by itself - but the grouping into tabs comes from a copy taken from \
-                     GLPI, and a right GLPI has never heard of until today will sit under \
-                     \u{201c}Not on the profile form\u{201d} until that copy is refreshed. \
-                     That is the honest place for it rather than a guess at a heading.",
+                     there by itself - but the grouping into tabs comes from a copy taken \
+                     from GLPI, so a right GLPI invented today starts out under \
+                     \u{201c}Not on the profile form\u{201d}. For an active custom asset type \
+                     that is temporary and refreshing the copy places it. For two cases it is \
+                     permanent, explained next.",
+                ),
+                InfoSection::new(
+                    "Two kinds never get grouped",
+                    "An INACTIVE custom asset type, and every custom DROPDOWN type. GLPI \
+                     builds the profile form from its active asset definitions only, and does \
+                     not add dropdown definitions to that form at all - while creating the \
+                     rights for both regardless. So those rights exist, are granted per \
+                     profile and are enforced, but GLPI never lists them on the form this \
+                     page groups by. Refreshing the copy will not move them, however often it \
+                     is run. They stay where they are, which remains the honest place: this \
+                     app genuinely has no heading for them.",
                 ),
                 InfoSection::new(
                     "Not the same as the grant above",

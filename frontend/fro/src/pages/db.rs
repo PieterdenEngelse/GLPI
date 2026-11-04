@@ -343,9 +343,13 @@ fn CustomObjects() -> Element {
                 "it, a right called "
                 span { class: "font-mono", "asset_kiosk" }
                 ", and that right's entries for every profile. It would show up on the "
-                "Rights page by itself - and, until the grouping copy is refreshed, under "
-                "\u{201c}Not on the profile form\u{201d}, which is the honest place for a "
-                "right this app cannot yet place."
+                "Rights page by itself, under "
+                "\u{201c}Not on the profile form\u{201d} until the grouping copy is "
+                "refreshed. Two kinds never move from there: an inactive custom asset type, "
+                "and any custom dropdown type. GLPI builds the profile form from its active "
+                "asset definitions only and never adds dropdown definitions to it, while "
+                "creating the rights for both - so those are granted and enforced but appear "
+                "on no form, and no refresh will place them."
             }
         }
     }
