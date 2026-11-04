@@ -93,9 +93,13 @@ question is now narrow: `RefusedEquipment` and `glpi_logs` only.
 
 ## Why this app speaks two GLPI APIs
 
-v2.3 for everything about inventory; **v1 (`/apirest.php`) only for rights and
-authorizations**, in `glpi/legacy.rs`. Verified by reading `src/Glpi/Api/HL/`,
-not assumed:
+v2.3 for the asset-level view — agents, computers, entities, session;
+**v1 (`/apirest.php`) for rights and authorizations, and for the three
+inventory detail pages**, in `glpi/legacy.rs` and `glpi/inventory.rs`.
+
+### v1 for rights and authorizations
+
+Verified by reading `src/Glpi/Api/HL/`, not assumed:
 
 - **`Profile_User` has zero occurrences anywhere under HL.** Who may use which
   profile, on which entity, and whether that is recursive, is not modelled.
@@ -115,8 +119,41 @@ objection to going direct to SQL. What it does cost is stability: GLPI calls v1
 versions", and it needs its own authentication because it rejects the OAuth
 bearer outright.
 
+### v1 for hardware, software and network
+
+The three inventory pages under `/inv` are fleet-wide and read v1 collections.
+Verified by reading `src/Glpi/Api/HL/Controller/` and by probing the running
+install, not assumed:
+
+- **Components, volumes, OS and software installs exist in v2.3 only beneath a
+  single asset id** — `/Assets/Computer/{id}/Volume`,
+  `/Assets/{itemtype}/{id}/Component/{type}`. There is no collection route for
+  any of them: `Volume` and `Assets/Computer/Volume` both answer 404. A
+  fleet-wide view would cost ~10 requests per machine; v1 answers each for the
+  whole estate in one.
+- **`NetworkPort` has a v2.3 schema but no route at any path**, and
+  `IPAddress` has zero occurrences anywhere under HL. The Network page cannot
+  be built on v2.3 at all — the nearest it offers is a MAC per network card,
+  one request per machine, with no addresses attached.
+- **A v2.3 software install names only its version** (`"1.33.7"`), never its
+  title, and versions are served only under `/Assets/Software/{id}/Version` —
+  about 1330 requests on this install. v1's `SoftwareVersion` collection
+  carries `softwares_id`, so the whole mapping is one call.
+
+`Legacy::get_paged` walks these; `Legacy::get` (one generous range, refuses
+anything partial) is still what the bounded rights tables use. A single NixOS
+machine holds 1468 `Item_SoftwareVersion` rows, so no fixed range is
+defensible for inventory.
+
+Scope comes from v2.3 regardless: every inventory page is filtered to the
+computers `Assets/Computer` returns, so all pages mean the same thing by
+"every machine" even though they read different APIs.
+
+### The rule
+
 Do not reach for v1 for anything v2.3 already answers. The full reasoning, the
 endpoint-to-right mapping and fifteen traps are in `~/docs/gl-rights.md`.
+`just probe <path>` hits v2.3; `just probe-v1 <path>` hits v1.
 
 ## Conventions
 

@@ -436,3 +436,171 @@ pub async fn fetch_refused() -> Result<RefusedReport, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+// --------------------------------------------------------------- inventory
+//
+// The three fleet-wide inventory views. Each mirrors a backend struct in
+// glpi/inventory.rs, with the same deliberate duplication and the same rule:
+// every field that GLPI can leave unrecorded is an Option, so a backend that
+// gains or drops one degrades to a blank cell rather than failing the parse.
+
+/// One processor in a machine.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Processor {
+    pub designation: Option<String>,
+    pub nbcores: Option<i64>,
+    pub nbthreads: Option<i64>,
+    /// MHz, as GLPI stores it.
+    pub frequency: Option<i64>,
+}
+
+/// One memory module.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MemoryModule {
+    pub designation: Option<String>,
+    /// MB, as GLPI stores it.
+    pub size: Option<i64>,
+}
+
+/// One filesystem the agent found mounted.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Disk {
+    pub name: Option<String>,
+    pub device: Option<String>,
+    pub mountpoint: Option<String>,
+    pub filesystem: Option<String>,
+    /// MB, as GLPI stores it.
+    pub totalsize: Option<i64>,
+    pub freesize: Option<i64>,
+    pub encryption_status: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct OperatingSystem {
+    pub name: Option<String>,
+    pub kernel_version: Option<String>,
+    pub architecture: Option<String>,
+}
+
+/// One machine's hardware. Mirrors the backend's HardwareRow.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct HardwareRow {
+    pub items_id: i64,
+    pub computer: Option<String>,
+    #[serde(default)]
+    pub processors: Vec<Processor>,
+    #[serde(default)]
+    pub memory: Vec<MemoryModule>,
+    #[serde(default)]
+    pub memory_mb: i64,
+    #[serde(default)]
+    pub disks: Vec<Disk>,
+    pub operatingsystem: Option<OperatingSystem>,
+    /// Nothing was collected for this machine at all - the row worth looking
+    /// at, and not the same as a machine whose disks were not reported.
+    #[serde(default)]
+    pub empty: bool,
+}
+
+/// What the agents found inside each machine, fleet-wide.
+pub async fn fetch_hardware() -> Result<Vec<HardwareRow>, String> {
+    reqwest::get(api_url("/api/hardware"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<HardwareRow>>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One software title and how widely it is installed.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SoftwareRow {
+    pub softwares_id: i64,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub versions: Vec<String>,
+    #[serde(default)]
+    pub installs: i64,
+    #[serde(default)]
+    pub computers: i64,
+}
+
+impl SoftwareRow {
+    /// What to show for this title.
+    ///
+    /// Falling back to the id rather than a blank keeps an unnamed title
+    /// findable: GLPI holds the row, so "software 473" is something that can
+    /// be looked up, where an empty cell is not.
+    pub fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("software {}", self.softwares_id))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SoftwareReport {
+    #[serde(default)]
+    pub rows: Vec<SoftwareRow>,
+    #[serde(default)]
+    pub computers_covered: i64,
+    #[serde(default)]
+    pub installs: i64,
+}
+
+/// Every software title installed across the fleet, most widely first.
+pub async fn fetch_software() -> Result<SoftwareReport, String> {
+    reqwest::get(api_url("/api/software"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<SoftwareReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One network port on a machine.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Port {
+    pub id: i64,
+    pub name: Option<String>,
+    pub mac: Option<String>,
+    pub instantiation_type: Option<String>,
+    pub logical_number: Option<i64>,
+    #[serde(default)]
+    pub ips: Vec<String>,
+    #[serde(default)]
+    pub is_dynamic: bool,
+}
+
+impl Port {
+    /// GLPI's instantiation_type without its "NetworkPort" prefix - Wifi
+    /// rather than NetworkPortWifi. The prefix is on every value, so it
+    /// distinguishes nothing and costs the column its width.
+    pub fn kind(&self) -> String {
+        self.instantiation_type
+            .as_deref()
+            .map(|t| t.strip_prefix("NetworkPort").unwrap_or(t).to_string())
+            .unwrap_or_default()
+    }
+}
+
+/// One machine's network ports. Mirrors the backend's NetworkRow.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct NetworkRow {
+    pub items_id: i64,
+    pub computer: Option<String>,
+    #[serde(default)]
+    pub ports: Vec<Port>,
+    #[serde(default)]
+    pub empty: bool,
+}
+
+/// Every machine's network ports and addresses.
+pub async fn fetch_network() -> Result<Vec<NetworkRow>, String> {
+    reqwest::get(api_url("/api/network"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<Vec<NetworkRow>>()
+        .await
+        .map_err(|e| e.to_string())
+}

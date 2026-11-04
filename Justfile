@@ -68,6 +68,16 @@ run:
 probe path="Inventory/Agent":
     cargo run -p glpi-cli -- {{path}}
 
+# GET a legacy v1 path and print the JSON. v1 serves GLPI's tables almost raw,
+# so this is how the inventory pages' collections are inspected -
+# Item_SoftwareVersion, NetworkPort, IPAddress and the catalogues they join to.
+#
+# Use `probe` unless v2.3 genuinely cannot answer; see CLAUDE.md for which is
+# which. One generous range, and it refuses a partial collection rather than
+# printing a short list as a whole one.
+probe-v1 path="SoftwareVersion":
+    cargo run -p glpi-cli -- --v1 {{path}}
+
 # Regenerate the right -> (tab, group) map the Rights page groups by.
 #
 # Needs the glpi user, so it is the one recipe here you cannot run as yourself:

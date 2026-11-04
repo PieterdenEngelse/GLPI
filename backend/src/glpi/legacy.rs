@@ -34,6 +34,14 @@ pub struct Legacy {
     password: String,
 }
 
+/// Rows to ask for per request when walking a v1 collection.
+///
+/// Not a cap: `get_paged` loops until the served window reaches the total, so
+/// this only decides how many round trips that takes. 1000 because v1 honours
+/// it and because the largest collection here - one row per installed package
+/// per machine - is in the tens of thousands on a real fleet.
+const V1_PAGE: i64 = 1000;
+
 /// A session token that kills itself when dropped is not possible here - Drop
 /// cannot await - so callers use `with_session`, which kills it on every exit
 /// path. GLPI sessions otherwise accumulate server-side until they time out.
@@ -114,9 +122,28 @@ impl Legacy {
             ),
             None => format!("{}/apirest.php/{}", self.base, path.trim_start_matches('/')),
         };
+        let (status, content_range, body) = self.fetch(session, &url).await?;
+        if !status.is_success() {
+            bail!("GLPI legacy {url} returned {status}: {body}");
+        }
+        reject_partial(status, content_range.as_deref(), &url)?;
+        serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
+    }
+
+    /// One GET inside a session. Returns the status, the `Content-Range`
+    /// header and the body.
+    ///
+    /// Split out of `get` so `get_paged` can read the same header without
+    /// inheriting the refusal: to `get`, a 206 is the end of the matter, and
+    /// to a walk it is the signal to ask for the next page.
+    async fn fetch(
+        &self,
+        session: &Session,
+        url: &str,
+    ) -> Result<(reqwest::StatusCode, Option<String>, String)> {
         let res = self
             .http
-            .get(&url)
+            .get(url)
             .header("Session-Token", &session.token)
             .header("Accept", "application/json")
             .send()
@@ -132,11 +159,81 @@ impl Legacy {
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let body = res.text().await.unwrap_or_default();
-        if !status.is_success() {
-            bail!("GLPI legacy {url} returned {status}: {body}");
+        Ok((status, content_range, body))
+    }
+
+    /// GET a v1 collection, walking it to the end.
+    ///
+    /// WHY THIS EXISTS ALONGSIDE `get`. `get` asks for one generous range and
+    /// refuses anything short of the whole collection, which is the right
+    /// shape for the rights tables: they are bounded by how many profiles an
+    /// install has, and a truncated rights list is worse than an error.
+    ///
+    /// The inventory collections are not bounded that way. A single NixOS
+    /// machine holds 1468 `Item_SoftwareVersion` rows, so the count scales
+    /// with the fleet and no fixed range is defensible - pick one and the
+    /// Software page works until the estate outgrows it, then fails outright.
+    /// Walking removes the question: the page size decides how many round
+    /// trips this takes and nothing else.
+    ///
+    /// The same guard still applies at the end, by construction rather than
+    /// by status code - the walk only stops when the served window reaches
+    /// the total v1 itself reports.
+    pub async fn get_paged(&self, session: &Session, path: &str) -> Result<Vec<serde_json::Value>> {
+        let path = path.trim_start_matches('/');
+        let mut collected: Vec<serde_json::Value> = Vec::new();
+        let mut start: i64 = 0;
+
+        loop {
+            let end = start + V1_PAGE - 1;
+            let url = format!("{}/apirest.php/{}?range={start}-{end}", self.base, path);
+            let (status, content_range, body) = self.fetch(session, &url).await?;
+            if !status.is_success() {
+                bail!("GLPI legacy {url} returned {status}: {body}");
+            }
+
+            let value: serde_json::Value =
+                serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))?;
+            let page = match value {
+                serde_json::Value::Array(a) => a,
+                other => bail!(
+                    "GLPI legacy {url} answered a collection with {other}, not an array, so \
+                     there is no way to tell how much of it arrived"
+                ),
+            };
+
+            // An empty collection answers 200 with no Content-Range at all,
+            // which is a complete answer and not something to walk further.
+            let Some((_, got_end, total)) = content_range
+                .as_deref()
+                .and_then(super::parse_content_range)
+            else {
+                collected.extend(page);
+                return Ok(collected);
+            };
+
+            let empty = page.is_empty();
+            collected.extend(page);
+
+            if got_end + 1 >= total {
+                break;
+            }
+
+            // A page that advances nothing would otherwise loop forever. This
+            // fires if v1 reports more rows than it will serve.
+            if empty {
+                bail!(
+                    "GLPI legacy {url} reported rows up to {got_end} of {total} but returned \
+                     none, so walking it cannot progress. Refusing rather than returning {} \
+                     rows as the whole collection.",
+                    collected.len()
+                );
+            }
+
+            start = got_end + 1;
         }
-        reject_partial(status, content_range.as_deref(), &url)?;
-        serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))
+
+        Ok(collected)
     }
 
     /// Run `f` inside a session, killing it afterwards whether or not `f`

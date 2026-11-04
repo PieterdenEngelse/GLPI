@@ -25,6 +25,7 @@ use serde::Deserialize;
 pub mod agents;
 pub mod computers;
 pub mod entities;
+pub mod inventory;
 pub mod legacy;
 pub mod posture;
 pub mod refused;

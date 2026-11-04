@@ -61,6 +61,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/posture", get(security_posture))
         .route("/api/refused", get(refused))
         .route("/api/rights", get(rights))
+        .route("/api/hardware", get(hardware))
+        .route("/api/software", get(software))
+        .route("/api/network", get(network))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -276,6 +279,81 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
             std::cmp::Reverse(c.hours_since_inventory.unwrap_or(i64::MAX)),
         )
     });
+    Ok(Json(out))
+}
+
+/// The computers this account can see, as id -> name.
+///
+/// Every inventory page is scoped by this rather than by what v1 happens to
+/// return. v1 applies the same profile and entity filtering, so the two
+/// should agree - but "should agree" is not the same as "agrees", and a page
+/// built from the v1 tables alone would quietly widen if they ever diverged.
+/// Taking the fleet from v2.3 means Hardware, Software, Network and Computers
+/// all mean the same thing by "every machine".
+async fn visible_computers(
+    state: &AppState,
+) -> anyhow::Result<std::collections::HashMap<i64, String>> {
+    let raw = state.glpi.get("Assets/Computer").await?;
+    Ok(collection(&raw)
+        .iter()
+        .filter_map(|c| {
+            let computer: Computer = serde_json::from_value(c.clone()).ok()?;
+            // Named for the reader, not for GLPI: an unnamed asset still has
+            // to be findable in the table.
+            let name = computer
+                .name
+                .unwrap_or_else(|| format!("computer {}", computer.id));
+            Some((computer.id, name))
+        })
+        .collect())
+}
+
+/// Run `f` against v1 inside one session.
+///
+/// One session for the whole page, not one per collection: initSession is a
+/// full GLPI login and the three inventory pages each read between three and
+/// ten collections.
+async fn with_v1<T, F, Fut>(state: &AppState, f: F) -> anyhow::Result<T>
+where
+    F: FnOnce(crate::glpi::legacy::Session) -> Fut,
+    Fut: std::future::Future<Output = (crate::glpi::legacy::Session, anyhow::Result<T>)>,
+{
+    state.legacy.with_session(f).await
+}
+
+/// What the agents found inside each machine.
+async fn hardware(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let computers = visible_computers(&state).await?;
+    let legacy = &state.legacy;
+    let out = with_v1(&state, |session| async move {
+        let out = crate::glpi::inventory::hardware(legacy, &session, &computers).await;
+        (session, out)
+    })
+    .await?;
+    Ok(Json(out))
+}
+
+/// Every software title installed across the fleet.
+async fn software(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let computers = visible_computers(&state).await?;
+    let legacy = &state.legacy;
+    let out = with_v1(&state, |session| async move {
+        let out = crate::glpi::inventory::software(legacy, &session, &computers).await;
+        (session, out)
+    })
+    .await?;
+    Ok(Json(out))
+}
+
+/// Every machine's network ports and addresses.
+async fn network(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let computers = visible_computers(&state).await?;
+    let legacy = &state.legacy;
+    let out = with_v1(&state, |session| async move {
+        let out = crate::glpi::inventory::network(legacy, &session, &computers).await;
+        (session, out)
+    })
+    .await?;
     Ok(Json(out))
 }
 
