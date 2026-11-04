@@ -1249,6 +1249,105 @@ fn DbRightsPanel() -> Element {
                 }
             }
         }
+
+        div { class: "mt-5", DbDefinedRights {} }
+    }
+}
+
+/// The other database angle on rights, and the one that is easy to miss: a
+/// GLPI right whose NAME comes from a database row rather than from its code.
+///
+/// Distinct from the grant above, which is MariaDB's own permission system.
+/// This is GLPI's, with the definition stored as data - so the set of right
+/// names on the Profiles tab is not fixed, which is the part that matters to
+/// anyone reading that tab.
+#[component]
+fn DbDefinedRights() -> Element {
+    rsx! {
+        Panel {
+            title: "Rights GLPI defines from database rows".to_string(),
+            subtitle: "Why the right names on the Profiles tab are not a fixed list"
+                .to_string(),
+            info: "Almost every GLPI right is named in its code. Custom asset and dropdown \
+                   types are the exception: defining one creates a right named after it."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "How it works",
+                    "A custom type is a row describing it. GLPI builds the class for that type \
+                     as it starts and takes the right's name from the row, so a type whose \
+                     internal name is kiosk gets a right called asset_kiosk. It then keeps the \
+                     rights entries in step as the definition's profiles are edited. No code \
+                     is changed anywhere in GLPI to make that happen.",
+                ),
+                InfoSection::new(
+                    "Why it matters on this page",
+                    "Because it means the Profiles tab is listing a set that can grow without \
+                     anything being upgraded. That tab counts its right names from what GLPI \
+                     reports rather than from a list held in this app, so a new type appears \
+                     there by itself - but the grouping into tabs comes from a copy taken from \
+                     GLPI, and a right GLPI has never heard of until today will sit under \
+                     \u{201c}Not on the profile form\u{201d} until that copy is refreshed. \
+                     That is the honest place for it rather than a guess at a heading.",
+                ),
+                InfoSection::new(
+                    "Not the same as the grant above",
+                    "Two different permission systems. The grant above is MariaDB deciding \
+                     what this app may read. This is GLPI deciding what a profile may do, with \
+                     the definition of the right stored as data instead of written in code. \
+                     Neither has anything to do with the other; they share only the word \
+                     database.",
+                ),
+                InfoSection::new(
+                    "Not observed here",
+                    "This installation defines no custom types, so nothing on this page has \
+                     ever come from one. The behaviour above was read in GLPI's source and \
+                     confirmed only as far as the empty result - the addresses for custom \
+                     types exist as templates with nothing behind them.",
+                ),
+            ],
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Defined in" }
+                            th { "Right name" }
+                            th { "Which rights" }
+                        }
+                    }
+                    tbody {
+                        tr {
+                            td { class: "text-sm", "GLPI's code" }
+                            td { class: "font-mono text-xs", "fixed" }
+                            td { class: "text-xs text-base-content/70",
+                                "Almost all of them - agent, computer, entity, ticket and the rest.                                  A fixed property on the class behind each item."
+                            }
+                        }
+                        tr {
+                            td { class: "text-sm", "A database row" }
+                            td { class: "font-mono text-xs", "asset_<name>" }
+                            td { class: "text-xs text-base-content/70",
+                                "One per custom asset type. Named from the type's own internal                                  name, with its rights entries created and kept in step                                  automatically."
+                            }
+                        }
+                        tr {
+                            td { class: "text-sm", "A database row" }
+                            td { class: "font-mono text-xs", "dropdown_<name>" }
+                            td { class: "text-xs text-base-content/70",
+                                "The same arrangement for custom dropdown types."
+                            }
+                        }
+                    }
+                }
+            }
+
+            p { class: "mt-4 max-w-prose text-sm text-base-content/80",
+                "So defining a custom asset type called Kiosk in GLPI produces three things at                  once with no change to this app or to GLPI's code: an address for it in the                  API, a right called "
+                span { class: "font-mono", "asset_kiosk" }
+                ", and that right's entries for every profile. The DB page covers the wider                  question of what else about GLPI is data and what is program."
+            }
+        }
     }
 }
 
