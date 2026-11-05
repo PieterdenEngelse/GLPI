@@ -85,6 +85,13 @@ pub struct LoginSession {
     pub logged_in_at: Option<String>,
     /// Absent or null while the session is still live.
     pub logged_out_at: Option<String>,
+    /// When the session was last used. More useful than `logged_in_at` for an
+    /// API client, whose sign-in time never changes but which keeps working.
+    pub last_activity_at: Option<String>,
+    /// Why it ended, when it did.
+    pub logout_reason: Option<String>,
+    /// Who revoked it, if anyone did.
+    pub revoker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -131,15 +138,25 @@ fn one(row: &serde_json::Value) -> LoginSession {
     };
     let auth_type = row.get("auth_type").and_then(|v| v.as_i64());
 
+    // `user` is a dropdown object, and the key is `username` rather than
+    // `name`: its schema is built with `name_field: ['name', 'username']`,
+    // and GLPI serialises the second. Measured against a running 12.0.1,
+    // which returned `{"id": 7, "username": "inv"}` - reading `name` alone
+    // silently produced a blank user column on every row. Both are tried,
+    // because the schema names both and the order could change.
+    let named = |obj: Option<&serde_json::Value>| -> Option<String> {
+        let o = obj?;
+        ["username", "name"]
+            .iter()
+            .filter_map(|k| o.get(*k).and_then(|v| v.as_str()))
+            .find(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+
     LoginSession {
         id: row.get("id").and_then(|v| v.as_i64()),
         login_session_uid: s("login_session_uid"),
-        // `user` is a dropdown object, not a string.
-        user: row
-            .get("user")
-            .and_then(|u| u.get("name"))
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
+        user: named(row.get("user")),
         user_id: row
             .get("user")
             .and_then(|u| u.get("id"))
@@ -150,6 +167,9 @@ fn one(row: &serde_json::Value) -> LoginSession {
         auth_label: auth_label(auth_type),
         logged_in_at: s("logged_in_at"),
         logged_out_at: s("logged_out_at"),
+        last_activity_at: s("last_activity_at"),
+        logout_reason: s("logout_reason"),
+        revoker: named(row.get("revoker")),
     }
 }
 
@@ -260,6 +280,51 @@ mod tests {
         // blank rather than an empty-looking value.
         assert_eq!(s.user_agent, None);
         assert_eq!(s.logged_out_at, None, "still logged in");
+    }
+
+    /// The shape a running 12.0.1 actually returns, copied from the wire.
+    ///
+    /// This exists because the first version of this module read `user.name`,
+    /// which is absent - the key is `username` - and every row rendered with
+    /// a blank user. Fixtures written from the schema rather than from the
+    /// response did not catch it.
+    #[test]
+    fn the_user_object_is_keyed_username_as_glpi_sends_it() {
+        let list = serde_json::json!([{
+            "auth_type": 1,
+            "id": 1,
+            "ip_address": "127.0.0.1",
+            "last_activity_at": "2026-11-04T12:18:27+01:00",
+            "logged_in_at": "2026-11-04T12:18:27+01:00",
+            "logged_out_at": null,
+            "login_session_uid": "f79df8a7cd2d9938",
+            "logout_reason": null,
+            "revoker": null,
+            "user": { "id": 7, "username": "inv" },
+            "user_agent_string": ""
+        }]);
+        let r = parse(&list, &session_with_config(Some(1)));
+        let s = &r.sessions[0];
+
+        assert_eq!(s.user.as_deref(), Some("inv"), "username, not name");
+        assert_eq!(s.user_id, Some(7));
+        assert_eq!(
+            s.last_activity_at.as_deref(),
+            Some("2026-11-04T12:18:27+01:00")
+        );
+        assert_eq!(s.logout_reason, None);
+        assert_eq!(s.revoker, None);
+        // The OAuth password grant authenticates against GLPI's own user
+        // table, so GLPI records auth_type 1 and not 9. Measured.
+        assert_eq!(s.auth_label, "GLPI database");
+    }
+
+    /// `name` is the schema's other declared key, so it must also work.
+    #[test]
+    fn a_user_object_keyed_name_still_resolves() {
+        let list = serde_json::json!([{ "user": { "id": 2, "name": "glpi" } }]);
+        let r = parse(&list, &session_with_config(Some(3)));
+        assert_eq!(r.sessions[0].user.as_deref(), Some("glpi"));
     }
 
     #[test]

@@ -463,6 +463,100 @@ pub async fn fetch_field_gaps() -> Result<FieldGapReport, String> {
         .map_err(|e| e.to_string())
 }
 
+/// One service in GLPI's own status check. Mirrors the backend's Service.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct StatusService {
+    pub name: String,
+    /// "ok", "attention" or "unknown".
+    pub state: String,
+    /// GLPI's own word, carried unmapped so a value this build does not know
+    /// still reaches the screen.
+    pub raw: Option<String>,
+}
+
+/// GLPI's own health. Mirrors the backend's system_status::Report.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SystemStatus {
+    /// The rollup across every service. Note this is GLPI's `glpi.status`,
+    /// which is the global figure and NOT the GLPI service's own health.
+    pub overall: String,
+    /// GLPI's schema-version check - its actual health.
+    pub schema_state: String,
+    pub schema_defined: Option<String>,
+    pub schema_installed: Option<String>,
+    /// GLPI served the anonymous view, so the schema fields above mean
+    /// nothing. A finding in itself: this app is reading with less authority
+    /// than it should have.
+    pub redacted: bool,
+    pub stuck: Vec<String>,
+    pub errored: Vec<String>,
+    pub crontask_state: String,
+    pub crontask_summary: Option<String>,
+    pub services: Vec<StatusService>,
+    pub cannot_check: String,
+}
+
+/// GLPI's own health, including automatic actions that stopped running.
+pub async fn fetch_system_status() -> Result<SystemStatus, String> {
+    reqwest::get(api_url("/api/system-status"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<SystemStatus>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// One login session. Mirrors the backend's sessions::LoginSession.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LoginSession {
+    pub id: Option<i64>,
+    pub login_session_uid: Option<String>,
+    pub user: Option<String>,
+    pub user_id: Option<i64>,
+    pub ip_address: Option<String>,
+    pub user_agent: Option<String>,
+    pub auth_type: Option<i64>,
+    /// Decoded by the backend, so both halves cannot disagree about what 9
+    /// means.
+    pub auth_label: String,
+    pub logged_in_at: Option<String>,
+    pub logged_out_at: Option<String>,
+    /// When the session was last used. More telling than the sign-in time for
+    /// an API client, whose sign-in never changes while it keeps working.
+    pub last_activity_at: Option<String>,
+    pub logout_reason: Option<String>,
+    pub revoker: Option<String>,
+}
+
+/// Mirrors the backend's sessions::Report.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LoginSessionReport {
+    /// "fleet", "self_only" or "unknown" - how much of GLPI's session list
+    /// this account was actually shown. A short list under "self_only" means
+    /// nothing about who else is logged in.
+    pub scope: String,
+    pub sessions: Vec<LoginSession>,
+    pub cannot_check: String,
+}
+
+/// Who is inside GLPI, with the scope the answer was given under.
+pub async fn fetch_login_sessions() -> Result<LoginSessionReport, String> {
+    reqwest::get(api_url("/api/login-sessions"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<LoginSessionReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+// No Infocom client here, deliberately. The backend serves
+// /api/infocom/{itemtype}/{id}, but Infocom has no collection route in GLPI,
+// so there is no fleet-wide view of it - and every page in this app is
+// fleet-wide. Showing it would mean one request per machine, which is the
+// shape CLAUDE.md rules out and the reason the inventory pages read v1
+// collections instead. A per-asset panel needs a selected asset, and no page
+// has a selection yet; adding one is a design change rather than wiring.
+
 /// One submission GLPI refused.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Refused {

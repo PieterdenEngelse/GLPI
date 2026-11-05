@@ -61,6 +61,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/posture", get(security_posture))
         .route("/api/refused", get(refused))
         .route("/api/field-gaps", get(field_gaps))
+        .route("/api/system-status", get(system_status))
+        .route("/api/login-sessions", get(login_sessions))
+        .route("/api/infocom/{itemtype}/{id}", get(infocom))
         .route("/api/rights", get(rights))
         .route("/api/hardware", get(hardware))
         .route("/api/software", get(software))
@@ -748,6 +751,78 @@ async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
         reports,
         catalogue: sc::catalogue(&doc),
     }))
+}
+
+/// GLPI's own health, including the automatic actions that quietly stopped.
+///
+/// The same failure this dashboard was built for, one layer down: a scheduled
+/// job that stopped running looks exactly like one with nothing to do. GLPI
+/// does report it and nothing here read it until now. See
+/// glpi::system_status for the three ways this endpoint misleads a careless
+/// reader.
+async fn system_status(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(crate::glpi::system_status::fetch(&state.glpi).await?))
+}
+
+/// Who is currently inside GLPI, and whether that list is the whole truth.
+///
+/// New in 12.0.1. `/All` answers 200 whether or not this account may see
+/// every user's sessions, narrowing silently when it may not, so the report
+/// carries the scope it was actually given - see glpi::sessions.
+async fn login_sessions(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(crate::glpi::sessions::fetch(&state.glpi).await?))
+}
+
+/// One asset's financial and administrative dates.
+///
+/// Per asset by necessity: Infocom has no collection route under Assets, so
+/// there is no fleet view that would not cost a request per machine. A 404
+/// from GLPI means the asset has no financial record - normal for a machine
+/// created by inventory - and is reported as an absence rather than an error.
+/// Returns a `Response` rather than `impl IntoResponse` so the bad-itemtype
+/// branch can answer 400. `ApiError` is deliberately 502 - it exists to carry
+/// GLPI's own failures through - and using it for a caller's mistake would
+/// blame the upstream for a bad request.
+async fn infocom(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((itemtype, id)): axum::extract::Path<(String, i64)>,
+) -> Result<axum::response::Response, ApiError> {
+    // Whitelisted against GLPI's own list rather than passed through. The
+    // itemtype lands in a URL path, and GLPI's route only accepts these -
+    // anything else would be a 404 from GLPI that reads like a broken
+    // endpoint rather than a bad request.
+    const ASSET_TYPES: &[&str] = &[
+        "Cartridge",
+        "CartridgeItem",
+        "Consumable",
+        "ConsumableItem",
+        "Computer",
+        "Monitor",
+        "NetworkEquipment",
+        "Peripheral",
+        "Phone",
+        "Printer",
+        "Software",
+        "Certificate",
+        "Appliance",
+        "Rack",
+        "Enclosure",
+        "PDU",
+        "PassiveDCEquipment",
+        "Cable",
+    ];
+    if !ASSET_TYPES.contains(&itemtype.as_str()) {
+        return Ok((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": format!("itemtype {itemtype} does not carry Infocom"),
+                "accepts": ASSET_TYPES,
+            })),
+        )
+            .into_response());
+    }
+
+    Ok(Json(crate::glpi::infocom::fetch(&state.glpi, &itemtype, id).await?).into_response())
 }
 
 /// Submissions GLPI refused - the third failure, invisible to both APIs.
