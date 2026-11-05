@@ -695,7 +695,6 @@ const GRAMMAR: &[(&str, &str, &str)] = &[
 /// collection to answer it here, so what the language can express is worth
 /// writing down in full rather than discovering one operator at a time.
 #[component]
-#[component]
 fn Rsql(reach: api::FilterReach) -> Element {
     let mut t = use_signal(|| 0usize);
 
@@ -885,8 +884,11 @@ fn Usage(reach: api::FilterReach) -> Element {
     rsx! {
         Panel {
             title: "Reach, and what it refuses".to_string(),
-            subtitle: if reach.paths > 0 {
-                format!("{} of {} operations take a filter", reach.operations, reach.paths)
+            subtitle: if reach.operations_total > 0 {
+                format!(
+                    "{} of {} operations take a filter, across {} paths",
+                    reach.operations, reach.operations_total, reach.paths
+                )
             } else {
                 "Counts unavailable - the reference below is unaffected".to_string()
             },

@@ -78,6 +78,24 @@ impl InfoLink {
     }
 }
 
+// How many panels are currently holding the page still.
+//
+// COUNTED, not a boolean, and this is the whole subtlety. Every `InfoButton`
+// on a page runs its effect when it mounts, with its own panel closed. A
+// plain "set or clear" would mean any button appearing or disappearing - a
+// row arriving from a fetch, a tab switching - released a lock some other
+// open panel was relying on, and the page behind it would start scrolling
+// again with nothing to explain why. Only the 0 -> 1 and 1 -> 0 edges touch
+// the DOM.
+//
+// A thread local rather than a global signal because nothing renders from
+// it: wasm is single threaded, and this is bookkeeping, not state the UI
+// reads.
+thread_local! {
+    /// How many panels are currently holding the page still.
+    static PANELS_HOLDING_SCROLL: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Freeze or release the page behind an open panel.
 ///
 /// Without this the page keeps its own scrollbar beside the panel and the
@@ -86,7 +104,27 @@ impl InfoLink {
 /// Every failure collapses to doing nothing, like the rest of this crate's
 /// DOM access: a page that scrolls when it should not is a far smaller
 /// problem than a panel that refuses to open.
+/// Call once per acquire and once per release - never twice for the same
+/// panel, which is what the per-button flag in `InfoButton` guarantees.
 fn lock_page_scroll(locked: bool) {
+    let edge = PANELS_HOLDING_SCROLL.with(|n| {
+        let before = n.get();
+        // Saturating, so a release that somehow arrives unpaired cannot wrap
+        // to usize::MAX and leave the page locked for good.
+        let after = if locked {
+            before + 1
+        } else {
+            before.saturating_sub(1)
+        };
+        n.set(after);
+        (before, after)
+    });
+
+    // Nothing to do unless this is the first hold or the last release.
+    if !matches!(edge, (0, 1) | (1, 0)) {
+        return;
+    }
+
     let Some(root) = web_sys::window()
         .and_then(|w| w.document())
         .and_then(|d| d.document_element())
@@ -135,14 +173,38 @@ pub fn InfoButton(
     let mut open = use_signal(|| false);
     let mut tab = use_signal(|| 0usize);
 
+    // Whether THIS button is one of the panels holding the page still.
+    // Deliberately a plain cell and not a signal: the effect below must not
+    // re-run because of it, and nothing renders from it.
+    let holding = use_hook(|| std::rc::Rc::new(std::cell::Cell::new(false)));
+
     // Follows the panel's own state rather than being toggled at the click
-    // sites, so there is no path that opens it without locking.
-    use_effect(move || lock_page_scroll(open()));
+    // sites, so there is no path that opens it without locking. Acting only
+    // on a change keeps mounting with a closed panel - which every button on
+    // the page does - from counting as a release of someone else's lock.
+    use_effect({
+        let holding = holding.clone();
+        move || {
+            let wants = open();
+            if wants != holding.get() {
+                holding.set(wants);
+                lock_page_scroll(wants);
+            }
+        }
+    });
 
     // And released if this button is torn down while still open - a route
     // change with a panel up would otherwise leave the whole app unable to
     // scroll, with nothing on screen to explain it.
-    use_drop(|| lock_page_scroll(false));
+    use_drop({
+        let holding = holding.clone();
+        move || {
+            if holding.get() {
+                holding.set(false);
+                lock_page_scroll(false);
+            }
+        }
+    });
 
     // Resolved here, not in the loop: the context read is the same for every
     // link and the base may still be empty while health is in flight.

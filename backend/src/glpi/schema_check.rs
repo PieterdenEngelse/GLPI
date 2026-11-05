@@ -282,6 +282,11 @@ pub fn catalogue(doc: &serde_json::Value) -> Vec<SchemaSummary> {
 pub struct FilterReach {
     /// Operations declaring the `filter` parameter.
     pub operations: usize,
+    /// Every operation the document declares, filterable or not. The
+    /// denominator `operations` is meant to be read against - counting paths
+    /// instead compared two different units, since one path carries an
+    /// operation per HTTP method.
+    pub operations_total: usize,
     /// Every path the document declares, filterable or not.
     pub paths: usize,
 }
@@ -300,9 +305,17 @@ pub fn filter_reach(doc: &serde_json::Value) -> FilterReach {
     };
 
     let mut operations = 0;
+    let mut operations_total = 0;
     for ops in paths.values() {
         let Some(ops) = ops.as_object() else { continue };
-        for op in ops.values() {
+        for (verb, op) in ops {
+            // A path item may carry its own `parameters` array alongside its
+            // methods; that is not an operation and must not be counted as
+            // one in either figure.
+            if !op.is_object() || verb.eq_ignore_ascii_case("parameters") {
+                continue;
+            }
+            operations_total += 1;
             let takes_filter =
                 op.get("parameters")
                     .and_then(|p| p.as_array())
@@ -322,6 +335,7 @@ pub fn filter_reach(doc: &serde_json::Value) -> FilterReach {
 
     FilterReach {
         operations,
+        operations_total,
         paths: paths.len(),
     }
 }
@@ -511,10 +525,17 @@ mod tests {
 
         let got = filter_reach(&doc);
         assert_eq!(got.operations, 2, "two operations declare a filter");
+        assert_eq!(
+            got.operations_total, 3,
+            "three operations exist; the path-level parameters array is not one"
+        );
         assert_eq!(got.paths, 3);
 
         let empty = filter_reach(&serde_json::json!({}));
-        assert_eq!((empty.operations, empty.paths), (0, 0));
+        assert_eq!(
+            (empty.operations, empty.operations_total, empty.paths),
+            (0, 0, 0)
+        );
     }
 
     #[test]

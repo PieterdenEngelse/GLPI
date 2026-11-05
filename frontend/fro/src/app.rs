@@ -10,7 +10,7 @@
 //! before the router ever ran.
 use crate::components::{GlobalErrorBar, Header};
 use crate::pages::{
-    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware,
+    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Netw,
     PageNotFound, Rights, Sec, Status,
 };
 use dioxus::prelude::*;
@@ -43,6 +43,8 @@ pub enum Route {
         Rights {},
         #[route("/db")]
         Db {},
+        #[route("/netw")]
+        Netw {},
         #[route("/sec")]
         Sec {},
         #[route("/about")]

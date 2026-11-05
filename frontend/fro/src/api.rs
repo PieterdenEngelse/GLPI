@@ -455,6 +455,7 @@ pub struct SchemaSummary {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 pub struct FilterReach {
     pub operations: usize,
+    pub operations_total: usize,
     pub paths: usize,
 }
 

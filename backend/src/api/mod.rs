@@ -162,6 +162,16 @@ async fn agents(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
             .iter()
             .filter_map(|c| {
                 let computer: Computer = serde_json::from_value(c.clone()).ok()?;
+                // Re-checked locally, exactly as computers() does and for the
+                // same reason: the filter above FAILS OPEN. GLPI drops a term
+                // naming a field it does not know and answers 200 with the
+                // whole collection, so a renamed `is_deleted` would quietly
+                // refill this map with trashed machines' frozen inventory
+                // dates - flagging every agent that points at one as
+                // not-landing, which is the bug the filter exists to prevent.
+                if computer.is_deleted == Some(true) {
+                    return None;
+                }
                 let hours = computer.hours_since_inventory()?;
                 Some((computer.id, hours))
             })
@@ -349,14 +359,37 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
         // ignored filter returns the WHOLE collection, so trusting the row
         // count would report every machine in the fleet as deleted. Counting
         // the ones that actually say so turns that into a correct zero.
-        Ok(v) => Some(
-            collection(&v)
+        Ok(v) => {
+            let rows = collection(&v);
+            // "Nobody said deleted" and "nobody could say" are different
+            // answers. is_deleted carries x-rights-conditions like any other
+            // field - the whole point of the field-gaps check is that GLPI
+            // drops fields the account may not read from a successful 200 -
+            // and the legacy API serves these tinyints as 0/1 rather than as
+            // JSON booleans. Either way the filter below matches nothing and
+            // the count would be a confident zero, which the Computers page
+            // renders as "no machines were hidden": the one reading the
+            // Option exists to prevent. Absent the field entirely, say None.
+            let usable = rows
                 .iter()
-                .filter(|item| {
-                    item.get("is_deleted").and_then(serde_json::Value::as_bool) == Some(true)
-                })
-                .count(),
-        ),
+                .any(|item| item.get("is_deleted").is_some_and(|v| v.is_boolean()));
+            if rows.is_empty() || usable {
+                Some(
+                    rows.iter()
+                        .filter(|item| {
+                            item.get("is_deleted").and_then(serde_json::Value::as_bool)
+                                == Some(true)
+                        })
+                        .count(),
+                )
+            } else {
+                tracing::warn!(
+                    "is_deleted absent or not a boolean on {} rows; not claiming a count",
+                    rows.len()
+                );
+                None
+            }
+        }
         Err(e) => {
             tracing::warn!("could not count deleted computers: {e:#}");
             None
@@ -405,14 +438,29 @@ struct ComputerReport {
 /// built from the v1 tables alone would quietly widen if they ever diverged.
 /// Taking the fleet from v2.3 means Hardware, Software, Network and Computers
 /// all mean the same thing by "every machine".
+///
+/// Which is why the trash exclusion belongs here too. Computers and Agents
+/// both drop deleted machines now; without the same cut, deleting a computer
+/// in GLPI would remove it from those two pages while its disks, software and
+/// network ports went on being listed as live fleet inventory - the three
+/// /inv pages disagreeing with the rest about the same word.
 async fn visible_computers(
     state: &AppState,
 ) -> anyhow::Result<std::collections::HashMap<i64, String>> {
-    let raw = state.glpi.get("Assets/Computer").await?;
+    let live = crate::glpi::rsql::term("is_deleted", crate::glpi::rsql::Op::Eq, Some("0"));
+    let raw = state
+        .glpi
+        .get(&crate::glpi::rsql::with_filter("Assets/Computer", &live))
+        .await?;
     Ok(collection(&raw)
         .iter()
         .filter_map(|c| {
             let computer: Computer = serde_json::from_value(c.clone()).ok()?;
+            // And again locally, because the filter fails open. See
+            // computers() for what GLPI does with a term it cannot resolve.
+            if computer.is_deleted == Some(true) {
+                return None;
+            }
             // Named for the reader, not for GLPI: an unnamed asset still has
             // to be findable in the table.
             let name = computer

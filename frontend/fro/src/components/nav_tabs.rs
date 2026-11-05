@@ -30,6 +30,9 @@ pub fn NavTabs() -> Element {
         (Route::Inv {}, "Inv"),
         (Route::Rights {}, "Rights"),
         (Route::Db {}, "DB"),
+        // Empty so far - see pages/netw.rs. Distinct from the fleet network
+        // view at /inv/network, which stays where it is under Inv.
+        (Route::Netw {}, "Netw"),
         (Route::Sec {}, "Security"),
     ];
 
