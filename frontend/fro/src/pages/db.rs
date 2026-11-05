@@ -695,7 +695,49 @@ const GRAMMAR: &[(&str, &str, &str)] = &[
 /// collection to answer it here, so what the language can express is worth
 /// writing down in full rather than discovering one operator at a time.
 #[component]
+#[component]
 fn Rsql(reach: api::FilterReach) -> Element {
+    let mut t = use_signal(|| 0usize);
+
+    rsx! {
+        // The third row of tabs on this page, and each level is deliberately
+        // styled differently: bordered for the page, boxed under api-read,
+        // lifted here. Three identical rows would leave a reader unable to
+        // tell which level a click just moved.
+        div { role: "tablist", class: "tabs tabs-sm tabs-lift mb-4 w-fit",
+            button {
+                role: "tab",
+                class: if t() == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| t.set(0),
+                "operator"
+            }
+            button {
+                role: "tab",
+                class: if t() == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| t.set(1),
+                "grammar"
+            }
+            button {
+                role: "tab",
+                class: if t() == 2 { "tab tab-active" } else { "tab" },
+                onclick: move |_| t.set(2),
+                "use"
+            }
+        }
+
+        if t() == 1 {
+            Grammar {}
+        } else if t() == 2 {
+            Usage { reach }
+        } else {
+            Operators {}
+        }
+    }
+}
+
+/// Every operator the parser defines - the operator tab.
+#[component]
+fn Operators() -> Element {
     rsx! {
         Panel {
             title: "Operators".to_string(),
@@ -776,110 +818,143 @@ fn Rsql(reach: api::FilterReach) -> Element {
                 }
             }
         }
+    }
+}
 
-        div { class: "mt-5",
-            Panel {
-                title: "Grammar".to_string(),
-                subtitle: "What joins terms, and what must be escaped".to_string(),
-                info: "An operator on its own is not a query. These are the characters that \
-                       combine terms, group them, and quote a value - every one of them from \
-                       GLPI's lexer rather than from an example that happened to work."
-                    .to_string(),
-                info_sections: vec![
-                    InfoSection::new(
-                        "Why escaping is the whole hazard",
-                        "An unquoted value runs until the next unescaped comma, semicolon or \
-                         closing parenthesis. So a computer named foo;bar, interpolated \
-                         straight into a filter, does not fail - it becomes two terms joined \
-                         by AND, and the answer comes back wrong and plausible. Quoting and \
-                         escaping is why this app builds filters rather than formatting them.",
-                    ),
-                    InfoSection::new(
-                        "Dots reach into joined records",
-                        "A property name may contain dots, and GLPI resolves the path across \
-                         the joins its schema declares - so user.name filters computers by \
-                         the name of the user they are assigned to, in one request. That is \
-                         the part worth knowing: the filter is not restricted to the columns \
-                         of one table.",
-                    ),
-                ],
+/// What joins, groups and quotes a term - the grammar tab.
+#[component]
+fn Grammar() -> Element {
+    rsx! {
+        Panel {
+            title: "Grammar".to_string(),
+            subtitle: "What joins terms, and what must be escaped".to_string(),
+            info: "An operator on its own is not a query. These are the characters that \
+                   combine terms, group them, and quote a value - every one of them from \
+                   GLPI's lexer rather than from an example that happened to work."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why escaping is the whole hazard",
+                    "An unquoted value runs until the next unescaped comma, semicolon or \
+                     closing parenthesis. So a computer named foo;bar, interpolated \
+                     straight into a filter, does not fail - it becomes two terms joined \
+                     by AND, and the answer comes back wrong and plausible. Quoting and \
+                     escaping is why this app builds filters rather than formatting them.",
+                ),
+                InfoSection::new(
+                    "Dots reach into joined records",
+                    "A property name may contain dots, and GLPI resolves the path across \
+                     the joins its schema declares - so user.name filters computers by \
+                     the name of the user they are assigned to, in one request. That is \
+                     the part worth knowing: the filter is not restricted to the columns \
+                     of one table.",
+                ),
+            ],
 
-                div { class: "overflow-x-auto",
-                    table { class: "table table-sm",
-                        thead {
-                            tr {
-                                th { "Token" }
-                                th { "Means" }
-                                th { "Example" }
-                            }
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Token" }
+                            th { "Means" }
+                            th { "Example" }
                         }
-                        tbody {
-                            for (token, means, example) in GRAMMAR.iter() {
-                                tr { key: "{means}",
-                                    td { class: "font-mono text-xs whitespace-nowrap", "{token}" }
-                                    td { class: "text-xs", "{means}" }
-                                    td { class: "font-mono text-xs break-all text-base-content/70", "{example}" }
-                                }
+                    }
+                    tbody {
+                        for (token, means, example) in GRAMMAR.iter() {
+                            tr { key: "{means}",
+                                td { class: "font-mono text-xs whitespace-nowrap", "{token}" }
+                                td { class: "text-xs", "{means}" }
+                                td { class: "font-mono text-xs break-all text-base-content/70", "{example}" }
                             }
                         }
                     }
                 }
             }
         }
+    }
+}
 
-        div { class: "mt-5",
-            Panel {
-                title: "Reach, and what it refuses".to_string(),
-                subtitle: if reach.paths > 0 {
-                    format!("{} of {} operations take a filter", reach.operations, reach.paths)
-                } else {
-                    "Counts unavailable - the reference below is unaffected".to_string()
-                },
-                info: "Which calls can be filtered at all, and the three ways GLPI rejects a \
-                       filter it will not run."
-                    .to_string(),
-                info_sections: vec![
-                    InfoSection::new(
-                        "The counts are live",
-                        "Read off GLPI's own API document on this install each time the tab \
-                         opens, not written down here - the same rule the rest of this page \
-                         follows. Zero means the document could not be read, which the fields \
-                         tab explains; it does not mean filtering is unavailable.",
-                    ),
-                    InfoSection::new(
-                        "Mapped properties are refused",
-                        "A property GLPI computes from another one - declared x-mapped-from in \
-                         its schema - cannot be filtered, and the request fails with \
-                         \u{201c}Mapped properties cannot be used in RSQL\u{201d}. There are 43 \
-                         such declarations in 12.0.1 against 31 in 11.0.12, so the surface \
-                         grows at the upgrade. None of them are discoverable from the \
-                         document: it strips the extension, so the only way to know a \
-                         property is unfilterable is to filter on it and read the error.",
-                    ),
-                    InfoSection::new(
-                        "The three refusals",
-                        "Unknown property, unknown operator, and mapped property. All three \
-                         name the offending term rather than failing the whole call silently, \
-                         which is the one respect in which this is friendlier than the \
-                         database: a filter that cannot run says so.",
-                    ),
-                ],
+/// Where a filter may be used, and the three ways it is refused - the use tab.
+///
+/// The only one of the three that depends on the fetch: its counts come off
+/// the live document, where the operators and the grammar are read from GLPI's
+/// source and hold whether or not this install answers.
+#[component]
+fn Usage(reach: api::FilterReach) -> Element {
+    rsx! {
+        Panel {
+            title: "Reach, and what it refuses".to_string(),
+            subtitle: if reach.paths > 0 {
+                format!("{} of {} operations take a filter", reach.operations, reach.paths)
+            } else {
+                "Counts unavailable - the reference below is unaffected".to_string()
+            },
+            info: "Which calls can be filtered at all, and the three ways GLPI rejects a \
+                   filter it will not run."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "The counts are live",
+                    "Read off GLPI's own API document on this install each time the tab \
+                     opens, not written down here - the same rule the rest of this page \
+                     follows. Zero means the document could not be read, which the fields \
+                     tab explains; it does not mean filtering is unavailable.",
+                ),
+                InfoSection::new(
+                    "Mapped properties are refused",
+                    "A property GLPI computes from another one - declared x-mapped-from in \
+                     its schema - cannot be filtered, and the request fails with \
+                     \u{201c}Mapped properties cannot be used in RSQL\u{201d}. There are 43 \
+                     such declarations in 12.0.1 against 31 in 11.0.12, so the surface \
+                     grows at the upgrade. None of them are discoverable from the \
+                     document: it strips the extension, so the only way to know a \
+                     property is unfilterable is to filter on it and read the error.",
+                ),
+                InfoSection::new(
+                    "The three refusals",
+                    "Unknown property, unknown operator, and mapped property. All three \
+                     name the offending term rather than failing the whole call silently, \
+                     which is the one respect in which this is friendlier than the \
+                     database: a filter that cannot run says so.",
+                ),
+            ],
 
-                div { class: "max-w-prose space-y-2 text-sm text-base-content/70",
-                    p {
-                        "Filtering is a GET-only affair, and the document describes the "
-                        span { class: "font-mono text-xs", "filter" }
-                        " parameter in its entirety as "
-                        span { class: "italic", "\u{201c}RSQL query string\u{201d}" }
-                        " - no operator, no grammar, no mention of what cannot be filtered. "
-                        "Everything above this line is why that sentence is not enough to use it."
+            div { class: "max-w-prose space-y-2 text-sm text-base-content/70",
+                p {
+                    "Filtering is a GET-only affair, and the "
+                    // The document is GLPI's own, and it is worth opening: the
+                    // claim being made about it is that it says almost nothing,
+                    // which a reader should be able to check in one click
+                    // rather than take on trust. Points at the Swagger UI
+                    // rather than doc.json, which is 4.6 MB of it.
+                    match crate::glpi_link::link("api.php/v2.3/doc") {
+                        Some(h) => rsx! {
+                            a {
+                                class: "link link-primary",
+                                href: "{h}",
+                                target: "_blank",
+                                rel: "noopener noreferrer",
+                                title: "GLPI High-Level REST API 2.3.0 - GLPI's own OpenAPI document",
+                                "document ↗"
+                            }
+                        },
+                        // GLPI's address is not known yet, so the sentence
+                        // still reads - it just does not link anywhere.
+                        None => rsx! { "document" },
                     }
-                    p {
-                        "What it buys: a question GLPI answers in one request instead of a "
-                        "collection walked here and mostly discarded. The software list on "
-                        "this install is 1330 rows in three requests to answer things a "
-                        "filter would answer in one."
-                    }
+                    " describes the "
+                    span { class: "font-mono text-xs", "filter" }
+                    " parameter in its entirety as "
+                    span { class: "italic", "\u{201c}RSQL query string\u{201d}" }
+                    " - no operator, no grammar, no mention of what cannot be filtered. "
+                    "Everything above this line is why that sentence is not enough to use it."
+                }
+                p {
+                    "What it buys: a question GLPI answers in one request instead of a "
+                    "collection walked here and mostly discarded. The software list on "
+                    "this install is 1330 rows in three requests to answer things a "
+                    "filter would answer in one."
                 }
             }
         }
