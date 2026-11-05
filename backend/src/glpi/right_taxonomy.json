@@ -18,7 +18,7 @@
         "interface": "central",
         "tab": "tools",
         "group": "general",
-        "label": "Public Saved Searches"
+        "label": "Public saved searches"
     },
     {
         "right": "budget",
@@ -123,14 +123,14 @@
         "interface": "central",
         "tab": "management",
         "group": "general",
-        "label": "Database Instances"
+        "label": "Database instances"
     },
     {
         "right": "datacenter",
         "interface": "central",
         "tab": "management",
         "group": "general",
-        "label": "Datacenters"
+        "label": "Data centers"
     },
     {
         "right": "defaultfilter",
@@ -161,6 +161,13 @@
         "label": "Documents"
     },
     {
+        "right": "document",
+        "interface": "central",
+        "tab": "tracking",
+        "group": "followups_tasks",
+        "label": "Document items"
+    },
+    {
         "right": "domain",
         "interface": "central",
         "tab": "management",
@@ -172,7 +179,14 @@
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Global Dropdowns"
+        "label": "Global dropdowns"
+    },
+    {
+        "right": "enclosure",
+        "interface": "central",
+        "tab": "assets",
+        "group": "general",
+        "label": "Enclosures"
     },
     {
         "right": "entity",
@@ -186,7 +200,7 @@
         "interface": "central",
         "tab": "tracking",
         "group": "planning",
-        "label": "External Events"
+        "label": "External events"
     },
     {
         "right": "followup",
@@ -221,7 +235,7 @@
         "interface": "central",
         "tab": "management",
         "group": "general",
-        "label": "Financial & Administrative Information"
+        "label": "Financial and administrative information"
     },
     {
         "right": "internet",
@@ -242,14 +256,14 @@
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "ITIL Categories"
+        "label": "ITIL categories"
     },
     {
         "right": "itilfollowuptemplate",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Followup Templates"
+        "label": "Followup templates"
     },
     {
         "right": "itiltemplate",
@@ -270,21 +284,14 @@
         "interface": "central",
         "tab": "tools",
         "group": "general",
-        "label": "Knowledge Base"
+        "label": "Knowledge base"
     },
     {
         "right": "knowbase",
         "interface": "helpdesk",
         "tab": "tools",
         "group": "general",
-        "label": "Knowledge Base"
-    },
-    {
-        "right": "knowbasecategory",
-        "interface": "central",
-        "tab": "setup",
-        "group": "general",
-        "label": "Knowledgebase Categories"
+        "label": "Knowledge base"
     },
     {
         "right": "license",
@@ -305,14 +312,14 @@
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Line Operators"
+        "label": "Line operators"
     },
     {
         "right": "link",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "External Links"
+        "label": "External links"
     },
     {
         "right": "location",
@@ -326,7 +333,7 @@
         "interface": "central",
         "tab": "admin",
         "group": "inventory",
-        "label": "Locked Fields"
+        "label": "Locked fields"
     },
     {
         "right": "logs",
@@ -347,7 +354,7 @@
         "interface": "central",
         "tab": "assets",
         "group": "general",
-        "label": "Network Devices"
+        "label": "Network devices"
     },
     {
         "right": "notification",
@@ -368,7 +375,7 @@
         "interface": "central",
         "tab": "tracking",
         "group": "itilobjects",
-        "label": "Pending Reasons"
+        "label": "Pending reasons"
     },
     {
         "right": "peripheral",
@@ -438,7 +445,7 @@
         "interface": "central",
         "tab": "tools",
         "group": "projects",
-        "label": "Project Tasks"
+        "label": "Project tasks"
     },
     {
         "right": "queuednotification",
@@ -452,7 +459,7 @@
         "interface": "central",
         "tab": "tracking",
         "group": "changes",
-        "label": "Recurring changes"
+        "label": "Recurrent changes"
     },
     {
         "right": "refusedequipment",
@@ -466,14 +473,14 @@
         "interface": "central",
         "tab": "tools",
         "group": "general",
-        "label": "Public Reminders"
+        "label": "Public reminders"
     },
     {
         "right": "reminder_public",
         "interface": "helpdesk",
         "tab": "tools",
         "group": "general",
-        "label": "Reminders"
+        "label": "Personal reminders"
     },
     {
         "right": "reports",
@@ -487,49 +494,49 @@
         "interface": "central",
         "tab": "tools",
         "group": "general",
-        "label": "Reservable Items"
+        "label": "Reservable items"
     },
     {
         "right": "reservation",
         "interface": "helpdesk",
         "tab": "tools",
         "group": "general",
-        "label": "Reservable Items"
+        "label": "Reservable items"
     },
     {
         "right": "rssfeed_public",
         "interface": "central",
         "tab": "tools",
         "group": "general",
-        "label": "Public RSS Feeds"
+        "label": "Public RSS feeds"
     },
     {
         "right": "rssfeed_public",
         "interface": "helpdesk",
         "tab": "tools",
         "group": "general",
-        "label": "RSS feed"
+        "label": "Personal RSS feed"
     },
     {
         "right": "rule_asset",
         "interface": "central",
         "tab": "admin",
         "group": "rules",
-        "label": "Business Rules for Assets"
+        "label": "Business rules for assets"
     },
     {
         "right": "rule_change",
         "interface": "central",
         "tab": "admin",
         "group": "rules",
-        "label": "Business Rules for Changes (Entity)"
+        "label": "Business rules for changes (entity)"
     },
     {
         "right": "rule_dictionnary_dropdown",
         "interface": "central",
         "tab": "admin",
         "group": "dictionaries",
-        "label": "Dropdowns Dictionary"
+        "label": "Dropdowns dictionary"
     },
     {
         "right": "rule_dictionnary_printer",
@@ -543,7 +550,7 @@
         "interface": "central",
         "tab": "admin",
         "group": "dictionaries",
-        "label": "Software Dictionary"
+        "label": "Software dictionary"
     },
     {
         "right": "rule_import",
@@ -571,7 +578,7 @@
         "interface": "central",
         "tab": "admin",
         "group": "rules",
-        "label": "Rules for assigning a ticket created through an email receiver"
+        "label": "Rules for assigning a ticket created through a mails receiver"
     },
     {
         "right": "rule_problem",
@@ -592,14 +599,14 @@
         "interface": "central",
         "tab": "admin",
         "group": "rules",
-        "label": "Business Rules for Tickets (entity)"
+        "label": "Business rules for tickets (entity)"
     },
     {
         "right": "search_config",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Search Result Display"
+        "label": "Search result display"
     },
     {
         "right": "slm",
@@ -613,7 +620,7 @@
         "interface": "central",
         "tab": "admin",
         "group": "inventory",
-        "label": "SNMP Credentials"
+        "label": "SNMP credentials"
     },
     {
         "right": "software",
@@ -627,14 +634,14 @@
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Solution Templates"
+        "label": "Solution templates"
     },
     {
         "right": "state",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Status of Items"
+        "label": "Statuses of items"
     },
     {
         "right": "statistic",
@@ -648,35 +655,35 @@
         "interface": "central",
         "tab": "admin",
         "group": "general",
-        "label": "System Logs"
+        "label": "System logs"
     },
     {
         "right": "task",
         "interface": "central",
         "tab": "tracking",
         "group": "followups_tasks",
-        "label": "Ticket Tasks"
+        "label": "Ticket tasks"
     },
     {
         "right": "task",
         "interface": "helpdesk",
         "tab": "tracking",
         "group": "general",
-        "label": "Ticket Tasks"
+        "label": "Ticket tasks"
     },
     {
         "right": "taskcategory",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Task Categories"
+        "label": "Task categories"
     },
     {
         "right": "tasktemplate",
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Task Templates"
+        "label": "Task templates"
     },
     {
         "right": "ticket",
@@ -704,7 +711,7 @@
         "interface": "central",
         "tab": "tracking",
         "group": "tickets",
-        "label": "Recurring tickets"
+        "label": "Recurrent tickets"
     },
     {
         "right": "ticketvalidation",
@@ -732,7 +739,7 @@
         "interface": "central",
         "tab": "setup",
         "group": "general",
-        "label": "Document Types"
+        "label": "Document types"
     },
     {
         "right": "unmanaged",
