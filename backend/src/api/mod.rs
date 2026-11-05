@@ -298,9 +298,32 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
         .await?;
 
     let mut out = Vec::new();
+    let mut filter_was_ignored = 0usize;
     for item in collection(&raw) {
         match serde_json::from_value::<Computer>(item.clone()) {
-            Ok(c) => out.push(c.status(&covered)),
+            Ok(c) => {
+                // The same exclusion again, locally, because the server-side
+                // filter FAILS OPEN.
+                //
+                // GLPI silently drops a filter term naming a field it does not
+                // know and runs the query without it: `Search.php:443` pulls
+                // `Error::UNKNOWN_PROPERTY` out of the set it throws on, so
+                // only an unknown OPERATOR or a mapped property raise
+                // RSQLException. Measured, not read: on this install
+                // `filter=is_deletedX==0` returns the full collection with a
+                // 200, identical to sending no filter at all.
+                //
+                // So if `is_deleted` is ever renamed, removed, or mistyped
+                // here, GLPI hands back every machine including the trashed
+                // ones and says nothing - reinstating the exact bug the filter
+                // was added to fix. This guard makes that degrade to
+                // "correct but one wasted round trip" instead of "wrong".
+                if c.is_deleted == Some(true) {
+                    filter_was_ignored += 1;
+                    continue;
+                }
+                out.push(c.status(&covered))
+            }
             Err(e) => tracing::warn!("skipping unparseable computer row: {e}; raw={item}"),
         }
     }
@@ -322,12 +345,34 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
         ))
         .await
     {
-        Ok(v) => Some(collection(&v).len()),
+        // Counted locally for the same reason, and it matters more here: an
+        // ignored filter returns the WHOLE collection, so trusting the row
+        // count would report every machine in the fleet as deleted. Counting
+        // the ones that actually say so turns that into a correct zero.
+        Ok(v) => Some(
+            collection(&v)
+                .iter()
+                .filter(|item| {
+                    item.get("is_deleted").and_then(serde_json::Value::as_bool) == Some(true)
+                })
+                .count(),
+        ),
         Err(e) => {
             tracing::warn!("could not count deleted computers: {e:#}");
             None
         }
     };
+
+    // Worth knowing about, because it means an upgrade moved a field name out
+    // from under the filter. Not an error: the guard above already made the
+    // answer correct, so this is a note rather than a failure.
+    if filter_was_ignored > 0 {
+        tracing::warn!(
+            "GLPI returned {filter_was_ignored} soft-deleted computer(s) despite the \
+             is_deleted filter, so it silently ignored the filter term - excluded them here \
+             instead. Check that Assets/Computer still declares `is_deleted`."
+        );
+    }
 
     // Orphans first, then oldest inventory: both are reasons to look, and an
     // orphan is the worse one.

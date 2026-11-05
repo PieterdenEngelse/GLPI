@@ -294,6 +294,44 @@ mod tests {
         );
     }
 
+    /// A filter is NOT a guarantee, and this is the note that says so.
+    ///
+    /// GLPI silently drops a term naming a field it does not know and runs
+    /// the query without it. `Search.php:443` lifts `Error::UNKNOWN_PROPERTY`
+    /// out of the set it throws on, so an unknown OPERATOR or a mapped
+    /// property raise RSQLException while an unknown FIELD does not -
+    /// upstream's own comment on that branch, "Fail the request if any of the
+    /// filters are invalid", overstates what the code beneath it does.
+    ///
+    /// Measured against a running 12.0.1, counting rows on Assets/Computer:
+    ///
+    /// ```text
+    ///   (no filter)                 1 row
+    ///   name=="nixos"               1 row    filter applied
+    ///   name=="no-such-machine"     0 rows   filter applied
+    ///   no_such_field=="x"          1 row    filter IGNORED
+    ///   is_deletedX==0              1 row    filter IGNORED
+    /// ```
+    ///
+    /// So every caller that relies on a filter for CORRECTNESS rather than
+    /// for efficiency has to re-check the result locally - `api::computers`
+    /// does, and says why. This test exists to keep that reasoning attached
+    /// to the builder rather than only to the one caller that currently
+    /// remembers it.
+    #[test]
+    fn a_filter_is_an_optimisation_not_a_guarantee() {
+        // Nothing here can detect the server ignoring a term; the builder
+        // only promises a well-formed string. The assertion is that the
+        // field name is carried verbatim, because that is the single thing a
+        // caller can get wrong and never be told about.
+        assert_eq!(term("is_deleted", Op::Eq, Some("0")), r#"is_deleted=="0""#);
+        assert_eq!(
+            term("is_deletedX", Op::Eq, Some("0")),
+            r#"is_deletedX=="0""#,
+            "a typo builds just as happily, and GLPI will accept and ignore it"
+        );
+    }
+
     /// The inverse, used to count what was excluded. `!=` rather than
     /// `=istruthy=` for the same portability reason.
     #[test]
