@@ -32,7 +32,8 @@ pub fn Computers() -> Element {
                     }
                 }
             },
-            Some(Ok(list)) => {
+            Some(Ok(report)) => {
+                let list = &report.computers;
                 let orphans = list.iter().filter(|c| c.orphaned).count();
                 rsx! {
                     div { class: "stats stats-vertical sm:stats-horizontal mb-5 w-full border border-base-300 bg-base-100 shadow-sm",
@@ -128,6 +129,29 @@ pub fn Computers() -> Element {
                                 on_refresh: move |_| rows.restart(),
                             }
                         },
+
+                        // What this list leaves out, stated rather than
+                        // implied. GLPI returns soft-deleted machines unless
+                        // asked not to, and a filtered list that does not say
+                        // it is filtered is the same problem as an empty list
+                        // that does not say it failed to look.
+                        match report.deleted_excluded {
+                            Some(0) => rsx! {},
+                            Some(n) => rsx! {
+                                div { class: "mb-3 text-sm text-base-content/70",
+                                    "{n} deleted machine(s) are in GLPI's trash and are not listed. "
+                                    "They are excluded because a deleted machine has no agent "
+                                    "reporting for it, so it would appear here as an orphan."
+                                }
+                            },
+                            None => rsx! {
+                                div { class: "mb-3 text-sm text-base-content/70",
+                                    "Deleted machines are excluded from this list, but how many "
+                                    "could not be established - so this is not a claim that none "
+                                    "were hidden."
+                                }
+                            },
+                        }
 
                         if list.is_empty() {
                             div { class: "text-base-content/60",

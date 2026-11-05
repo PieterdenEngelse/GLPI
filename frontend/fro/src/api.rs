@@ -165,12 +165,27 @@ pub struct ComputerStatus {
     pub orphaned: bool,
 }
 
-/// Every computer, orphans first.
-pub async fn fetch_computers() -> Result<Vec<ComputerStatus>, String> {
+/// Mirrors the backend's ComputerReport.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct ComputerReport {
+    pub computers: Vec<ComputerStatus>,
+    /// Soft-deleted machines GLPI was asked to leave out. `None` means the
+    /// count could not be established, which is NOT the same as zero - the
+    /// page says so rather than implying nothing was hidden.
+    pub deleted_excluded: Option<usize>,
+}
+
+/// Every live computer, orphans first, with a count of what was left out.
+///
+/// Soft-deleted machines are excluded by GLPI rather than here. They used to
+/// come through: GLPI applies no default `is_deleted` restriction, and a
+/// deleted machine has no agent reporting for it, so it arrived flagged as
+/// orphaned - the one state this page exists to raise.
+pub async fn fetch_computers() -> Result<ComputerReport, String> {
     reqwest::get(api_url("/api/computers"))
         .await
         .map_err(|e| e.to_string())?
-        .json::<Vec<ComputerStatus>>()
+        .json::<ComputerReport>()
         .await
         .map_err(|e| e.to_string())
 }

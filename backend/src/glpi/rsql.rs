@@ -267,6 +267,44 @@ mod tests {
         assert_eq!(with_filter("Assets/Computer", ""), "Assets/Computer");
     }
 
+    /// The filter the Computers and Agents pages send, pinned.
+    ///
+    /// Written down because the choice of operator here was got wrong once in
+    /// the other direction. `=isnottruthy=` compiles to `IS NOT TRUE` and so
+    /// also matches NULL, which looked like the safer option - but
+    /// `is_deleted` is `tinyint NOT NULL DEFAULT '0'` in every definition in
+    /// GLPI's install/mysql, so no NULL can exist and the two are equivalent
+    /// on this column. `==0` is kept because it also works on 11.0.12, where
+    /// `=isnottruthy=` does not exist.
+    ///
+    /// If this ever moves to a nullable column, the operator must change -
+    /// `==0` would silently drop NULL rows from a fleet view, which is worse
+    /// than the deleted-machine bug it was introduced to fix.
+    #[test]
+    fn the_live_machines_filter_is_what_the_pages_expect() {
+        let f = term("is_deleted", Op::Eq, Some("0"));
+        assert_eq!(f, r#"is_deleted=="0""#);
+        assert!(
+            !Op::Eq.requires_12(),
+            "the pages must keep working against 11.0.12"
+        );
+        assert_eq!(
+            with_filter("Assets/Computer", &f),
+            "Assets/Computer?filter=is_deleted%3D%3D%220%22"
+        );
+    }
+
+    /// The inverse, used to count what was excluded. `!=` rather than
+    /// `=istruthy=` for the same portability reason.
+    #[test]
+    fn the_excluded_count_filter_is_the_exact_complement() {
+        let live = term("is_deleted", Op::Eq, Some("0"));
+        let gone = term("is_deleted", Op::Ne, Some("0"));
+        assert_eq!(gone, r#"is_deleted!="0""#);
+        assert_ne!(live, gone);
+        assert!(!Op::Ne.requires_12());
+    }
+
     #[test]
     fn the_two_new_operators_are_flagged_as_needing_12() {
         assert!(Op::IsTruthy.requires_12());

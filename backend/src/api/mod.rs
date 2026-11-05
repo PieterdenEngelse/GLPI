@@ -146,21 +146,31 @@ async fn agents(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
     // computer list every agent simply reports no inventory age, which the
     // check treats as "cannot say" and leaves unflagged. Losing one state is
     // better than losing the fleet view that already works.
-    let inventory_age: std::collections::HashMap<i64, i64> =
-        match state.glpi.get("Assets/Computer").await {
-            Ok(raw) => collection(&raw)
-                .iter()
-                .filter_map(|c| {
-                    let computer: Computer = serde_json::from_value(c.clone()).ok()?;
-                    let hours = computer.hours_since_inventory()?;
-                    Some((computer.id, hours))
-                })
-                .collect(),
-            Err(e) => {
-                tracing::warn!("no computer list, so no not-landing detection: {e:#}");
-                Default::default()
-            }
-        };
+    //
+    // Live machines only, matching the Computers page. Two reasons, and the
+    // second is the one that matters: a trashed asset is not one this agent
+    // maintains, so its frozen inventory date would mark the agent as
+    // not-landing; and every page here has to mean the same thing by "every
+    // machine" or the two disagree about the same fleet.
+    let live = crate::glpi::rsql::term("is_deleted", crate::glpi::rsql::Op::Eq, Some("0"));
+    let inventory_age: std::collections::HashMap<i64, i64> = match state
+        .glpi
+        .get(&crate::glpi::rsql::with_filter("Assets/Computer", &live))
+        .await
+    {
+        Ok(raw) => collection(&raw)
+            .iter()
+            .filter_map(|c| {
+                let computer: Computer = serde_json::from_value(c.clone()).ok()?;
+                let hours = computer.hours_since_inventory()?;
+                Some((computer.id, hours))
+            })
+            .collect(),
+        Err(e) => {
+            tracing::warn!("no computer list, so no not-landing detection: {e:#}");
+            Default::default()
+        }
+    };
 
     let mut out = Vec::new();
     for item in collection(&raw) {
@@ -266,7 +276,27 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
         })
         .collect();
 
-    let raw = state.glpi.get("Assets/Computer").await?;
+    // Soft-deleted computers are excluded, by GLPI rather than here.
+    //
+    // GLPI has no default restriction on `is_deleted` - there is none in
+    // Search.php or ResourceAccessor.php, and the schemas expose it as an
+    // ordinary boolean - so an unfiltered Assets/Computer returns machines
+    // sitting in GLPI's trash alongside live ones. That mattered more than a
+    // stray row: a deleted machine has no agent reporting for it, so it would
+    // be marked `orphaned`, which is the single state this page exists to
+    // raise. Deleting a machine on purpose would have produced the page's
+    // loudest alarm.
+    //
+    // `==0` and not `=isnottruthy=`: the column is `tinyint NOT NULL DEFAULT
+    // '0'` in every definition in install/mysql, so there is no NULL to
+    // catch, and `==0` works on 11.0.12 as well - `=isnottruthy=` is new in
+    // 12.0.1. Equivalent here, and portable.
+    let live = crate::glpi::rsql::term("is_deleted", crate::glpi::rsql::Op::Eq, Some("0"));
+    let raw = state
+        .glpi
+        .get(&crate::glpi::rsql::with_filter("Assets/Computer", &live))
+        .await?;
+
     let mut out = Vec::new();
     for item in collection(&raw) {
         match serde_json::from_value::<Computer>(item.clone()) {
@@ -274,6 +304,30 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
             Err(e) => tracing::warn!("skipping unparseable computer row: {e}; raw={item}"),
         }
     }
+
+    // Count what was left out, and say so. Filtering silently is the same
+    // mistake as rendering an empty list for an unreachable upstream: the
+    // reader cannot tell a small fleet from a filtered one.
+    //
+    // A second walk, of a set that is normally empty - zero on this install.
+    // A failure here degrades to "could not count" rather than failing the
+    // page, because the list above is the answer and this is a footnote.
+    let deleted_filter =
+        crate::glpi::rsql::term("is_deleted", crate::glpi::rsql::Op::Ne, Some("0"));
+    let deleted_excluded = match state
+        .glpi
+        .get(&crate::glpi::rsql::with_filter(
+            "Assets/Computer",
+            &deleted_filter,
+        ))
+        .await
+    {
+        Ok(v) => Some(collection(&v).len()),
+        Err(e) => {
+            tracing::warn!("could not count deleted computers: {e:#}");
+            None
+        }
+    };
 
     // Orphans first, then oldest inventory: both are reasons to look, and an
     // orphan is the worse one.
@@ -283,7 +337,19 @@ async fn computers(State(state): State<Arc<AppState>>) -> Result<impl IntoRespon
             std::cmp::Reverse(c.hours_since_inventory.unwrap_or(i64::MAX)),
         )
     });
-    Ok(Json(out))
+    Ok(Json(ComputerReport {
+        computers: out,
+        deleted_excluded,
+    }))
+}
+
+#[derive(Serialize)]
+struct ComputerReport {
+    computers: Vec<crate::glpi::computers::ComputerStatus>,
+    /// How many soft-deleted machines were filtered out, or `None` if that
+    /// could not be established. `None` is not zero: the page says "could not
+    /// count" rather than implying nothing was hidden.
+    deleted_excluded: Option<usize>,
 }
 
 /// The computers this account can see, as id -> name.
