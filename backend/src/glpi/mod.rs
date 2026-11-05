@@ -14,7 +14,10 @@
 //!     the asset silently never appears. Nothing in the agent's own log says
 //!     so.
 //!   * No field-level change history (glpi_logs) under Inventory, so "what
-//!     changed between runs" is not reachable either.
+//!     changed between runs" is not reachable in v2.3. v1 does answer it, one
+//!     asset per request, via getItem's with_logs - measured, 42 entries for
+//!     this install's one computer. Fleet-wide in a single query is what it
+//!     cannot do, which is what the database grant is for.
 //!
 //! Both live in the database. Options are a read-only MariaDB user scoped to
 //! those two tables, or doing without; that choice is not made here. See

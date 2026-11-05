@@ -75,7 +75,8 @@ GLPI 11.0.12, not assumed:
   submission, the asset silently never appears, and nothing in the agent's
   own log says so.
 - **No field-level change history** (`glpi_logs`) under Inventory, so "what
-  changed between runs" is unreachable too.
+  changed between runs" is unreachable *in v2.3*. v1 does answer it, per asset,
+  via `with_logs=true` — see the note below on the `glpi_logs` grant.
 
 Both live in the database. The options are a read-only MariaDB user scoped to
 those two tables, or doing without. **Still not decided for those two** — do
@@ -98,12 +99,24 @@ The database account holds `SELECT` on `glpi_refusedequipments` **and**
 usage concludes the second is cruft. **That conclusion is wrong**, and it has
 already been reached once and argued for in detail before being caught.
 
-It is held for field-level change history — "what changed between runs" —
-which is unreachable by *any* API at *any* version, checked again on 12.0.1.
-A serial or MAC that silently changed between inventories is the natural
-fourth quiet failure beside "stopped reporting", "never landed" and "no
-agent", and it is squarely what this app is for. The grant was taken against
-a gap that still exists.
+It is held for field-level change history — "what changed between runs". A
+serial or MAC that silently changed between inventories is the natural fourth
+quiet failure beside "stopped reporting", "never landed" and "no agent", and
+it is squarely what this app is for.
+
+**Correcting the reason first given for it, which was wrong.** This note used
+to say the history is unreachable by *any* API at *any* version. It is not.
+v2.3 models no `Log` schema at any path, so the API this app prefers cannot
+answer it — but **v1 can**: `getItem` takes `with_logs=true` and returns that
+asset's `glpi_logs` rows, gated by the `logs` right, which this account
+already holds. Measured on this install: `Computer/1?with_logs=true` returns
+42 entries, 7 of them field-level with real `old_value` → `new_value` pairs.
+
+The gap is narrower and still real: v1 answers **one asset per request**. That
+is the same per-machine cost that sent Hardware, Software and Network to v1
+*collections* rather than per-asset calls, and on a fleet it is the difference
+between one query and one per machine. That — fleet-wide history in a single
+query — is what the grant buys, and it is the justification to keep.
 
 More generally, and this is the part worth carrying beyond this one grant:
 **this app is still being built, so judging anything by what the code

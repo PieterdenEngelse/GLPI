@@ -219,28 +219,31 @@ fn DbRead() -> Element {
                 info_sections: vec![
                     InfoSection::new(
                         "Why grant a table nothing reads",
-                        "It was granted alongside the refused table because it is the other \
-                         thing neither API exposes, and because widening a grant later means \
-                         another round of deciding. It is listed here rather than left \
-                         implicit, so that an unused grant is visible rather than forgotten.",
+                        "It was granted alongside the refused table because widening a grant \
+                         later means another round of deciding. It is listed here rather than \
+                         left implicit, so that an unused grant is visible rather than \
+                         forgotten.",
                     ),
                     InfoSection::new(
                         "Not a loose end to tidy away",
                         "The obvious audit - nothing reads it, so it should come out - is the \
                          wrong test while an app is still being built, and this page said \
-                         otherwise until recently. The question is not what the code uses \
-                         today but whether the capability is on its way, and this one is: \
-                         field-level change history is unreachable through any GLPI API at any \
-                         version, 12.0.1 included, and a serial or a MAC that changed quietly \
+                         otherwise until recently. The question is whether the capability is \
+                         on its way, and this one is: a serial or a MAC that changed quietly \
                          between two inventories is the natural fourth failure beside stopped \
-                         reporting, never landed and no agent. The grant was taken against a \
-                         gap that is still open.",
+                         reporting, never landed and no agent. What the grant buys is the \
+                         whole estate in one query, which is the part no API offers.",
                     ),
                     InfoSection::new(
                         "What it would answer",
-                        "What changed on an asset between two inventory runs. The API exposes \
-                         no field-level history at all, so \u{201c}this machine's memory \
-                         halved last Tuesday\u{201d} is unanswerable without this table.",
+                        "What changed on an asset between two inventory runs - \u{201c}this \
+                         machine's memory halved last Tuesday\u{201d}. Not strictly \
+                         unanswerable without it, and this page claimed otherwise until \
+                         recently: the older API returns an asset's history when asked for it \
+                         by id, one machine per request. That is the same per-machine cost \
+                         that sent the inventory pages to collections instead, and it is the \
+                         whole difference - a question asked of the fleet, rather than of one \
+                         machine at a time.",
                     ),
                 ],
 
