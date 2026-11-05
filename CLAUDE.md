@@ -91,6 +91,26 @@ v2.3, the legacy v1 API answers it at lower cost — same account, same profile
 rights, same entity scope, none of which direct SQL preserves. So the open
 question is now narrow: `RefusedEquipment` and `glpi_logs` only.
 
+### The `glpi_logs` grant is provisioning. Do not revoke it as a tidy-up.
+
+The database account holds `SELECT` on `glpi_refusedequipments` **and**
+`glpi_logs`. Only the first is read by any code today, so an audit by present
+usage concludes the second is cruft. **That conclusion is wrong**, and it has
+already been reached once and argued for in detail before being caught.
+
+It is held for field-level change history — "what changed between runs" —
+which is unreachable by *any* API at *any* version, checked again on 12.0.1.
+A serial or MAC that silently changed between inventories is the natural
+fourth quiet failure beside "stopped reporting", "never landed" and "no
+agent", and it is squarely what this app is for. The grant was taken against
+a gap that still exists.
+
+More generally, and this is the part worth carrying beyond this one grant:
+**this app is still being built, so judging anything by what the code
+currently uses is the wrong test.** The right question is whether the
+capability is on the way. The same error was made about GLPI 12's new API
+surface before it was made about this grant.
+
 ## Why this app speaks two GLPI APIs
 
 v2.3 for the asset-level view — agents, computers, entities, session;
