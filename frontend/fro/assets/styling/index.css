@@ -45,3 +45,17 @@
   --color-primary: #0D98BA;
   --color-primary-content: #ffffff;
 }
+
+/* Freeze the page while an info panel is open.
+
+   Set as an attribute on the root element by components/info.rs, for the same
+   reason theme.rs writes data-theme there: it is the one element reachable
+   with the web-sys features this crate already enables, and a rule here
+   cannot be dropped by the class scanner the way an unused utility would be.
+
+   On <html> rather than <body>: the viewport takes its overflow from the root
+   element, and setting it on body only works through a propagation rule that
+   stops applying the moment anything gives html its own overflow. */
+html[data-scroll-locked] {
+  overflow: hidden;
+}
