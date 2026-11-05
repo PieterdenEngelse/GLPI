@@ -772,6 +772,10 @@ struct FieldGapReport {
     /// a second endpoint would mean a second 4.6 MB fetch for data already in
     /// hand.
     catalogue: Vec<crate::glpi::schema_check::SchemaSummary>,
+    /// How many operations the document says accept an RSQL filter. Also off
+    /// the same `doc.json`, and the figure the RSQL reference needs so it can
+    /// state its reach rather than assert it.
+    filter_reach: crate::glpi::schema_check::FilterReach,
 }
 
 /// Fields the API's own schema promises that this account does not receive.
@@ -800,6 +804,7 @@ async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
             doc_available: false,
             reports: Vec::new(),
             catalogue: Vec::new(),
+            filter_reach: Default::default(),
         }));
     }
 
@@ -816,6 +821,7 @@ async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
         doc_available: true,
         reports,
         catalogue: sc::catalogue(&doc),
+        filter_reach: sc::filter_reach(&doc),
     }))
 }
 

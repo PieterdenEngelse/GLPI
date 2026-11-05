@@ -450,6 +450,14 @@ pub struct SchemaSummary {
     pub audited: bool,
 }
 
+/// How far RSQL filtering reaches. Mirrors the backend's
+/// `schema_check::FilterReach`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+pub struct FilterReach {
+    pub operations: usize,
+    pub paths: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct FieldGapReport {
     /// False means GLPI served no usable schema document, so nothing could be
@@ -462,6 +470,10 @@ pub struct FieldGapReport {
     /// rule the rest of this file follows.
     #[serde(default)]
     pub catalogue: Vec<SchemaSummary>,
+    /// Zeroed, not absent, when the document could not be read - the RSQL tab
+    /// shows its reference either way and only withholds the counts.
+    #[serde(default)]
+    pub filter_reach: FilterReach,
 }
 
 /// Fields GLPI's own schema declares that this account does not receive.

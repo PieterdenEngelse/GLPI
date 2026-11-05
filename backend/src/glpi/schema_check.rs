@@ -277,6 +277,55 @@ pub fn catalogue(doc: &serde_json::Value) -> Vec<SchemaSummary> {
     out
 }
 
+/// How far RSQL filtering reaches, as the document itself describes it.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct FilterReach {
+    /// Operations declaring the `filter` parameter.
+    pub operations: usize,
+    /// Every path the document declares, filterable or not.
+    pub paths: usize,
+}
+
+/// Count the operations that accept an RSQL `filter`.
+///
+/// THE TRAP, and why this matches two shapes. GLPI declares the parameter by
+/// reference - `{"$ref": "#/components/parameters/filter"}` - so scanning each
+/// operation for a parameter *named* filter finds nothing and reports zero,
+/// which is exactly the wrong answer this function was written after getting.
+/// An inline declaration is matched too, so a future GLPI that stops using the
+/// ref does not silently read as "filtering was removed".
+pub fn filter_reach(doc: &serde_json::Value) -> FilterReach {
+    let Some(paths) = doc.get("paths").and_then(|p| p.as_object()) else {
+        return FilterReach::default();
+    };
+
+    let mut operations = 0;
+    for ops in paths.values() {
+        let Some(ops) = ops.as_object() else { continue };
+        for op in ops.values() {
+            let takes_filter =
+                op.get("parameters")
+                    .and_then(|p| p.as_array())
+                    .is_some_and(|params| {
+                        params.iter().any(|p| {
+                            p.get("$ref")
+                                .and_then(|r| r.as_str())
+                                .is_some_and(|r| r.ends_with("/parameters/filter"))
+                                || p.get("name").and_then(|n| n.as_str()) == Some("filter")
+                        })
+                    });
+            if takes_filter {
+                operations += 1;
+            }
+        }
+    }
+
+    FilterReach {
+        operations,
+        paths: paths.len(),
+    }
+}
+
 /// Pull one schema's declaration out of a whole OpenAPI document.
 ///
 /// Returns `None` rather than an error for an unknown name: a schema the
@@ -436,6 +485,36 @@ mod tests {
             "a schema with no properties counts zero"
         );
         assert!(!got[2].audited, "Zebra is not audited");
+    }
+
+    #[test]
+    fn filter_reach_counts_the_ref_declaration_and_not_only_the_named_one() {
+        let doc = serde_json::json!({
+            "paths": {
+                // How GLPI really declares it.
+                "/Assets/Computer": { "get": { "parameters": [
+                    { "$ref": "#/components/parameters/filter" },
+                    { "$ref": "#/components/parameters/limit" },
+                ] } },
+                // Inline, in case a later GLPI stops using the ref.
+                "/Inventory/Agent": { "get": { "parameters": [
+                    { "name": "filter", "in": "query" },
+                ] } },
+                // A path that takes no filter at all, plus a non-operation
+                // key, which must not be counted as one.
+                "/Assets/Computer/{id}": {
+                    "get": { "parameters": [{ "$ref": "#/components/parameters/limit" }] },
+                    "parameters": [{ "$ref": "#/components/parameters/filter" }],
+                },
+            }
+        });
+
+        let got = filter_reach(&doc);
+        assert_eq!(got.operations, 2, "two operations declare a filter");
+        assert_eq!(got.paths, 3);
+
+        let empty = filter_reach(&serde_json::json!({}));
+        assert_eq!((empty.operations, empty.paths), (0, 0));
     }
 
     #[test]

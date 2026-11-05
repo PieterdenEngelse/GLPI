@@ -315,7 +315,56 @@ fn ApiRead() -> Element {
         _ => None,
     };
 
+    // Zeroed while the fetch is in flight or if it failed. The RSQL reference
+    // renders either way and simply withholds the two counts - the grammar is
+    // not contingent on this install answering.
+    let reach = match &*report.read_unchecked() {
+        Some(Ok(r)) => r.filter_reach,
+        _ => api::FilterReach::default(),
+    };
+
+    let mut sub = use_signal(|| 0usize);
+
     rsx! {
+        // A second row of tabs, inside the tab. Boxed rather than bordered so
+        // it reads as nested under api-read instead of competing with the page
+        // tabs above it.
+        div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
+            button {
+                role: "tab",
+                class: if sub() == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(0),
+                "fields"
+            }
+            button {
+                role: "tab",
+                class: if sub() == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(1),
+                "schema"
+            }
+            button {
+                role: "tab",
+                class: if sub() == 2 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(2),
+                "rsql"
+            }
+        }
+
+        if sub() == 1 {
+            match catalogue {
+                Some(rows) => rsx! { Catalogue { rows } },
+                // The fetch states live on the fields tab, which is the
+                // default; saying it twice would be two places to keep honest.
+                None => rsx! {
+                    div { class: "text-sm text-base-content/60",
+                        "The schema list is read from GLPI's own API document and is not "
+                        "available right now. The fields tab says why."
+                    }
+                },
+            }
+        } else if sub() == 2 {
+            Rsql { reach }
+        } else {
         Panel {
             title: "Fields the API withholds".to_string(),
             subtitle: "Declared against received".to_string(),
@@ -429,10 +478,6 @@ fn ApiRead() -> Element {
         }
 
         div { class: "mt-2 max-w-prose text-xs text-base-content/60", "{RIGHTS_NOTE}" }
-
-        match catalogue {
-            Some(rows) => rsx! { div { class: "mt-5", Catalogue { rows } } },
-            None => rsx! {},
         }
     }
 }
@@ -582,6 +627,259 @@ fn CatalogueRow(row: api::SchemaSummary) -> Element {
                     // Not a failing: five paths are what this app reads. An
                     // unaudited schema is one nothing here asks GLPI for.
                     span { class: "text-xs text-base-content/40", "not read" }
+                }
+            }
+        }
+    }
+}
+
+/// Every operator GLPI's RSQL parser defines - not only the ones this app
+/// reaches for.
+///
+/// Token, GLPI's own description, whether a value follows, and whether it
+/// needs 12.0.1. Read out of `src/Glpi/Api/HL/RSQL/Parser.php` in both
+/// releases and diffed: 16 operators in 11.0.12, 18 in 12.0.1, the truthy
+/// pair being the whole of the difference. Order is the parser's own, because
+/// that is what a reader diffing this against a GLPI release will see.
+const OPERATORS: &[(&str, &str, bool, bool)] = &[
+    ("==", "equivalent to", true, false),
+    ("!=", "not equivalent to", true, false),
+    ("=in=", "in", true, false),
+    ("=out=", "not in", true, false),
+    ("=lt=", "less than", true, false),
+    ("=le=", "less than or equal to", true, false),
+    ("=gt=", "greater than", true, false),
+    ("=ge=", "greater than or equal to", true, false),
+    ("=like=", "like", true, false),
+    ("=ilike=", "case insensitive like", true, false),
+    ("=isnull=", "is null", false, false),
+    ("=notnull=", "is not null", false, false),
+    ("=empty=", "is empty", false, false),
+    ("=notempty=", "is not empty", false, false),
+    ("=notlike=", "not like", true, false),
+    ("=notilike=", "case insensitive not like", true, false),
+    ("=istruthy=", "is truthy", false, true),
+    ("=isnottruthy=", "is not truthy", false, true),
+];
+
+/// The grammar around the operators: what joins terms, what groups them, and
+/// what has to be escaped.
+///
+/// From `RSQL/Lexer.php` - its own constants, not inferred from examples.
+const GRAMMAR: &[(&str, &str, &str)] = &[
+    (";", "and", "name==\"web01\";is_deleted=istruthy="),
+    (",", "or", "name==\"web01\",name==\"web02\""),
+    (
+        "( )",
+        "group, and the value list =in= takes",
+        "states_id=in=(1,2,3)",
+    ),
+    ("\\", "escape, in an unquoted value", "name==foo\\;bar"),
+    (
+        "\" or \u{27}",
+        "quote a value, either kind",
+        "name==\u{27}web 01\u{27}",
+    ),
+    (
+        "a-z 0-9 _ .",
+        "what a property name may contain",
+        "user.name==\"pde\"",
+    ),
+];
+
+/// The whole RSQL surface GLPI offers, against the sliver of it in use.
+///
+/// Reference rather than telemetry, like db-read - except the two reach
+/// figures, which are read live off the same API document the other tabs use.
+/// A filter is the difference between asking GLPI a question and fetching a
+/// collection to answer it here, so what the language can express is worth
+/// writing down in full rather than discovering one operator at a time.
+#[component]
+fn Rsql(reach: api::FilterReach) -> Element {
+    rsx! {
+        Panel {
+            title: "Operators".to_string(),
+            subtitle: format!("All {} GLPI defines, whether or not this app uses them", OPERATORS.len()),
+            info: "RSQL is the filter language GLPI's API takes in its filter parameter. These \
+                   are every operator its parser defines - the full surface, not the part this \
+                   app currently builds."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Where this list comes from",
+                    "GLPI's own parser, read in the source of both releases and diffed - 16 \
+                     operators in 11.0.12 and 18 in 12.0.1. It is not read from the API \
+                     document, because the document does not contain it: the filter parameter \
+                     is described there in full as \u{201c}RSQL query string\u{201d} and names \
+                     no operator at all.",
+                ),
+                InfoSection::new(
+                    "Two of them need 12.0.1",
+                    "=istruthy= and =isnottruthy= are the only operators 12.0.1 adds. An \
+                     install still on 11.0.12 answers them with an RSQL error rather than \
+                     ignoring them, so the failure is loud either way - which is the useful \
+                     kind.",
+                ),
+                InfoSection::new(
+                    "Case, and what empty means",
+                    "=like= is matched against a BINARY cast and is therefore case sensitive, \
+                     where =ilike= is not; that is the only difference between them. =empty= \
+                     covers both the empty string and NULL, where =isnull= covers only NULL - \
+                     so a column holding \u{27}\u{27} answers =empty= and not =isnull=.",
+                ),
+                InfoSection::new(
+                    "All eighteen are reachable from this app",
+                    "The filter builder in this app covers every operator listed here, \
+                     including the two that need 12.0.1, and flags those so a caller can \
+                     avoid them on an older install. What it does not do is guess: values are \
+                     always quoted and escaped, because an unquoted value containing a \
+                     semicolon or a comma silently changes the shape of the query rather than \
+                     failing.",
+                ),
+            ],
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    thead {
+                        tr {
+                            th { "Operator" }
+                            th { "Means" }
+                            th { "Value" }
+                            th { "Since" }
+                        }
+                    }
+                    tbody {
+                        for (token, means, takes_value, only_12) in OPERATORS.iter() {
+                            tr { key: "{token}",
+                                td { class: "font-mono text-xs whitespace-nowrap", "{token}" }
+                                td { class: "text-xs", "{means}" }
+                                td { class: "text-xs",
+                                    if *takes_value {
+                                        span { class: "text-base-content/70", "a value follows" }
+                                    } else {
+                                        // Not a missing value - the operator is
+                                        // complete on its own, and appending one
+                                        // makes GLPI reject the term.
+                                        span { class: "text-base-content/50", "none" }
+                                    }
+                                }
+                                td {
+                                    if *only_12 {
+                                        span { class: "badge badge-warning badge-sm", "12.0.1" }
+                                    } else {
+                                        span { class: "text-xs text-base-content/50", "11.0.12" }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        div { class: "mt-5",
+            Panel {
+                title: "Grammar".to_string(),
+                subtitle: "What joins terms, and what must be escaped".to_string(),
+                info: "An operator on its own is not a query. These are the characters that \
+                       combine terms, group them, and quote a value - every one of them from \
+                       GLPI's lexer rather than from an example that happened to work."
+                    .to_string(),
+                info_sections: vec![
+                    InfoSection::new(
+                        "Why escaping is the whole hazard",
+                        "An unquoted value runs until the next unescaped comma, semicolon or \
+                         closing parenthesis. So a computer named foo;bar, interpolated \
+                         straight into a filter, does not fail - it becomes two terms joined \
+                         by AND, and the answer comes back wrong and plausible. Quoting and \
+                         escaping is why this app builds filters rather than formatting them.",
+                    ),
+                    InfoSection::new(
+                        "Dots reach into joined records",
+                        "A property name may contain dots, and GLPI resolves the path across \
+                         the joins its schema declares - so user.name filters computers by \
+                         the name of the user they are assigned to, in one request. That is \
+                         the part worth knowing: the filter is not restricted to the columns \
+                         of one table.",
+                    ),
+                ],
+
+                div { class: "overflow-x-auto",
+                    table { class: "table table-sm",
+                        thead {
+                            tr {
+                                th { "Token" }
+                                th { "Means" }
+                                th { "Example" }
+                            }
+                        }
+                        tbody {
+                            for (token, means, example) in GRAMMAR.iter() {
+                                tr { key: "{means}",
+                                    td { class: "font-mono text-xs whitespace-nowrap", "{token}" }
+                                    td { class: "text-xs", "{means}" }
+                                    td { class: "font-mono text-xs break-all text-base-content/70", "{example}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        div { class: "mt-5",
+            Panel {
+                title: "Reach, and what it refuses".to_string(),
+                subtitle: if reach.paths > 0 {
+                    format!("{} of {} operations take a filter", reach.operations, reach.paths)
+                } else {
+                    "Counts unavailable - the reference below is unaffected".to_string()
+                },
+                info: "Which calls can be filtered at all, and the three ways GLPI rejects a \
+                       filter it will not run."
+                    .to_string(),
+                info_sections: vec![
+                    InfoSection::new(
+                        "The counts are live",
+                        "Read off GLPI's own API document on this install each time the tab \
+                         opens, not written down here - the same rule the rest of this page \
+                         follows. Zero means the document could not be read, which the fields \
+                         tab explains; it does not mean filtering is unavailable.",
+                    ),
+                    InfoSection::new(
+                        "Mapped properties are refused",
+                        "A property GLPI computes from another one - declared x-mapped-from in \
+                         its schema - cannot be filtered, and the request fails with \
+                         \u{201c}Mapped properties cannot be used in RSQL\u{201d}. There are 43 \
+                         such declarations in 12.0.1 against 31 in 11.0.12, so the surface \
+                         grows at the upgrade. None of them are discoverable from the \
+                         document: it strips the extension, so the only way to know a \
+                         property is unfilterable is to filter on it and read the error.",
+                    ),
+                    InfoSection::new(
+                        "The three refusals",
+                        "Unknown property, unknown operator, and mapped property. All three \
+                         name the offending term rather than failing the whole call silently, \
+                         which is the one respect in which this is friendlier than the \
+                         database: a filter that cannot run says so.",
+                    ),
+                ],
+
+                div { class: "max-w-prose space-y-2 text-sm text-base-content/70",
+                    p {
+                        "Filtering is a GET-only affair, and the document describes the "
+                        span { class: "font-mono text-xs", "filter" }
+                        " parameter in its entirety as "
+                        span { class: "italic", "\u{201c}RSQL query string\u{201d}" }
+                        " - no operator, no grammar, no mention of what cannot be filtered. "
+                        "Everything above this line is why that sentence is not enough to use it."
+                    }
+                    p {
+                        "What it buys: a question GLPI answers in one request instead of a "
+                        "collection walked here and mostly discarded. The software list on "
+                        "this install is 1330 rows in three requests to answer things a "
+                        "filter would answer in one."
+                    }
                 }
             }
         }
