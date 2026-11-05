@@ -212,7 +212,7 @@ fn DbRead() -> Element {
         div { class: "mt-5",
             Panel {
                 title: "glpi_logs".to_string(),
-                subtitle: "Granted, and not read by anything yet".to_string(),
+                subtitle: "Granted, and not read yet - held for what is coming".to_string(),
                 info: "GLPI's own change history. The grant covers it; no query in this app \
                        touches it."
                     .to_string(),
@@ -221,11 +221,20 @@ fn DbRead() -> Element {
                         "Why grant a table nothing reads",
                         "It was granted alongside the refused table because it is the other \
                          thing neither API exposes, and because widening a grant later means \
-                         another round of deciding. That is a defensible trade and also a real \
-                         one: a grant wider than the code that uses it is access nobody is \
-                         checking the need for. It is listed here rather than left implicit so \
-                         the gap is visible - either something comes to use it, or it should \
-                         come out of the grant.",
+                         another round of deciding. It is listed here rather than left \
+                         implicit, so that an unused grant is visible rather than forgotten.",
+                    ),
+                    InfoSection::new(
+                        "Not a loose end to tidy away",
+                        "The obvious audit - nothing reads it, so it should come out - is the \
+                         wrong test while an app is still being built, and this page said \
+                         otherwise until recently. The question is not what the code uses \
+                         today but whether the capability is on its way, and this one is: \
+                         field-level change history is unreachable through any GLPI API at any \
+                         version, 12.0.1 included, and a serial or a MAC that changed quietly \
+                         between two inventories is the natural fourth failure beside stopped \
+                         reporting, never landed and no agent. The grant was taken against a \
+                         gap that is still open.",
                     ),
                     InfoSection::new(
                         "What it would answer",
