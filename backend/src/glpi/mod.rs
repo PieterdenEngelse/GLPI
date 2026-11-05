@@ -25,13 +25,17 @@ use serde::Deserialize;
 pub mod agents;
 pub mod computers;
 pub mod entities;
+pub mod infocom;
 pub mod inventory;
 pub mod legacy;
 pub mod posture;
 pub mod refused;
 pub mod rights;
+pub mod rsql;
 pub mod schema_check;
 pub mod session;
+pub mod sessions;
+pub mod system_status;
 
 /// An OAuth2 access token with the instant it stops being valid.
 struct Token {
@@ -228,6 +232,47 @@ impl Client {
     /// verified, not assumed.
     pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
         self.get_at(HL_DEFAULT, path).await
+    }
+
+    /// One object, where a 404 means "no such record" rather than an error.
+    ///
+    /// Most of this API uses 404 for a route that does not exist, which `get`
+    /// is right to treat as a failure. A few endpoints use it for a record
+    /// that does not exist, and conflating the two turns an ordinary absence
+    /// into an upstream error on screen.
+    ///
+    /// `Assets/{itemtype}/{id}/Infocom` is the case this was written for:
+    /// `AssetController::getItemInfocom` ends with
+    /// `if (empty($results)) return self::getNotFoundErrorResponse();`, so an
+    /// asset with no financial record answers 404 while the route is present
+    /// and working. A missing `infocom` right is a separate branch in the same
+    /// handler and answers access-denied, so `None` here never hides a
+    /// permission problem.
+    ///
+    /// Single request, no walk: this is for one object, and an endpoint that
+    /// returns a collection should go through `get`.
+    pub async fn get_optional_at(
+        &self,
+        version: &str,
+        path: &str,
+    ) -> Result<Option<serde_json::Value>> {
+        let url = format!(
+            "{}/api.php/{}/{}",
+            self.base,
+            version.trim_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let (status, _, body) = self.fetch(&url).await?;
+
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            bail!("GLPI {url} returned {status}: {body}");
+        }
+        Ok(Some(
+            serde_json::from_str(&body).with_context(|| format!("decoding JSON from {url}"))?,
+        ))
     }
 
     /// The same walk, against a named HL version.
