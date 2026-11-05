@@ -227,9 +227,32 @@ impl Client {
     /// and returns no `Content-Range`, which is how this tells the two apart -
     /// verified, not assumed.
     pub async fn get(&self, path: &str) -> Result<serde_json::Value> {
+        self.get_at(HL_DEFAULT, path).await
+    }
+
+    /// The same walk, against a named HL version.
+    ///
+    /// Exists because `get` used to build the version into the URL inline, so
+    /// v2.3 was the only version this client could reach at all. Everything
+    /// GLPI serves outside it needed a second client or an edit to that line.
+    ///
+    /// The walk itself is version-independent: the pagination block that sets
+    /// the status and the `Content-Range` header is byte-identical between
+    /// 11.0.12 and 12.0.1 (`ResourceAccessor.php`), so `start`/`limit`, the
+    /// header format and 206-versus-200 all mean the same thing on v3 as on
+    /// v2.3. That was checked against the source and measured against both
+    /// running versions, not assumed.
+    ///
+    /// Prefer `get`. v2.3 is where every schema this app reads has been
+    /// verified, and v3.0 is not a superset of it - it REMOVES 42 routes that
+    /// v2.3 still serves. Reach for this only for something v2.3 genuinely
+    /// does not have, and check `/api.php` first for what the install
+    /// actually serves rather than assuming a version exists.
+    pub async fn get_at(&self, version: &str, path: &str) -> Result<serde_json::Value> {
         let base = format!(
-            "{}/api.php/v2.3/{}",
+            "{}/api.php/{}/{}",
             self.base,
+            version.trim_matches('/'),
             path.trim_start_matches('/')
         );
         let sep = if base.contains('?') { '&' } else { '?' };
@@ -306,6 +329,28 @@ impl Client {
         Ok(serde_json::Value::Array(collected))
     }
 }
+
+/// The HL version every call goes to unless told otherwise.
+///
+/// v2.3 and not v3.0 deliberately. v3.0 exists on 12.0.1 and is not
+/// deprecated, but it is not a superset: `Router.php` serves 1, 2.3 and 3.0,
+/// and 42 routes are REMOVED at 3.0 - the `SoftwareLicense` compatibility
+/// shapes and the knowledge-base `/Category` endpoints. Every schema this app
+/// reads is verified against v2.3; none of it is verified against v3.0.
+pub const HL_DEFAULT: &str = "v2.3";
+
+/// The version carrying routes v2.3 has no equivalent for.
+///
+/// On GLPI 12.0.1 that is four `LoginSession` routes and four generic
+/// `{itemtype}/{id}/Infocom` routes, under the `/Security` and `/Management`
+/// prefixes. It is NOT where the three things this app works around live:
+/// `Profile_User` and `RefusedEquipment` both answer 404 here, and the
+/// `Profile` schema carries no rights, so v1 and the SQL grant survive v3.
+/// Measured against a running 12.0.1, not inferred.
+///
+/// A GLPI that does not serve v3 answers 404, which is loud. Read `/api.php`
+/// rather than assuming this constant applies to whatever is deployed.
+pub const HL_V3: &str = "v3.0";
 
 /// Rows to ask for per request when walking a collection.
 ///

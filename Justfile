@@ -78,6 +78,19 @@ probe path="Inventory/Agent":
 probe-v1 path="SoftwareVersion":
     cargo run -p glpi-cli -- --v1 {{path}}
 
+# GET an HL v3.0 path and print the JSON.
+#
+# v3.0 is NOT a superset of v2.3 - 42 routes are removed at 3.0 - so this is
+# for the handful of things v2.3 has no equivalent for, which on 12.0.1 means
+# the four Security/LoginSession routes and the generic {itemtype}/{id}/Infocom
+# ones. A GLPI that does not serve v3 answers 404; `curl -s $GLPI_URL/api.php`
+# lists what the install actually serves, and is worth reading before assuming
+# a version exists on it.
+#
+#   just probe-v3 Security/LoginSession/My
+probe-v3 path="Security/LoginSession/My":
+    cargo run -p glpi-cli -- --v3 {{path}}
+
 # Regenerate the right -> (tab, group) map the Rights page groups by.
 #
 # Needs the glpi user, so it is the one recipe here you cannot run as yourself:

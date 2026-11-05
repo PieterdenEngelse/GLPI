@@ -26,26 +26,46 @@ use glpi_inv_backend::{config::Config, glpi};
 /// which the tool admits it is looking at part of a collection.
 const V1_RANGE: &str = "0-99999";
 
+/// Which of GLPI's three APIs to ask.
+#[derive(PartialEq, Eq)]
+enum Api {
+    /// `/apirest.php` - what no HL version models: ProfileRight, Profile_User.
+    V1,
+    /// The default HL version, where every schema this app reads is verified.
+    Hl,
+    /// HL v3.0, for routes v2.3 has no equivalent for. Not a superset of
+    /// v2.3: 42 routes are removed at 3.0.
+    V3,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let mut args = std::env::args().skip(1);
     let first = args.next().context(
-        "usage: glpi-cli [--v1] <api-path>   e.g. glpi-cli Inventory/Agent\n\
+        "usage: glpi-cli [--v1|--v3] <api-path>   e.g. glpi-cli Inventory/Agent\n\
          needs GLPI_CLIENT_ID and GLPI_CLIENT_SECRET in the environment",
     )?;
 
-    let (v1, path) = match first.as_str() {
+    // Three APIs, because GLPI serves three and they answer different
+    // questions. --v1 for what no HL version models at all; --v3 for the
+    // routes v2.3 has no equivalent for; neither for everything else.
+    let (api, path) = match first.as_str() {
         "--v1" => (
-            true,
+            Api::V1,
             args.next()
                 .context("--v1 needs a path, e.g. glpi-cli --v1 SoftwareVersion")?,
         ),
-        _ => (false, first),
+        "--v3" => (
+            Api::V3,
+            args.next()
+                .context("--v3 needs a path, e.g. glpi-cli --v3 Security/LoginSession/My")?,
+        ),
+        _ => (Api::Hl, first),
     };
 
     let cfg = Config::from_env()?;
 
-    let value = if v1 {
+    let value = if api == Api::V1 {
         let legacy = glpi::legacy::Legacy::new(&cfg.glpi_url, cfg.username, cfg.password);
         // A shared reference, so the closure can own one while with_session
         // borrows the client itself. Moving `legacy` in would take the client
@@ -64,7 +84,10 @@ async fn main() -> Result<()> {
             cfg.username,
             cfg.password,
         );
-        client.get(&path).await?
+        match api {
+            Api::V3 => client.get_at(glpi::HL_V3, &path).await?,
+            _ => client.get(&path).await?,
+        }
     };
 
     println!("{}", serde_json::to_string_pretty(&value)?);
