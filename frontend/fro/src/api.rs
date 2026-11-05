@@ -424,12 +424,29 @@ pub struct SchemaReport {
     pub cannot_check: String,
 }
 
+/// One schema in GLPI's document, counted rather than compared. Mirrors the
+/// backend's `schema_check::SchemaSummary`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct SchemaSummary {
+    pub schema: String,
+    pub declared: usize,
+    pub readable: usize,
+    pub write_only: usize,
+    pub audited: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct FieldGapReport {
     /// False means GLPI served no usable schema document, so nothing could be
     /// compared. Distinct from "compared and found nothing".
     pub doc_available: bool,
     pub reports: Vec<SchemaReport>,
+    /// Every schema the document declares. Empty when `doc_available` is
+    /// false, and `#[serde(default)]` so a backend that predates the field
+    /// degrades to an empty catalogue rather than a failed parse - the same
+    /// rule the rest of this file follows.
+    #[serde(default)]
+    pub catalogue: Vec<SchemaSummary>,
 }
 
 /// Fields GLPI's own schema declares that this account does not receive.

@@ -101,10 +101,21 @@ pub fn Db() -> Element {
                 onclick: move |_| tab.set(1),
                 "db-read"
             }
+            button {
+                role: "tab",
+                class: if tab() == 2 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(2),
+                "api-read"
+            }
         }
 
         if tab() == 1 {
             DbRead {}
+        } else if tab() == 2 {
+            // Fetches inside the tab, never with the page: this one pulls
+            // GLPI's whole OpenAPI document, about 4.6 MB, and the Overview
+            // must not pay for a tab nobody opened.
+            ApiRead {}
         } else {
             match counts {
                 Some(c) => rsx! { Counts { counts: c } },
@@ -256,6 +267,323 @@ fn DbRead() -> Element {
             "No other table is granted, so no other table has a schema this app can be broken              by. The rights values on the Rights page come from GLPI's API, not from "
             span { class: "font-mono", "glpi_profilerights" }
             " - reading them over SQL would have skipped the entity filtering every other page              passes through."
+        }
+    }
+}
+
+/// Why a withheld field is still a rights question, said on screen.
+///
+/// The table moved off the Rights page; the reason it was there has not gone
+/// anywhere. Without this line a reader who finds a suppressed field here has
+/// no idea the remedy is a profile right two pages away.
+const RIGHTS_NOTE: &str = "A withheld field is a permissions fact, not a schema one: GLPI \
+declares the field and this account may not read it. Which right it wants, and which profile \
+would grant it, is on the Rights page - this tab only establishes that something promised did \
+not arrive.";
+
+/// What this app reads out of GLPI's API - the other half of `DbRead`.
+///
+/// Two things, because the tab answers two questions. What the API declares
+/// is the catalogue: hundreds of schemas, which is the figure that makes the
+/// audited slice legible as a slice. What actually arrives is the audit, over
+/// the five paths this app really reads.
+///
+/// It moved here from the Rights page, and the comment it arrived with made
+/// the opposite case - that it belonged beside rights because a withheld
+/// field is a permissions phenomenon and not a schema one. That reading is
+/// still true and is why `RIGHTS_NOTE` below says so on screen. What changed
+/// is the question this page now asks: everything this app reads out of GLPI,
+/// sorted by where it comes from. A field the API declares and withholds is
+/// an answer to that, and the pairing with `db-read` is what makes the two
+/// kinds of "schema" distinguishable at all.
+///
+/// GLPI's HL schemas carry `x-rights-conditions`, and a field the account may
+/// not read is simply absent from an otherwise successful 200. Every field in
+/// this app is `Option` by design, so that lands on screen as a blank cell -
+/// which looks like missing data in GLPI rather than missing permission here.
+/// 12.0.1 adds ten more such conditions than 11.0.12 has, so this stops being
+/// theoretical at the upgrade. See backend/src/glpi/schema_check.rs.
+#[component]
+fn ApiRead() -> Element {
+    let report = use_resource(|| async move { api::fetch_field_gaps().await });
+
+    // Only when there is a document to list. An empty catalogue and an absent
+    // one are different answers, and the panel below says nothing rather than
+    // rendering an empty table that reads as "GLPI declares no schemas".
+    let catalogue = match &*report.read_unchecked() {
+        Some(Ok(r)) if r.doc_available && !r.catalogue.is_empty() => Some(r.catalogue.clone()),
+        _ => None,
+    };
+
+    rsx! {
+        Panel {
+            title: "Fields the API withholds".to_string(),
+            subtitle: "Declared against received".to_string(),
+            info: "A call can succeed and still be short a field. GLPI drops fields the \
+                   account may not read instead of refusing the request, so this compares \
+                   what GLPI's own schema promises against what actually arrived."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why this is not visible anywhere else",
+                    "A withheld field is absent, not null, and this app makes every field \
+                     optional on purpose so that a drifting GLPI degrades to a blank cell \
+                     instead of a failed page. That is the right trade and it is exactly what \
+                     hides this: the cell looks like data GLPI does not have, rather than data \
+                     this account may not see.",
+                ),
+                InfoSection::new(
+                    "Where the comparison comes from",
+                    "GLPI publishes its own OpenAPI document, and it is generated from the \
+                     schema declarations rather than from the caller's rights - so it lists \
+                     every field, while the response carries only the permitted ones. The \
+                     difference between the two is the answer, and no second source is needed.",
+                ),
+                InfoSection::new(
+                    "Write-only fields are not counted",
+                    "A password field is declared and is never returned to anybody. Counting \
+                     those would report a permanent problem on every call, so they are \
+                     excluded and listed separately where present.",
+                ),
+                InfoSection::new(
+                    "What it cannot tell you",
+                    "Only top-level fields: a withheld key inside a nested object is invisible \
+                     to it. And it reports that a promised field did not arrive, never why - a \
+                     field held back by rights and a field GLPI stopped sending are both \
+                     simply missing. Nothing arriving to compare against is reported as \
+                     unknown rather than as clean.",
+                ),
+            ],
+
+            match &*report.read_unchecked() {
+                None => rsx! {
+                    div { class: "flex items-center gap-2 text-base-content/60",
+                        span { class: "loading loading-spinner loading-sm" }
+                        "Comparing against GLPI's schema…"
+                    }
+                },
+                Some(Err(e)) => rsx! {
+                    div { class: "alert alert-error",
+                        div {
+                            div { class: "font-semibold", "The comparison could not be made." }
+                            div { class: "text-sm",
+                                "This says nothing about the fields themselves - only that the "
+                                "check failed. Every other tab is unaffected."
+                            }
+                            pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
+                        }
+                    }
+                },
+                Some(Ok(r)) if !r.doc_available => rsx! {
+                    // Not an error: an install that does not publish a schema
+                    // cannot be checked this way, and saying so beats implying
+                    // every endpoint came back complete.
+                    div { class: "alert alert-info",
+                        div {
+                            div { class: "font-semibold", "GLPI served no usable schema document." }
+                            div { class: "text-sm",
+                                "Nothing could be compared, so nothing is claimed. This is not "
+                                "the same as finding no withheld fields."
+                            }
+                        }
+                    }
+                },
+                Some(Ok(r)) => {
+                    let withheld: usize = r.reports.iter().map(|s| s.gaps.len()).sum();
+                    rsx! {
+                        div { class: "mb-4 flex flex-wrap items-center gap-2 text-sm",
+                            if withheld == 0 {
+                                span { class: "badge badge-success badge-sm", "complete" }
+                                span { class: "text-base-content/70",
+                                    "Every field {r.reports.len()} endpoint(s) promise arrived."
+                                }
+                            } else {
+                                span { class: "badge badge-warning badge-sm", "{withheld} withheld" }
+                                span { class: "text-base-content/70",
+                                    "Named below, with the endpoint each belongs to."
+                                }
+                            }
+                        }
+
+                        div { class: "overflow-x-auto",
+                            table { class: "table table-sm",
+                                thead {
+                                    tr {
+                                        th { "Schema" }
+                                        th { "State" }
+                                        th { class: "text-right", "Readable" }
+                                        th { class: "text-right", "Received" }
+                                        th { "Fields" }
+                                    }
+                                }
+                                tbody {
+                                    for s in r.reports.iter() {
+                                        FieldGapRow { report: s.clone() }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+
+        div { class: "mt-2 max-w-prose text-xs text-base-content/60", "{RIGHTS_NOTE}" }
+
+        match catalogue {
+            Some(rows) => rsx! { div { class: "mt-5", Catalogue { rows } } },
+            None => rsx! {},
+        }
+    }
+}
+
+/// One audited endpoint.
+#[component]
+fn FieldGapRow(report: api::SchemaReport) -> Element {
+    // Unknown is deliberately not styled as a success. "Could not tell" and
+    // "nothing wrong" are different answers and must not share a colour.
+    let (badge, label) = match report.state.as_str() {
+        "ok" => ("badge-success", "ok"),
+        "attention" => ("badge-warning", "withholding"),
+        _ => ("badge-ghost", "unknown"),
+    };
+
+    rsx! {
+        tr {
+            td { class: "font-mono text-xs", "{report.schema}" }
+            td { span { class: "badge {badge} badge-sm", "{label}" } }
+            td { class: "text-right tabular-nums", "{report.readable}" }
+            td { class: "text-right tabular-nums", "{report.received}" }
+            td { class: "text-xs",
+                if report.gaps.is_empty() {
+                    span { class: "text-base-content/50", "\u{2014}" }
+                } else {
+                    div { class: "flex flex-wrap gap-1",
+                        for g in report.gaps.iter() {
+                            span {
+                                class: if g.kind == "suppressed" {
+                                    "badge badge-warning badge-outline badge-sm font-mono"
+                                } else {
+                                    "badge badge-info badge-outline badge-sm font-mono"
+                                },
+                                title: if g.kind == "suppressed" {
+                                    "Declared and readable, but absent - this account is missing the right it wants"
+                                } else {
+                                    "Arrived without being declared - this app's view of the endpoint is behind GLPI's"
+                                },
+                                "{g.field}"
+                            }
+                        }
+                    }
+                }
+                if !report.write_only.is_empty() {
+                    div { class: "mt-1 text-base-content/50",
+                        "write-only, excluded: {report.write_only.join(\", \")}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every schema GLPI's document declares, counted but never compared.
+///
+/// The denominator, and the only reason it is on screen: five schemas are
+/// audited above, and "five endpoints came back complete" reads as "the API is
+/// complete" unless the size of the list they were drawn from is visible.
+#[component]
+fn Catalogue(rows: Vec<api::SchemaSummary>) -> Element {
+    let total = rows.len();
+    let audited = rows.iter().filter(|r| r.audited).count();
+
+    rsx! {
+        Panel {
+            title: "Every schema the API declares".to_string(),
+            subtitle: format!("{total} declared, {audited} of them audited"),
+            info: "GLPI's API publishes a description of itself, and this is the whole of what \
+                   it describes. Every name here is the shape of an API response - not a \
+                   database table, and not one of the two tables under db-read."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Why the whole list is here",
+                    "Because it is the denominator. The audit above covers five schemas, and \
+                     five clean endpoints read as a clean API unless you can see how many \
+                     there are. The count is taken from the document on every load rather \
+                     than written down here, because a number nobody re-checks rots into a \
+                     lie.",
+                ),
+                InfoSection::new(
+                    "Why there is no Received column",
+                    "Because it would cost one request per schema - hundreds against one \
+                     install - where the audited five cost five. A figure that cannot be had \
+                     cheaply is left out rather than estimated from whatever the first page \
+                     of a collection happened to carry.",
+                ),
+                InfoSection::new(
+                    "Declared, readable, write-only",
+                    "Declared is every property the schema names. Write-only ones are never \
+                     returned to anybody - a password field is the clear case - so readable \
+                     is what a caller could actually expect back, and it is the number the \
+                     audit compares against. They are split rather than summed so a schema \
+                     that is mostly write-only cannot look like one that withholds.",
+                ),
+                InfoSection::new(
+                    "Not the same thing as db-read",
+                    "db-read lists two tables of GLPI's database, by column, because this app \
+                     holds SELECT on them. This lists response shapes from GLPI's API. \
+                     Nothing here is a table, nothing there is an endpoint, and both are \
+                     called a schema by somebody - which is why they are two tabs on one page \
+                     rather than one list.",
+                ),
+            ],
+
+            // Capped and scrolled rather than laid out full: at this length the
+            // list is something you look a name up in, and a page that scrolls
+            // for hundreds of rows buries everything under it.
+            div { class: "max-h-96 overflow-y-auto overflow-x-auto",
+                table { class: "table table-sm table-pin-rows",
+                    thead {
+                        tr {
+                            th { "Schema" }
+                            th { class: "text-right", "Declared" }
+                            th { class: "text-right", "Readable" }
+                            th { class: "text-right", "Write-only" }
+                            th { "Audited" }
+                        }
+                    }
+                    tbody {
+                        for r in rows.iter() {
+                            CatalogueRow { key: "{r.schema}", row: r.clone() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One declared schema.
+#[component]
+fn CatalogueRow(row: api::SchemaSummary) -> Element {
+    rsx! {
+        tr {
+            td { class: "font-mono text-xs whitespace-nowrap", "{row.schema}" }
+            td { class: "text-right text-xs tabular-nums", "{row.declared}" }
+            td { class: "text-right text-xs tabular-nums", "{row.readable}" }
+            td {
+                class: if row.write_only > 0 { "text-right text-xs tabular-nums" } else { "text-right text-xs tabular-nums text-base-content/40" },
+                "{row.write_only}"
+            }
+            td {
+                if row.audited {
+                    span { class: "badge badge-success badge-sm", "audited" }
+                } else {
+                    // Not a failing: five paths are what this app reads. An
+                    // unaudited schema is one nothing here asks GLPI for.
+                    span { class: "text-xs text-base-content/40", "not read" }
+                }
+            }
         }
     }
 }

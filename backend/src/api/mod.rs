@@ -698,6 +698,11 @@ struct FieldGapReport {
     /// this way, and saying so beats reporting every endpoint as clean.
     doc_available: bool,
     reports: Vec<crate::glpi::schema_check::SchemaReport>,
+    /// Every schema the document declares, counted but not compared. Carried
+    /// in the same response because it comes out of the same `doc.json`, and
+    /// a second endpoint would mean a second 4.6 MB fetch for data already in
+    /// hand.
+    catalogue: Vec<crate::glpi::schema_check::SchemaSummary>,
 }
 
 /// Fields the API's own schema promises that this account does not receive.
@@ -725,6 +730,7 @@ async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
         return Ok(Json(FieldGapReport {
             doc_available: false,
             reports: Vec::new(),
+            catalogue: Vec::new(),
         }));
     }
 
@@ -740,6 +746,7 @@ async fn field_gaps(State(state): State<Arc<AppState>>) -> Result<impl IntoRespo
     Ok(Json(FieldGapReport {
         doc_available: true,
         reports,
+        catalogue: sc::catalogue(&doc),
     }))
 }
 

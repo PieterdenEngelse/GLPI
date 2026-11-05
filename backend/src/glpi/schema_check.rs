@@ -219,6 +219,64 @@ pub const AUDITED: &[(&str, &str)] = &[
     ("session", "Session"),
 ];
 
+/// One schema in GLPI's document, counted rather than compared.
+///
+/// The catalogue exists because `AUDITED` is five paths and the document
+/// declares hundreds: without it, a reader has no way to see how small the
+/// audited slice is, and "five endpoints are clean" reads as "the API is
+/// clean".
+#[derive(Debug, Clone, Serialize)]
+pub struct SchemaSummary {
+    pub schema: String,
+    /// Every declared property, write-only ones included.
+    pub declared: usize,
+    /// Those a reader could expect back: `declared` minus write-only.
+    pub readable: usize,
+    pub write_only: usize,
+    /// Whether this schema is one `AUDITED` compares against a real response.
+    pub audited: bool,
+}
+
+/// Every schema the document declares, with field counts and nothing more.
+///
+/// Deliberately no `received` column. Getting one would cost a request per
+/// schema - hundreds of them against one install - which is the whole reason
+/// `AUDITED` names five paths instead of walking the document. A count that
+/// cannot be had cheaply is left out rather than faked from the first page of
+/// a collection.
+///
+/// Sorted by name, because the audited rows are already listed in full
+/// alongside this and the only thing a reader does with hundreds of names is
+/// look one up.
+pub fn catalogue(doc: &serde_json::Value) -> Vec<SchemaSummary> {
+    let audited: std::collections::HashSet<&str> =
+        AUDITED.iter().map(|(_, schema)| *schema).collect();
+
+    let Some(schemas) = doc
+        .get("components")
+        .and_then(|c| c.get("schemas"))
+        .and_then(|s| s.as_object())
+    else {
+        return Vec::new();
+    };
+
+    let mut out: Vec<SchemaSummary> = schemas
+        .iter()
+        .map(|(name, spec)| {
+            let (readable, write_only) = readable_fields(spec);
+            SchemaSummary {
+                schema: name.clone(),
+                declared: readable.len() + write_only.len(),
+                readable: readable.len(),
+                write_only: write_only.len(),
+                audited: audited.contains(name.as_str()),
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.schema.cmp(&b.schema));
+    out
+}
+
 /// Pull one schema's declaration out of a whole OpenAPI document.
 ///
 /// Returns `None` rather than an error for an unknown name: a schema the
@@ -342,5 +400,49 @@ mod tests {
         assert!(schema_from_doc(&doc, "User").is_some());
         assert!(schema_from_doc(&doc, "Missing").is_none());
         assert!(schema_from_doc(&serde_json::json!({}), "User").is_none());
+    }
+    #[test]
+    fn the_catalogue_counts_every_schema_and_marks_the_audited_ones() {
+        let doc = serde_json::json!({
+            "components": { "schemas": {
+                "Zebra": { "properties": { "id": {} } },
+                "User":  { "properties": {
+                    "id": {},
+                    "password": { "writeOnly": true },
+                } },
+                // A schema with no properties at all - an enum, say. It must
+                // count as zero rather than be dropped, or the catalogue total
+                // disagrees with the document.
+                "Status": { "type": "string" },
+            } }
+        });
+
+        let got = catalogue(&doc);
+
+        // Sorted by name, not by document order.
+        assert_eq!(
+            got.iter().map(|s| s.schema.as_str()).collect::<Vec<_>>(),
+            ["Status", "User", "Zebra"]
+        );
+
+        let user = &got[1];
+        assert_eq!(user.declared, 2, "write-only fields are still declared");
+        assert_eq!(user.readable, 1);
+        assert_eq!(user.write_only, 1);
+        assert!(user.audited, "User is in AUDITED");
+
+        assert_eq!(
+            got[0].declared, 0,
+            "a schema with no properties counts zero"
+        );
+        assert!(!got[2].audited, "Zebra is not audited");
+    }
+
+    #[test]
+    fn a_document_without_schemas_yields_an_empty_catalogue() {
+        // Not a panic and not one bogus row: the caller already reports
+        // doc_available: false for this case.
+        assert!(catalogue(&serde_json::json!({})).is_empty());
+        assert!(catalogue(&serde_json::json!({ "components": {} })).is_empty());
     }
 }
