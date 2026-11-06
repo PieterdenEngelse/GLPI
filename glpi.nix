@@ -1,4 +1,4 @@
-# GLPI 11.0.12 - IT asset management and helpdesk. Loopback only.
+# GLPI 12.0.1 - IT asset management and helpdesk. Loopback only.
 #
 # nixpkgs has neither a `glpi` package nor a `services.glpi` module - checked
 # with builtins.hasAttr against this machine's own pkgs and options, not by
@@ -63,14 +63,14 @@ let
 
   glpi = pkgs.stdenvNoCC.mkDerivation (finalAttrs: {
     pname = "glpi";
-    version = "11.0.12";
+    version = "12.0.1";
 
     # The RELEASE TARBALL, not a git checkout: it ships vendor/ already
     # populated. A git source would need `composer install`, which cannot run
     # in a sandboxed build without vendoring the entire dependency tree first.
     src = pkgs.fetchurl {
       url = "https://github.com/glpi-project/glpi/releases/download/${finalAttrs.version}/glpi-${finalAttrs.version}.tgz";
-      hash = "sha256-j1TJEUYXFvDlPZ3KFiQr6z0ipcPxNLd6Z8pkZe17WgA=";
+      hash = "sha256-v4mhvkDqduTnpqXOqP0kydgi+rg+TpBRn/DI0GLxMpE=";
     };
 
     dontBuild = true;
@@ -91,7 +91,7 @@ let
     };
   });
 
-  # php84 pinned explicitly rather than `php`: GLPI 11 requires >= 8.2 and
+  # php84 pinned explicitly rather than `php`: GLPI 12 requires >= 8.3 and
   # GLPI targets the 8.3/8.4 lines. 8.5 would be ahead of what upstream tests.
   #
   # `enabled ++` and not a bare list - dom, filter, libxml, simplexml,
@@ -163,7 +163,7 @@ in
     package = lib.mkOption {
       type = lib.types.package;
       default = glpi;
-      defaultText = lib.literalExpression "the GLPI 11.0.12 release tarball, built in this file";
+      defaultText = lib.literalExpression "the GLPI 12.0.1 release tarball, built in this file";
       description = ''
         The GLPI source tree. Exposed so it can be built and inspected on its
         own (`nix build .#nixosConfigurations.nixos.config.services.glpi.package`)
@@ -422,7 +422,7 @@ in
         # There is deliberately NO `location ~ \.php$ { return 404; }` here.
         #
         # It looks like sensible defence-in-depth and it breaks GLPI outright.
-        # GLPI 11 still addresses its legacy entry points by .php URL - the
+        # GLPI 12 still addresses its legacy entry points by .php URL - the
         # login form posts to /front/login.php - but those are ROUTES handled
         # by public/index.php, not files on disk. nginx tries regex locations
         # before the `location /` prefix, so such a block matches first and
@@ -437,7 +437,7 @@ in
     };
 
     # GLPI's scheduler. front/cron.php rather than a bin/console command
-    # because GLPI 11 ships no cron console command - checked, the only thing
+    # because GLPI 12 ships no cron console command - checked, the only thing
     # under src/Glpi/Console/Task/ is task:unlock.
     systemd.services.glpi-cron = {
       description = "GLPI task scheduler";

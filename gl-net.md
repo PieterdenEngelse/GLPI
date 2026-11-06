@@ -1,12 +1,17 @@
 # GLPI on NixOS — loopback install, client-server over TLS, and what runs now
 
-Working notes from putting GLPI 11.0.12 on this machine (NixOS 26.05) as a
+Working notes from putting GLPI on this machine (NixOS 26.05) as a
 local-only dashboard first, then opening it to the LAN with a self-signed
 certificate and inventory agents. Part 3 records the deployed state as it
 stands. Everything marked **verified** was executed here and its output read;
 everything marked **untested** was not, and says so.
 
-- **GLPI 11.0.12, loopback only:** working — login and dashboard verified
+Built on **11.0.12** and upgraded to **12.0.1** on 2026-11-04. The notes were
+written against 11.0.12, so where one names a version, that is the version it
+was checked against — not a claim it was re-verified afterwards.
+
+- **GLPI 12.0.1, loopback only:** working — login and dashboard verified
+  (on 11.0.12, before the upgrade)
 - **PHP 8.4.27 from a second nixpkgs input:** working — two live RCE CVEs closed
 - **LAN over HTTPS + mDNS + inventory agent:** live — `0.0.0.0:443` up, the
   agent reporting daily, TLS verified by the client
@@ -35,7 +40,7 @@ sudo -u glpi glpi-console database:install \
 sudo -u glpi glpi-console <command>
 ```
 
-Stack: GLPI 11.0.12 release tarball → nginx → php-fpm (PHP 8.4.27) → MariaDB
+Stack: GLPI 12.0.1 release tarball → nginx → php-fpm (PHP 8.4.27) → MariaDB
 11.4.12 over a unix socket. Source read-only in `/nix/store`, all state in
 `/var/lib/glpi`.
 
@@ -256,10 +261,10 @@ Note `SOFTWARE` comes back empty on NixOS in either case: the agent looks for
 a dpkg/rpm database and there is none.
 
 Clients get `/var/lib/glpi-tls/cert.pem` as their trust anchor. World-readable,
-no private key, safe to copy anywhere. See `CLIENTS.md` for Windows
+no private key, safe to copy anywhere. See `gl-client-serv.md` §3.5 for Windows
 (`msiexec ... SERVER= CA_CERT_FILE= TAG=`, verified against upstream docs but
-**not run here**) and macOS (**config path unconfirmed** — find it after
-installing; do not take a path on faith).
+**not run here**) and §3.6 for macOS (**config path unconfirmed** — find it
+after installing; do not take a path on faith).
 
 ---
 
@@ -271,6 +276,10 @@ configuration that was intended. **This is the part that goes stale**: a
 decision is only wrong when it is revisited, but a snapshot is wrong the
 moment the system moves.
 
+It has moved once since: GLPI went 11.0.12 → 12.0.1 on 2026-11-04. The
+version below is the current one; the timings are still the 2026-11-01
+readings and are not re-measured.
+
 ### The shape of it
 
 ```
@@ -281,7 +290,7 @@ nginx  0.0.0.0:443  ─┐
                      ├─ one vhost, two listeners            the SERVER
 nginx  127.0.0.1:8080┘
         │
-        ├─► GLPI 11.0.12 + PHP-FPM + MariaDB
+        ├─► GLPI 12.0.1 + PHP-FPM + MariaDB
         │
         └─◄ glpi-inv backend, 127.0.0.1:3200   reads the API over loopback
 ```
@@ -396,8 +405,8 @@ margin is real but larger than this configuration strictly needs.
   client-server path is therefore true for a loopback-resolvable host that
   happens to go out over the network; nothing has been proven from a genuinely
   separate machine.
-- **Windows and macOS instructions in `CLIENTS.md` are untested** — written
-  from upstream documentation with no such host available. `CLIENTS.md` marks
+- **Windows and macOS instructions are untested** — written from upstream
+  documentation with no such host available. `gl-client-serv.md` §3.5-3.6 mark
   which parts those are, including one path it could not confirm.
 - **The DHCP lease is not pinned** in the router, or at least that was never
   confirmed here.
@@ -416,7 +425,7 @@ The build succeeded; only running `php --version` showed it. Nix's
 `extraConfig` will happily emit whatever you write.
 
 **2. Never add `location ~ \.php$ { return 404; }`.**
-It looks like obvious hardening and it breaks GLPI outright. GLPI 11 still
+It looks like obvious hardening and it breaks GLPI outright. GLPI 12 still
 addresses legacy entry points by `.php` URL — the login form posts to
 `/front/login.php` — but those are **routes handled by `public/index.php`, not
 files on disk**. nginx tries regex locations **before** the `location /`
