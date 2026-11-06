@@ -790,3 +790,81 @@ pub async fn fetch_network() -> Result<Vec<NetworkRow>, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+// -------------------------------------------------------------------- logs
+//
+// Two of GLPI's own log files, read off disk by the backend. Only
+// access-errors.log and api.log; the backend holds the allowlist and this
+// side never constructs a path.
+
+/// Why a log has no lines. Mirrors `logs::State` in the backend, including
+/// the tag/content shape, so the three "nothing to show" cases stay
+/// distinguishable all the way to the screen - absent, empty and unreadable
+/// lead to three different fixes.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "state", content = "detail")]
+pub enum LogState {
+    Ok,
+    Absent,
+    Empty,
+    Unreadable(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LogResponse {
+    /// False when the backend has no GLPI_INV_LOG_DIR. Distinct from a
+    /// configured directory the kernel refuses - see LogState::Unreadable.
+    pub configured: bool,
+    #[serde(flatten)]
+    pub tail: Option<LogTail>,
+    pub allowed: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LogTail {
+    pub file: String,
+    #[serde(flatten)]
+    pub state: LogState,
+    pub lines: Vec<String>,
+    pub bytes: u64,
+    /// The file was longer than the window read, so earlier lines are absent.
+    pub truncated: bool,
+}
+
+/// The tail of one of GLPI's logs.
+pub async fn fetch_log(file: &str) -> Result<LogResponse, String> {
+    reqwest::get(api_url(&format!("/api/logs/{file}")))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<LogResponse>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LogEntry {
+    pub file: String,
+    pub bytes: u64,
+    /// Whether the backend will serve this file's contents. Comes from the
+    /// backend's own allowlist, so this side keeps no copy of it.
+    pub readable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct LogListResponse {
+    pub configured: bool,
+    pub entries: Vec<LogEntry>,
+    /// Set when the directory could not be listed. An empty `entries` with no
+    /// error is an empty directory, which is a different answer.
+    pub error: Option<String>,
+}
+
+/// What logs GLPI's directory actually holds.
+pub async fn fetch_logs() -> Result<LogListResponse, String> {
+    reqwest::get(api_url("/api/logs"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<LogListResponse>()
+        .await
+        .map_err(|e| e.to_string())
+}

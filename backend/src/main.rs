@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use glpi_inv_backend::{api, config::Config, glpi};
+use glpi_inv_backend::{api, config::Config, glpi, logs};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -70,6 +70,15 @@ async fn main() -> Result<()> {
             cfg.password,
         ),
         stale_after_hours: 26,
+        // Configured by path only; whether the files are actually readable is
+        // discovered per request and reported, not probed at startup. The
+        // directory is 0750 glpi:glpi, so a deployment can be correctly
+        // configured here and still be refused by the kernel - and that is
+        // the case the Logs page most needs to state plainly.
+        logs: cfg.log_dir.as_deref().map(|d| {
+            tracing::info!("GLPI log directory configured for the Logs page: {d}");
+            logs::LogDir::new(d)
+        }),
     });
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());

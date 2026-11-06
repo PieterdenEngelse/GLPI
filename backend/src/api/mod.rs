@@ -48,6 +48,12 @@ pub struct AppState {
     /// 24: the agent timer runs daily with a RandomizedDelaySec, so a strict
     /// 24 would flag healthy machines whose run drifted by minutes.
     pub stale_after_hours: i64,
+
+    /// Reader for two of GLPI's log files, when configured. None is the
+    /// normal case: the Logs page then reports that it has no route to them
+    /// rather than rendering empty panes, because an empty log and an
+    /// unreadable one mean opposite things.
+    pub logs: Option<crate::logs::LogDir>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -68,6 +74,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/hardware", get(hardware))
         .route("/api/software", get(software))
         .route("/api/network", get(network))
+        .route("/api/logs", get(log_list))
+        .route("/api/logs/{file}", get(log_tail))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -988,6 +996,82 @@ async fn infocom(
     }
 
     Ok(Json(crate::glpi::infocom::fetch(&state.glpi, &itemtype, id).await?).into_response())
+}
+
+#[derive(Serialize)]
+struct LogListResponse {
+    configured: bool,
+    /// Every *.log GLPI's directory actually holds. Empty with `error` set
+    /// when the directory cannot be listed - distinct from an empty
+    /// directory, which is a real and different answer.
+    entries: Vec<crate::logs::Entry>,
+    error: Option<String>,
+}
+
+/// What logs exist, rather than what this app guessed would exist.
+///
+/// Listing is deliberately separate from reading: the names and sizes of
+/// every log are cheap and harmless, while the contents are served for two
+/// files only. GLPI's own viewer works the same way round - `LogParser`
+/// scandirs the directory, then shows one file on request.
+async fn log_list(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let Some(dir) = state.logs.as_ref() else {
+        return Ok(Json(LogListResponse {
+            configured: false,
+            entries: Vec::new(),
+            error: None,
+        }));
+    };
+
+    Ok(Json(match dir.list() {
+        Ok(entries) => LogListResponse {
+            configured: true,
+            entries,
+            error: None,
+        },
+        Err(e) => LogListResponse {
+            configured: true,
+            entries: Vec::new(),
+            error: Some(e),
+        },
+    }))
+}
+
+#[derive(Serialize)]
+struct LogResponse {
+    /// False when GLPI_INV_LOG_DIR is unset. The UI distinguishes this from
+    /// a configured-but-unreadable directory, which is a different fix.
+    configured: bool,
+    #[serde(flatten)]
+    tail: Option<crate::logs::Tail>,
+    /// The names this endpoint will serve, so the UI need not hardcode them.
+    allowed: Vec<&'static str>,
+}
+
+/// The tail of one of GLPI's own log files.
+///
+/// `file` is matched against an allowlist inside logs::LogDir, not joined
+/// onto the directory and hoped for - a path parameter that reaches the
+/// filesystem is how a diagnostic view becomes an arbitrary file read.
+async fn log_tail(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(file): axum::extract::Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let allowed = crate::logs::ALLOWED.to_vec();
+
+    let Some(dir) = state.logs.as_ref() else {
+        return Ok(Json(LogResponse {
+            configured: false,
+            tail: None,
+            allowed,
+        }));
+    };
+
+    Ok(Json(LogResponse {
+        configured: true,
+        tail: Some(dir.tail(&file)),
+        allowed,
+    }))
 }
 
 /// Submissions GLPI refused - the third failure, invisible to both APIs.

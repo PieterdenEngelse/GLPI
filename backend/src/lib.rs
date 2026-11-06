@@ -12,3 +12,4 @@
 pub mod api;
 pub mod config;
 pub mod glpi;
+pub mod logs;

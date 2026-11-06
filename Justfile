@@ -46,9 +46,65 @@ css-build:
 # Build the wasm bundle.
 build-frontend: css-build
     dx build --package glpi-inv-frontend
+    just prune-bundles target/dx/glpi-inv-frontend/debug/web/public
 
 build-frontend-release: css-build
     dx build --release --package glpi-inv-frontend
+    just prune-bundles target/dx/glpi-inv-frontend/release/web/public
+
+# Delete the bundle artefacts left behind by previous builds.
+#
+# dx names each build's loader, wasm and stylesheet by content hash and never
+# removes the one before it, so its output directory accumulates a full set
+# per build - 55 of them by 2026-11-06, 67 MB in release and 33 MB in debug.
+# Nothing reads the old ones: index.html names one loader, that loader names
+# one wasm, and the wasm names one stylesheet. They mattered because `deploy`
+# copies the directory whole, so every deploy carried every bundle ever built
+# and ~60 MB of it was dead.
+#
+# Runs AFTER the build, and keeps exactly what the fresh index.html leads to -
+# so it cannot delete what was just produced. Pruning BEFORE the build is the
+# obvious shape and the wrong one: dx would then have to re-emit a bundle it
+# may well consider up to date, and a skipped re-emit leaves no bundle at all.
+
+# Drop bundles from previous builds out of a dx output directory.
+prune-bundles dir:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    d="{{dir}}"
+    [ -d "$d/assets" ] || { echo "no assets/ under $d - nothing to prune"; exit 0; }
+
+    # Follow the chain rather than assuming newest-wins: a release and a debug
+    # build can land in either order, and mtime is not what the page loads.
+    js=$(grep -o 'glpi-inv-frontend[^"]*\.js' "$d/index.html" | head -1)
+
+    # A debug build is shaped differently: dx leaves the loader unhashed and
+    # keeps no wasm under assets/ at all, so there is no chain to follow. That
+    # directory is never deployed and `just clean` removes it, so skip it by
+    # name - which keeps any OTHER unresolvable chain an error rather than
+    # quietly doing nothing.
+    if [ "$js" = "glpi-inv-frontend.js" ]; then
+        echo "$d: debug-shaped bundle (unhashed loader, no wasm in assets/) - not pruned"
+        exit 0
+    fi
+
+    wasm=$(grep -ao 'glpi-inv-frontend_bg-[A-Za-z0-9]*\.wasm' "$d/assets/$js" | head -1)
+    css=$(grep -ao 'output-[A-Za-z0-9]*\.css' "$d/assets/$wasm" | head -1)
+
+    # Refuse rather than guess. An empty name here would make the find below
+    # match the live bundle too and delete the whole directory's contents.
+    if [ -z "$js" ] || [ -z "$wasm" ] || [ -z "$css" ]; then
+        echo "could not resolve the live bundle (js=$js wasm=$wasm css=$css)" >&2
+        exit 1
+    fi
+
+    before=$(du -sm "$d" | cut -f1)
+    find "$d/assets" -maxdepth 1 -type f \
+        \( -name 'glpi-inv-frontend-*.js' \
+           -o -name 'glpi-inv-frontend_bg-*.wasm' \
+           -o -name 'output-*.css' \) \
+        ! -name "$js" ! -name "$wasm" ! -name "$css" -delete
+    echo "$d: ${before} MB -> $(du -sm "$d" | cut -f1) MB (kept $js, $wasm, $css)"
 
 # Everything, launching nothing.
 build-all: build-release build-frontend-release

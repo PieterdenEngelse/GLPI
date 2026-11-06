@@ -27,6 +27,7 @@ pub fn NavTabs() -> Element {
         (Route::Agents {}, "Agents"),
         (Route::Computers {}, "Computers"),
         (Route::Status {}, "Status"),
+        (Route::Screens {}, "Screens"),
         (Route::Inv {}, "Inv"),
         (Route::Rights {}, "Rights"),
         (Route::Db {}, "DB"),
@@ -34,6 +35,7 @@ pub fn NavTabs() -> Element {
         // view at /inv/network, which stays where it is under Inv.
         (Route::Netw {}, "Netw"),
         (Route::Sec {}, "Security"),
+        (Route::Logs {}, "Logs"),
     ];
 
     rsx! {

@@ -10,8 +10,8 @@
 //! before the router ever ran.
 use crate::components::{GlobalErrorBar, Header};
 use crate::pages::{
-    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Netw,
-    PageNotFound, Rights, Sec, Status,
+    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
+    Netw, PageNotFound, Rights, Screens, Sec, Status,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -26,6 +26,8 @@ pub enum Route {
         Computers {},
         #[route("/status")]
         Status {},
+        #[route("/screens")]
+        Screens {},
         // The inventory section: a landing page and four views under it. Flat
         // routes rather than nested - the sub-header is one component used by
         // all five, so there is nothing a nested layout would factor out.
@@ -47,6 +49,8 @@ pub enum Route {
         Netw {},
         #[route("/sec")]
         Sec {},
+        #[route("/logs")]
+        Logs {},
         #[route("/about")]
         About {},
     #[end_layout]

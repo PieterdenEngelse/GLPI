@@ -213,6 +213,34 @@ in
       };
     };
 
+    logReaders = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      example = [ "pde" ];
+      description = ''
+        Users granted read access to GLPI's log directory
+        (`''${stateDir}/files/_log`), via POSIX ACLs.
+
+        Empty by default, and deliberately narrow when not. GLPI's state dir
+        is 0750 glpi:glpi because `config/config_db.php` holds the database
+        credentials AND the encryption key, so adding a user to the `glpi`
+        GROUP would hand them both. These ACLs instead give traversal only
+        (`x`, not `r`) on the two parent directories - so the user can reach
+        `_log` and still cannot list or read anything else under them.
+
+        The fourth rule is a DEFAULT acl, which is what makes it hold for
+        logs GLPI has not created yet. Without it the grant covers only the
+        files that existed when the rule last ran, and a log that first
+        appears next week is unreadable for no visible reason.
+
+        Used by glpi-inv's Logs page, which reads access-errors.log and
+        api.log. Note this lets a non-root user read what GLPI logged,
+        bypassing the `system_logs` right and the re-authentication GLPI
+        requires for its own viewer - which is the cost of the grant and the
+        reason it is opt-in.
+      '';
+    };
+
     stateDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/glpi";
@@ -238,7 +266,19 @@ in
       "d ${cfg.stateDir}/config 0750 glpi glpi -"
       "d ${cfg.stateDir}/files 0750 glpi glpi -"
       "d ${cfg.stateDir}/marketplace 0750 glpi glpi -"
-    ];
+      # Created here rather than left to GLPI: an ACL cannot be set on a path
+      # that does not exist, and GLPI only makes _log on its first write.
+      "d ${cfg.stateDir}/files/_log 0750 glpi glpi -"
+    ]
+    ++ lib.concatMap (u: [
+      # Traversal only on the parents - x without r. Reaching _log must not
+      # imply reading config/.
+      "a+ ${cfg.stateDir} - - - - u:${u}:x"
+      "a+ ${cfg.stateDir}/files - - - - u:${u}:x"
+      "a+ ${cfg.stateDir}/files/_log - - - - u:${u}:rX"
+      # Default ACL: applies to logs GLPI creates later.
+      "a+ ${cfg.stateDir}/files/_log - - - - d:u:${u}:r"
+    ]) cfg.logReaders;
 
     # No password anywhere: ensureUsers creates the account with MariaDB's
     # unix_socket plugin, so the glpi OS user authenticates by being that user
@@ -247,6 +287,49 @@ in
     services.mysql = {
       enable = true;
       package = pkgs.mariadb;
+
+      # GLPI reaches MariaDB over the unix socket and nothing here needs TCP -
+      # but nixpkgs' mysql module sets no bind-address at all (it defines only
+      # datadir and `port = mkDefault 3306` under settings.mysqld), so MariaDB
+      # falls back to its own default and listens on 0.0.0.0:3306.
+      #
+      # Nothing could reach it: the firewall accepts only 443/tcp and
+      # 5353/udp. But that made the firewall the ONLY thing in the way, and an
+      # open port on every interface is a poor thing to leave resting on one
+      # control - any later allowedTCPPorts edit, or a disabled firewall, and
+      # the database is on the LAN.
+      #
+      # Note the listener was never a credential exposure on its own: the glpi
+      # account authenticates with the unix_socket plugin, which needs a peer
+      # credential the kernel supplies only over a local socket, so it cannot
+      # authenticate over TCP at all. That protection ends the moment any
+      # password-authenticated account exists, which is exactly the kind of
+      # change nobody revisits a bind-address for.
+      #
+      # Loopback rather than skip-networking: equally unreachable off-host,
+      # and it leaves loopback TCP available for ad-hoc tooling instead of
+      # removing a capability that is not in the way.
+      #
+      # BOTH loopbacks, and the second one is the point. `getent ahosts
+      # localhost` on this machine returns ::1 FIRST, so a client told to
+      # connect to "localhost" over TCP tries v6 before v4. Binding only
+      # 127.0.0.1 leaves the likeliest use of this listener - `-h localhost`
+      # from some ad-hoc tool - getting ECONNREFUSED on its first attempt,
+      # which reads as "the database is down" rather than "wrong family".
+      # Clients that fall back to v4 are fine; not all do.
+      #
+      # A single IPv4 bind-address does not merely add v4 - it DROPS the v6
+      # bind. MariaDB was answering on [::]:3306 before this was set, and
+      # checking only the v4 line after a change under-reports what happened.
+      #
+      # Comma-separated, verified against this build rather than the docs:
+      # `mariadbd --help --verbose` says "IP address to bind to. Several
+      # addresses may be specified, separated by a comma (,)."
+      #
+      # The coherent alternatives are both loopbacks or skip-networking.
+      # v4-only is the one option with no rationale behind it.
+      settings.mysqld.bind-address = "127.0.0.1,::1";
+
       ensureDatabases = [ "glpi" ];
       ensureUsers = [
         {

@@ -42,6 +42,15 @@ pub struct Config {
     /// The account should hold SELECT on glpi_refusedequipments and
     /// glpi_logs and nothing else.
     pub db_url: Option<String>,
+
+    /// Optional read of two of GLPI's own log files, for the Logs page.
+    ///
+    /// Absent by default and the page says so rather than showing empty
+    /// panes. Set to GLPI's GLPI_LOG_DIR, which on this deployment is
+    /// /var/lib/glpi/files/_log - and note that directory is 0750 glpi:glpi,
+    /// so this process also needs read access granted to it. Only
+    /// access-errors.log and api.log are ever opened; see logs::ALLOWED.
+    pub log_dir: Option<String>,
 }
 
 impl Config {
@@ -57,6 +66,9 @@ impl Config {
                 .context("GLPI_USERNAME is not set - the API authorises per user")?,
             password: std::env::var("GLPI_PASSWORD").context("GLPI_PASSWORD is not set")?,
             db_url: std::env::var("GLPI_DB_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            log_dir: std::env::var("GLPI_INV_LOG_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
         })
