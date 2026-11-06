@@ -84,7 +84,7 @@ not quietly reach for SQL. Going direct to MariaDB bypasses GLPI's entity
 permissions and couples this app to GLPI's schema across upgrades, which is
 why the API is the default despite the gap.
 
-What *has* been settled, in `~/docs/gl-db-api.md`: a database account does not
+What *has* been settled, in `docs/gl-db-api.md`: a database account does not
 help with anything about the API itself. The endpoint list, each endpoint's
 field list, the right → (tab, group) taxonomy, and which right an endpoint
 requires are all PHP, not rows. And where a question *is* answerable outside
@@ -185,7 +185,7 @@ computers `Assets/Computer` returns, so all pages mean the same thing by
 ### The rule
 
 Do not reach for v1 for anything v2.3 already answers. The full reasoning, the
-endpoint-to-right mapping and fifteen traps are in `~/docs/gl-rights.md`.
+endpoint-to-right mapping and fifteen traps are in `docs/gl-rights.md`.
 `just probe <path>` hits v2.3; `just probe-v1 <path>` hits v1.
 
 ## Conventions

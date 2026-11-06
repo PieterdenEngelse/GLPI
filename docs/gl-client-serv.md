@@ -50,6 +50,108 @@ Parts list, and where each one is defined:
 
 Both `.nix` files are importable unchanged on another NixOS host.
 
+### What "over a unix socket" and "state in /var/lib/glpi" actually mean
+
+Two phrases in that summary carry most of the design, so here they are in full.
+
+**GLPI reaches MariaDB over `/run/mysqld/mysqld.sock`**, not over TCP, and the
+account has **no password at all**. `services.mysql.ensureUsers` creates `glpi`
+with MariaDB's `unix_socket` plugin, which authenticates by the peer credential
+of the connecting process: being the `glpi` OS user *is* the credential. That is
+why `database:install` takes an empty `--db-password=`, why there is no secret
+to rotate or leak, and why routine administration must go through
+`sudo -u glpi` — the same command as another user cannot authenticate at all.
+
+Two consequences worth stating plainly:
+
+- **PHP needs to be told the socket path.** `mysqli` resolves the host
+  `localhost` to a socket at a compiled-in default location, which is not where
+  NixOS puts MariaDB's. Hence `mysqli.default_socket = /run/mysqld/mysqld.sock`
+  in `glpi.nix`. Without it the install fails to reach the database at all.
+- **MariaDB will bind TCP on every interface unless told not to.** nixpkgs'
+  `services.mysql` sets no `bind-address` — only `datadir` and
+  `port = mkDefault 3306` under `settings.mysqld` — so MariaDB falls back to
+  its own default and listens on `0.0.0.0:3306`. Nothing could reach it, since
+  the firewall accepts only `tcp dport 443` and `udp dport 5353` (read out of
+  `/nix/store/…-firewall-start/bin/firewall-start`), but that left the firewall
+  as the only control in the way.
+
+  `glpi.nix` therefore sets **`services.mysql.settings.mysqld.bind-address =
+  "127.0.0.1,::1"`**. Not `skip-networking`: both loopbacks are equally
+  unreachable off-host, and keeping TCP there leaves ad-hoc tooling a path
+  instead of removing a capability that is not in the way.
+
+  **Name both, and know why.** A single IPv4 `bind-address` does not merely add
+  v4 — it *drops* the v6 bind. MariaDB answers on `[::]:3306` by default, and
+  setting `127.0.0.1` alone removed it; checking only the v4 line after such a
+  change under-reports what happened. That matters because `getent ahosts
+  localhost` returns **`::1` first** here, so a client told to reach
+  `localhost` over TCP tries v6 before v4 — and against a v4-only bind its
+  first attempt is `ECONNREFUSED`, which reads as a dead database rather than
+  a wrong address family. Clients that fall back to v4 are fine; not all do.
+
+  The comma-separated form is MariaDB's own, verified against this build rather
+  than its documentation — `mariadbd --help --verbose`: *"IP address to bind to.
+  Several addresses may be specified, separated by a comma (,)."*
+
+  The coherent choices are **both loopbacks or `skip-networking`**. v4-only is
+  the one with no rationale behind it.
+
+  Do not try to confirm this from the server itself — traffic to the host's own
+  address goes over loopback, which the firewall does not filter, so the probe
+  succeeds either way and proves nothing. Check the bind address with
+  `ss -ltn | grep 3306`, not a connection test.
+
+  The listener was never a credential exposure on its own: the `unix_socket`
+  plugin needs a peer credential the kernel supplies only over a local socket,
+  so such an account **cannot** authenticate over TCP at all. That protection
+  ends the moment a password-authenticated account exists — which is the kind
+  of change nobody revisits a bind-address for.
+
+**The source is read-only and every writable path is redirected.** The GLPI
+tree lives at `/nix/store/…-glpi-12.0.1`, mode `r-xr-xr-x`, on a mount whose
+options are `ro,nosuid,nodev` — read-only by the mount, not merely by
+permissions. GLPI, however, writes *inside its own source tree* by default, so
+that would be fatal if it could not be redirected.
+
+It can. `SystemConfigurator.php:190` defines every path constant as:
+
+```php
+if (!defined($name) && ($value = getenv($name)) !== false) { define($name, $value); }
+```
+
+so each is overridable by environment variable. Only three need naming,
+because the rest derive from one of them:
+
+| variable | set to | default would be |
+|---|---|---|
+| `GLPI_CONFIG_DIR` | `/var/lib/glpi/config` | `<source>/config` |
+| `GLPI_VAR_DIR` | `/var/lib/glpi/files` | `<source>/files` |
+| `GLPI_MARKETPLACE_DIR` | `/var/lib/glpi/marketplace` | `<source>/marketplace` |
+
+Fifteen further constants hang off `GLPI_VAR_DIR`: `GLPI_DOC_DIR` is that
+directory itself, and fourteen subdirectories of it — `_cache`, `_cron`,
+`_graphs`, `_locales`, `_lock`, `_log`, `_pictures`, `_plugins`, `_rss`,
+`_sessions`, `_tmp`, `_uploads`, `_inventories`, `_themes`. GLPI creates them
+itself (`SystemConfigurator.php:297`), so none needs declaring — and it does so
+at **install** time, not lazily on first web request: `bin/console` boots
+through the same `SystemConfigurator` as every other entry point, so
+`database:install` in §2.5 is what brings them into being. `glpi.nix`'s
+`tmpfiles` rules create only the four roots above; the rest are GLPI's.
+
+Because every GLPI process — php-fpm, the cron unit, the console — runs as
+`glpi`, it does not matter which one gets there first. The ownership cannot
+diverge, which is why lazy creation is safe here and would not be under mixed
+users.
+
+`/var/lib/glpi/config` is where `config_db.php` lands, holding the database
+connection **and GLPI's encryption key** — which is why that tree is `0750
+glpi:glpi` and why a backup of it is as sensitive as the database dump.
+
+All three variables go to php-fpm, the cron unit **and** the `glpi-console`
+wrapper, and all three must agree. A console run with different paths writes a
+`config_db.php` the web process cannot see.
+
 ---
 
 ## 1. Decide three things first
@@ -162,7 +264,8 @@ sudo -u glpi glpi-console database:install \
 Three things about that command line, all of which bite:
 
 - **`--db-password=` with an empty value is required and is not a typo.** The
-  account uses MariaDB's `unix_socket` plugin and has no password, but GLPI
+  account uses MariaDB's `unix_socket` plugin and has no password (§0, *What
+  "over a unix socket" ... actually mean*, for what that implies), but GLPI
   validates the *option* and rejects a null: *"--db-password option value
   cannot be null."* An empty string passes validation and MariaDB ignores it,
   because authentication is by OS user — which `sudo -u glpi` satisfies.
@@ -203,6 +306,14 @@ Those are the two steps the page in that error message documents.
 The grant is needed even though the account is otherwise unprivileged outside
 its own schema: `mysql.*` is not covered by the `glpi.*` grant that
 `ensureUsers` creates.
+
+**Why this stays optional rather than part of the install:** GLPI classes it
+that way itself. `DbTimezones` passes `true` as `AbstractRequirement`'s third
+constructor argument, `$optional`, so a server without timezone data is not a
+deficient one — which is why `system:check_requirements` reported *23 OK, 0
+errors, 0 warnings* here before any of this was loaded. The step does belong
+after §2.5's schema creation, though, because `database:enable_timezones`
+checks the schema for columns still using the deprecated `datetime` type.
 
 Note this is separate from PHP's own `date.timezone`, which `glpi.nix` sets
 from `config.time.timeZone` (`Europe/Amsterdam`) and which is what GLPI's
@@ -493,8 +604,8 @@ sudo -u glpi glpi-console cache:clear
 ```
 
 Use the wrapper, never `php bin/console` directly. `GLPI_CONFIG_DIR`,
-`GLPI_VAR_DIR` and `GLPI_MARKETPLACE_DIR` must agree across php-fpm, the cron
-unit and the console — a console run with different paths writes a
+`GLPI_VAR_DIR` and `GLPI_MARKETPLACE_DIR` (§0 for what each covers) must agree
+across php-fpm, the cron unit and the console — a console run with different paths writes a
 `config_db.php` the web process cannot see.
 
 ### The scheduler
@@ -551,6 +662,7 @@ of its failures are silent.
 | 443/tcp | `0.0.0.0` | `networking.firewall.allowedTCPPorts`, gated on `lan.enable` | HTTPS, browsers and agents |
 | 8080/tcp | `127.0.0.1` | nothing — loopback is unreachable from the network whatever the firewall says | HTTP, this host only |
 | 5353/udp | all | `services.avahi.openFirewall` | mDNS, `.local` resolution |
+| 3306/tcp | `127.0.0.1` and `[::1]` | nothing, and it needs nothing | MariaDB. Both loopbacks, via `settings.mysqld.bind-address = "127.0.0.1,::1"` in `glpi.nix`; nixpkgs sets none, so MariaDB's own default binds every interface. GLPI uses the socket, not this |
 
 ### Files
 

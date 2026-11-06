@@ -10,3 +10,9 @@
 # npm tree for the stylesheet build. output.css IS committed, so a clone
 # builds the frontend without ever running npm.
 /frontend/fro/node_modules
+
+# LibreOffice lock files. Transient, user-specific, never useful to a clone.
+.~lock.*#
+
+# A stray Word document in docs/. Not reviewed for publication - this repo is public.
+docs/gf.docx
