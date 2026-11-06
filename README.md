@@ -39,6 +39,7 @@ a broken system.
 | `glpi-agent.nix` | the inventory agent module |
 | `docs/gl-net.md` | working notes, design reasoning, and the traps |
 | `docs/gl-client-serv.md` | the ordered setup manual, server through clients |
+| `docs/gl-screens.md` | making and adjusting GLPI's own screens, and the capacity toggle that purges data |
 | `docs/gl-adapter.md` | every route this dashboard uses into GLPI, and what each costs |
 | `CLIENTS.md` | pointing Windows / macOS / other Linux clients at the server |
 
