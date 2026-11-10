@@ -189,6 +189,14 @@ fmt:
 gate:
     cargo fmt --all -- --check
     cargo test
+    # Source check, not a test, because what it guards is a RENDERED width and
+    # the frontend's tests do not run under `cargo test` anyway - the crate is
+    # a wasm target, same reason clippy needs its own line in gate-rust below.
+    just check-info-tabs
+
+# Info panels whose tab strip would scroll. See the script's own docstring.
+check-info-tabs:
+    ./scripts/check-info-tabs.py
 
 # The above plus clippy, for Rust code paths. Slower.
 gate-rust: gate

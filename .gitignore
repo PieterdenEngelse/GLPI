@@ -16,3 +16,4 @@
 
 # A stray Word document in docs/. Not reviewed for publication - this repo is public.
 docs/gf.docx
+__pycache__/
