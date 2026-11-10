@@ -568,6 +568,27 @@ fn InvisibleUntilGranted() -> Element {
                      offered to; the right itself is a row in "
                     code { class: "text-xs", "glpi_profilerights" }
                     "."
+                    InfoButton {
+                        label: "How".to_string(),
+                        title: "Granting the right".to_string(),
+                        body: "Two routes write the same rows and stay in step, so use whichever you have open."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The steps",
+                                "Administration, then Profiles, then the profile you want. Find the right by name - asset_ plus the lowercased system name - set what it should hold, and save. Or open the definition and use its own Profiles tab, which reaches the same rows.",
+                            ),
+                            InfoSection::new(
+                                "Both directions are synchronised",
+                                "The definition's Profiles tab writes glpi_profilerights through syncProfilesRights; the profile form writes back into the definition through setProfileRights at Profile.php line 270. Neither is the master copy - editing either updates the other.",
+                            ),
+                            InfoSection::new(
+                                "Where this was read",
+                                "src/Glpi/CustomObject/AbstractDefinition.php for syncProfilesRights and setProfileRights, src/Profile.php line 270 for the write-back, and AssetDefinition.php line 98 for how the right's name is built.",
+                            ),
+                        ],
+                        links: vec![InfoLink::new("Profiles", "front/profile.php")],
+                    }
                 }
             }
         }
@@ -673,6 +694,26 @@ fn VaryByProfile() -> Element {
                 "Two of the four options every custom field has are "
                 span { class: "font-medium", "sets of profiles" }
                 ", which is easy to miss when they read like checkboxes."
+                InfoButton {
+                    label: "How".to_string(),
+                    title: "Setting readonly or hidden".to_string(),
+                    body: "These live on the FIELD, not on the profile - which is why people look for them in the wrong place and conclude GLPI cannot do it."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                            "The steps",
+                            "Open the definition, go to its Fields tab, open the field, and set its readonly-for-these-profiles or hidden-for-these-profiles option. Each takes a SET of profiles rather than a yes or no, so one field can be editable for technicians, visible but locked for one group, and absent for another.",
+                        ),
+                        InfoSection::new(
+                            "Hiding keeps the data",
+                            "A hidden field is not rendered, but its stored values are untouched and return the moment it is shown again. That is the difference between this and disabling a capacity, which deletes what it held.",
+                        ),
+                        InfoSection::new(
+                            "Where this was read",
+                            "src/Glpi/Asset/CustomFieldType/AbstractType.php lines 75 to 83 for the four options every field has, and CustomFieldOption/ProfileRestrictOption.php for the profile-set type, whose All label is at line 52.",
+                        ),
+                    ],
+                }
             }
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
@@ -771,22 +812,127 @@ fn StepZero() -> Element {
                 li {
                     span { class: "font-medium", "A list of values to pick from. " }
                     "A custom dropdown definition - Setup then Dropdowns - managed like Locations or \
-                     Manufacturers."
+                     Manufacturers. "
+                    InfoButton {
+                        label: "How".to_string(),
+                        title: "Making a custom dropdown".to_string(),
+                        body: "Far less work than an asset definition: a dropdown has no \
+                               capacities and no fields, because the values ARE the content. \
+                               Its definition form carries two tabs, Profiles and Translations, \
+                               and nothing else."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The steps",
+                                "Setup, then Dropdowns, then add a definition. Give it a system \
+                                 name. Grant its right in Profiles - nobody holds it yet, \
+                                 exactly as with an asset type. Set the displayed name and \
+                                 plural on Translations, then activate it. The values \
+                                 themselves are added afterwards from the dropdown's own \
+                                 screen, like any core dropdown.",
+                            ),
+                            InfoSection::new(
+                                "What the name becomes",
+                                "The same pattern rule as an asset definition - start with a \
+                                 letter, end alphanumeric - but a different suffix and right. \
+                                 Colour gives you the class ColourDropdown and the right \
+                                 dropdown_colour, not asset_colour. The reserved names differ \
+                                 too: every standard GLPI dropdown class is taken, computed at \
+                                 runtime rather than listed, so the set grows with GLPI.",
+                            ),
+                            InfoSection::new(
+                                "Where this was read",
+                                "src/Glpi/Dropdown/DropdownDefinition.php - the right at line \
+                                 93, the class suffix at line 68, the two tabs at line 108. \
+                                 The reserved set is getReservedSystemNamesPattern in \
+                                 DropdownDefinitionManager.php line 83, which walks \
+                                 Dropdown::getStandardDropdownItemTypes. Capacity and custom \
+                                 field appear zero times in the definition.",
+                            ),
+                        ],
+                        links: vec![InfoLink::new(
+                            "Custom dropdowns",
+                            "front/dropdown/dropdowndefinition.php",
+                        )],
+                    }
                 }
                 li {
                     span { class: "font-medium", "Questions put to a person. " }
                     "Forms, under Service catalogue. They sequence and condition questions and keep answers \
-                     relationally."
+                     relationally. "
+                    InfoButton {
+                        label: "How".to_string(),
+                        title: "Making a form".to_string(),
+                        body: "Built from questions rather than fields, and it ends by creating something. Three decisions: what it asks, who may open it, and what it produces."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The steps",
+                                "Service catalogue, then Forms, then add one. Build it from sections and questions - 19 question types ship. Set access control: an allow list of who may open it, or direct access for a shareable link. Add a destination, which is what the answers become: a Ticket, a Change or a Problem. Then activate it.",
+                            ),
+                            InfoSection::new(
+                                "Why not an asset",
+                                "Questions can be sequenced and made conditional on earlier answers, and the answers are kept relationally. An asset's flat field list can do neither, which is the whole reason to reach for this instead.",
+                            ),
+                            InfoSection::new(
+                                "Where this was read",
+                                "src/Glpi/Form/ - the right is 'form' at Form.php line 108; Destination/ holds FormDestinationTicket, FormDestinationChange and FormDestinationProblem; AccessControl/ControlType/ holds AllowList and DirectAccess; QuestionType/ has 19 concrete types.",
+                            ),
+                        ],
+                        links: vec![InfoLink::new("Forms", "front/form/form.php")],
+                    }
                 }
                 li {
                     span { class: "font-medium", "Figures to look at. " }
                     "A dashboard - a grid of widgets, read-only by nature, edited in place from the dashboard \
-                     itself."
+                     itself. "
+                    InfoButton {
+                        label: "How".to_string(),
+                        title: "Making a dashboard".to_string(),
+                        body: "A grid of widgets fed by providers. Unlike the others it is not created from Setup - you edit a dashboard from the dashboard itself."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The steps",
+                                "Open a dashboard, put it into edit mode, add widgets and arrange them on the grid, then save. A dashboard carries its own access rows rather than a profile right, so who may see it is set per dashboard.",
+                            ),
+                            InfoSection::new(
+                                "Not verified in the UI",
+                                "The classes and the access model were read in the source; the exact control that enters edit mode was not. Expect that button's wording to differ from this description - the structure is right, the label may not be.",
+                            ),
+                            InfoSection::new(
+                                "Where this was read",
+                                "src/Glpi/Dashboard/ - Grid.php for the layout, Widget.php for what can go on it, Provider.php for where the figures come from, and Right.php keyed on dashboards_dashboards_id for the per-dashboard access.",
+                            ),
+                        ],
+                        links: vec![InfoLink::new("Asset dashboard", "front/dashboard_assets.php")],
+                    }
                 }
                 li {
                     span { class: "font-medium", "Different columns on a list that already exists. " }
                     "Not a new screen at all. That is a display preference, and whether you can set it \
-                     for everyone is a rights question - see the Rights tab."
+                     for everyone is a rights question - see the Rights tab. "
+                    InfoButton {
+                        label: "How".to_string(),
+                        title: "Changing a list's columns".to_string(),
+                        body: "Nothing is created. It is a setting on a list that already exists, and the only real question is whether you may set it for everyone or only for yourself."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The steps",
+                                "Open the list, use its column selector, choose the columns. Saving them for yourself needs the PERSONAL bit of search_config; saving them as everyone's default needs GENERAL. If the global option is not offered to you, the profile lacks that bit - there is no second screen to go looking for.",
+                            ),
+                            InfoSection::new(
+                                "Personal is seeded from global",
+                                "The first time a user needs a personal set, GLPI builds it from the global one and then leaves it alone. So someone who has never chosen sees the global columns, and someone who chose once stops tracking later global changes.",
+                            ),
+                            InfoSection::new(
+                                "Where this was read",
+                                "src/DisplayPreference.php - the right search_config at line 53, PERSONAL 1024 and GENERAL 2048 at lines 55 and 56, the global-versus-personal split around line 511, and the seeding at the comment on line 281 with its guard at line 295.",
+                            ),
+                        ],
+                        links: vec![InfoLink::new("Display preferences", "front/displaypreference.form.php")],
+                    }
                 }
             }
         }
@@ -849,7 +995,49 @@ fn StepOneName() -> Element {
                     span { class: "font-medium", "Fifteen names are reserved, case-insensitively. " }
                     "Computer, Monitor, Software, NetworkEquipment, Peripheral, Printer, Cartridge, \
                      Consumable, Phone, Rack, Enclosure, PDU, PassiveDCEquipment, Unmanaged, Cable - \
-                     and so are computer and COMPUTER."
+                     and so are computer and COMPUTER. "
+                    InfoButton {
+                        label: "Can I add my own?".to_string(),
+                        title: "Reserving your own names".to_string(),
+                        body: "No - the fifteen are fixed in GLPI's source. But they are the \
+                               only names taken, so everything outside them is yours, which is \
+                               more freedom than the list suggests."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "Not configurable",
+                                "The list is a PHP array literal in \
+                                 AssetDefinitionManager::getReservedSystemNamesPattern, joined \
+                                 into one case-insensitive regex. It is not config, not a \
+                                 database table and not exposed anywhere in the interface, so \
+                                 adding to it means patching GLPI - which the next upgrade \
+                                 overwrites.",
+                            ),
+                            InfoSection::new(
+                                "The only three checks",
+                                "A name is accepted if it matches the pattern, does not match \
+                                 those fifteen case-insensitively, and is unique among existing \
+                                 definitions compared lowercased. That is the whole validation - \
+                                 no namespace, no prefix requirement, no allow-list.",
+                            ),
+                            InfoSection::new(
+                                "Dropdowns differ",
+                                "Custom dropdowns are stricter, and not by a fixed list: \
+                                 DropdownDefinitionManager computes its reserved set at runtime \
+                                 by walking every standard dropdown class GLPI ships, so it is \
+                                 large and grows with each release. Asset names stay at fifteen \
+                                 until GLPI's own source changes.",
+                            ),
+                            InfoSection::new(
+                                "Upgrades are safe",
+                                "A later GLPI reserving a name you already used cannot strand \
+                                 your definition. prepareInputForUpdate refuses any change to \
+                                 system_name outright - the system name cannot be changed - so \
+                                 the name is never resubmitted and never re-validated against a \
+                                 longer list.",
+                            ),
+                        ],
+                    }
                 }
                 li {
                     span { class: "font-medium", "It must be unique, compared lowercased. " }
@@ -867,7 +1055,53 @@ fn StepOneName() -> Element {
                     code { class: "text-xs", "asset_vehicle" }
                     ". No new database table is created - every custom asset of every type shares "
                     code { class: "text-xs", "glpi_assets_assets" }
-                    "."
+                    ". "
+                    InfoButton {
+                        label: "In detail".to_string(),
+                        title: "What the name becomes".to_string(),
+                        body: "One row in one table, and from it GLPI conjures seven PHP classes, \
+                               a permission and a place to put the data - none of which exists \
+                               until the name is saved."
+                            .to_string(),
+                        sections: vec![
+                            InfoSection::new(
+                                "The class is eval'd",
+                                "VehicleAsset is not a file. AssetDefinitionManager registers an \
+                                 spl_autoload hook, and the first time anything mentions \
+                                 Glpi\\CustomAsset\\VehicleAsset it is built by eval() on the spot: \
+                                 a final class extending Glpi\\Asset\\Asset with two static \
+                                 properties, the system name and the rightname. Nothing is ever \
+                                 written to disk - file_put_contents appears zero times in that \
+                                 manager.",
+                            ),
+                            InfoSection::new(
+                                "Seven, not one",
+                                "The autoloader matches seven patterns per definition: the asset \
+                                 itself, its Model and Type, the two rule-dictionary classes for \
+                                 those, and a collection class for each dictionary. So Vehicle \
+                                 also yields VehicleAssetModel, VehicleAssetType, \
+                                 RuleDictionaryVehicleAssetModel and three more - all in the \
+                                 Glpi\\CustomAsset namespace, all conjured the same way.",
+                            ),
+                            InfoSection::new(
+                                "Why statics repeat",
+                                "The generated class restates $definition_system_name and \
+                                 $rightname rather than inheriting them, and the source says why: \
+                                 a static property declared only on the parent is SHARED by every \
+                                 concrete class, so the last one loaded would overwrite the rest \
+                                 and every custom asset would answer to one definition.",
+                            ),
+                            InfoSection::new(
+                                "No table, ever",
+                                "Every custom asset of every type lives in glpi_assets_assets - 27 \
+                                 columns, told apart by assets_assetdefinitions_id. Field \
+                                 definitions are rows in glpi_assets_customfielddefinitions and \
+                                 their values go into one custom_fields json column. So a second \
+                                 definition buys organisation, never storage, and the ~950-column \
+                                 folklore has no table to apply to.",
+                            ),
+                        ],
+                    }
                 }
             }
         }
@@ -905,7 +1139,65 @@ fn StepTwoCapacities() -> Element {
                 "A capacity bolts a whole subsystem onto the type - volumes, software, network ports, \
                  financial information, inventory. There are 28, and 26 of them register a tab \
                  on the asset at boot - AllowedInGlobalSearch and IsRackable are the two that \
-                 do not."
+                 do not. "
+                InfoButton {
+                    label: "Can I write my own?".to_string(),
+                    title: "Adding a capacity".to_string(),
+                    body: "Yes, but only from PHP - there is no screen for it. And the answer \
+                           is narrower for custom FIELD types, which can be added the \
+                           same way but have no plugin-facing door."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                            "The door",
+                            "AssetDefinitionManager::registerCapacity takes any \
+                             CapacityInterface, at line 339. Nothing in GLPI's own source \
+                             calls it, which is about as clear a signal as you get that it is \
+                             provided for plugins rather than used by core. Registering at \
+                             plugin boot is the durable route.",
+                        ),
+                        InfoSection::new(
+                            "Just a directory",
+                            "They are not a list anywhere. The manager's constructor runs a \
+                             DirectoryIterator over src/Glpi/Asset/Capacity and takes every \
+                             non-abstract class implementing CapacityInterface. GLPI's own \
+                             comment calls this a stopgap for missing dependency-injection \
+                             auto-discovery. Dropping a file in there does work - and the \
+                             next upgrade deletes it.",
+                        ),
+                        InfoSection::new(
+                            "Three methods",
+                            "CapacityInterface declares fourteen, but AbstractCapacity \
+                             implements eleven. Extend it and you must write only getLabel, \
+                             getIcon and getCapacityUsageDescription; the lifecycle hooks and \
+                             search options have defaults you override only if the capacity \
+                             really does something. For scale, the smallest shipped one is 77 \
+                             lines.",
+                        ),
+                        InfoSection::new(
+                            "Types differ",
+                            "The same manager scans CustomFieldType the same way, so a \
+                             tenth type is also just a class in a directory, with the \
+                             same upgrade problem. What is missing is the door: there \
+                             is no registerCustomFieldType to match registerCapacity, \
+                             so a plugin cannot add one cleanly. Narrower, not closed. \
+                             Note the third filter too - a class must also return true \
+                             from isAllowedForCustomFields, which is how RawType exists \
+                             and is still never offered.",
+                        ),
+                        InfoSection::new(
+                            "Writing a type",
+                            "Two methods. TypeInterface declares eleven instance methods \
+                             plus two statics, and AbstractType implements all but getName \
+                             - the label in the type picker - and getFormInput, which \
+                             renders the input. URLType is the smallest shipped example: 60 \
+                             lines declaring exactly those two, and it extends StringType \
+                             rather than AbstractType, so building on an existing type is \
+                             the cheaper start. Leave isAllowedForCustomFields at its \
+                             inherited true, or the class is scanned and skipped.",
+                        ),
+                    ],
+                }
             }
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
@@ -942,7 +1234,7 @@ fn StepThreeFields() -> Element {
         Panel {
             title: "Step 3 - add the fields".to_string(),
             subtitle: "A field's type and name are fixed once saved".to_string(),
-            info: "Nine types, four options on every one of them, and two \
+            info: "Eight selectable types, four options on every one of them, and \
                    properties you cannot revise."
                 .to_string(),
             info_sections: vec![
@@ -965,7 +1257,54 @@ fn StepThreeFields() -> Element {
             ],
 
             p { class: "mb-3 text-sm",
-                "Nine types: Boolean, Date, DateTime, Dropdown, Number, Raw, String, Text, URL."
+                "Eight types are offered: Boolean, Date, DateTime, Dropdown, Number, String, Text \
+                 and URL. "
+                InfoButton {
+                    label: "Where from, and can I add one?".to_string(),
+                    title: "Where the types come from".to_string(),
+                    body: "One class per type in one directory, discovered at runtime. The \
+                           database never lists them - it only records which one each field \
+                           chose."
+                        .to_string(),
+                    sections: vec![
+                        InfoSection::new(
+                    "Where they live",
+                    "src/Glpi/Asset/CustomFieldType, one class each. \
+                     AssetDefinitionManager's constructor runs a DirectoryIterator \
+                     over it and keeps a class on three conditions: it implements \
+                     TypeInterface, it is not abstract, and its static \
+                     isAllowedForCustomFields returns true. The menu is therefore \
+                     built from the filesystem every boot.",
+                        ),
+                        InfoSection::new(
+                    "Why eight, not nine",
+                    "Nine concrete classes sit in that directory, but RawType \
+                     returns false from isAllowedForCustomFields and is skipped. \
+                     Counting the directory gives nine; counting what you can pick \
+                     gives eight. The third condition is invisible from a file \
+                     listing, which is exactly how the wrong number gets quoted.",
+                        ),
+                        InfoSection::new(
+                    "Not in the database",
+                    "There is no glpi_assets_customfieldtypes table - zero \
+                     occurrences in the schema. What is stored is the other \
+                     direction: customfielddefinitions.type is a varchar(255) \
+                     holding the chosen class's fully-qualified name, and \
+                     getFieldType validates that string against the runtime list, \
+                     throwing Invalid field type if it is not in it.",
+                        ),
+                        InfoSection::new(
+                    "Adding a tenth",
+                    "A class in that directory, not a row: two methods, getName \
+                     for the type picker and getFormInput to render the input - \
+                     AbstractType provides the other eleven. URLType is 60 lines \
+                     and extends StringType. But there is no \
+                     registerCustomFieldType to match registerCapacity, so a \
+                     plugin cannot add one cleanly, and a file dropped into GLPI's \
+                     own tree is removed by the next upgrade.",
+                        ),
+                    ],
+                }
             }
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
