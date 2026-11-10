@@ -45,8 +45,8 @@
 //! permission is not granted". v1 returns rights and nothing else.
 use serde::{Deserialize, Serialize};
 
-/// GLPI's global right bits, from src/autoload/constants.php:66-78 in
-/// 11.0.12. Read straight out of the release rather than remembered:
+/// GLPI's global right bits, from src/autoload/constants.php:67-79 in
+/// 12.0.1. Read straight out of the release rather than remembered:
 ///
 ///   define("READ", 1);      define("UPDATE", 2);   define("CREATE", 4);
 ///   define("DELETE", 8);    define("PURGE", 16);   define("READNOTE", 32);
@@ -56,7 +56,24 @@ use serde::{Deserialize, Serialize};
 ///
 /// ALLSTANDARDRIGHT (31) is deliberately absent: it is the OR of the first
 /// five, not a bit of its own, and listing it would double-count.
-const KNOWN_BITS: [(i64, &str); 12] = [
+///
+/// ONLY THE FIRST EIGHT ARE GLOBAL, and that is the whole reason this is
+/// split into three tables instead of one. A right's bitmask is stored per
+/// right NAME - glpi_profilerights is unique on (profiles_id, name) - so the
+/// meaning of a bit is a property of the name, not of the number. Bits 0-7
+/// are the generic set GLPI offers on essentially every right. Bits 8-11 are
+/// not: `grep -rE 'const [A-Z_]+ *= *(1024|2048) *;' src/` finds bit 10
+/// carrying 15 different right constants and bit 11 carrying 9, and they are
+/// not even consistent with each other - READALL is 1024 under `ticket` and
+/// 2048 under `planning`, exactly inverted.
+///
+/// Reading bits 8-11 globally is therefore wrong for most rights, and wrong
+/// in the direction this file must never err in: `inventory` 1024 is
+/// IMPORTFROMFILE and `user` 1024 is IMPORTEXTAUTHUSERS - both mutations -
+/// yet READ_OWNED is not in `WRITE_BITS`, so both would be presented as
+/// read-only. See the `unnamed_bits` doc for the understatement rule this
+/// upholds.
+const GLOBAL_BITS: [(i64, &str); 8] = [
     (1, "READ"),
     (2, "UPDATE"),
     (4, "CREATE"),
@@ -65,15 +82,190 @@ const KNOWN_BITS: [(i64, &str); 12] = [
     (32, "READNOTE"),
     (64, "UPDATENOTE"),
     (128, "UNLOCK"),
+];
+
+/// Bits 8-11, named only for the rights where they verifiably mean these.
+const ASSIGNABLE_BITS: [(i64, &str); 4] = [
     (256, "READ_ASSIGNED"),
     (512, "UPDATE_ASSIGNED"),
     (1024, "READ_OWNED"),
     (2048, "UPDATE_OWNED"),
 ];
 
-/// Every bit `KNOWN_BITS` can name. Anything outside this is real permission
-/// that this code cannot label - see `unnamed_bits`.
-const KNOWN_MASK: i64 = 4095;
+/// The rights whose items implement `AssignableItemInterface`, so bits 8-11
+/// are the assignable-item rights and `ASSIGNABLE_BITS` applies.
+///
+/// Derived by listing the classes implementing that interface in GLPI 12.0.1
+/// and reading each one's `$rightname`, rather than by guessing which types
+/// look asset-shaped. Detection by the interface and not by `use
+/// AssignableItem` matters: Computer, Monitor and Printer take the trait with
+/// an aliasing block (`use AssignableItem { ... }`), which a search for `use
+/// AssignableItem;` misses entirely - it finds six classes instead of
+/// twenty-odd.
+///
+/// `Asset` implements it too but computes `$rightname` at runtime as
+/// `asset_<system_name>`, which is why `is_assignable` also takes that
+/// prefix: every custom asset type is assignable.
+const ASSIGNABLE_RIGHTS: &[&str] = &[
+    "appliance",
+    "cable_management",
+    "cartridge",
+    "certificate",
+    "cluster",
+    "computer",
+    "consumable",
+    "database",
+    "datacenter",
+    "domain",
+    "enclosure",
+    "license",
+    "line",
+    "monitor",
+    "networking",
+    "peripheral",
+    "phone",
+    "printer",
+    "software",
+    "unmanaged",
+];
+
+/// One bit of one right: its value, GLPI's constant name for it, and whether
+/// holding it lets you change something.
+type BitMeaning = (i64, &'static str, bool);
+
+/// A right name paired with the bit meanings that differ from the tables
+/// above.
+type RightOverride = (&'static str, &'static [BitMeaning]);
+
+/// Per-right bit meanings that differ from the tables above.
+///
+/// `(bit, GLPI's constant name, whether it grants mutation)`. An entry here
+/// REPLACES whatever the global or assignable table would have said for that
+/// bit, which is why `rssfeed_public` and `reminder_public` can override bit
+/// 7: both define PERSONAL = 128, colliding with the global UNLOCK.
+///
+/// Every name was read from the defining class in GLPI 12.0.1. Not
+/// exhaustive, and deliberately not: a right absent from here has its bits
+/// 8-11 reported as unnamed rather than guessed at. Adding a row is how this
+/// table grows - never by inferring a meaning from a bit's number.
+const RIGHT_OVERRIDES: &[RightOverride] = &[
+    // CommonITILObject.php:143 READALL; Ticket.php:106 READGROUP.
+    (
+        "ticket",
+        &[(1024, "READALL", false), (2048, "READGROUP", false)],
+    ),
+    ("change", &[(1024, "READALL", false)]),
+    ("problem", &[(1024, "READALL", false)]),
+    // DisplayPreference.php:55-56. Both write: they store rows in
+    // glpi_displaypreferences, GENERAL for every user at once.
+    (
+        "search_config",
+        &[(1024, "PERSONAL", true), (2048, "GENERAL", true)],
+    ),
+    // Planning.php:108-109 - the inverse of `ticket`, which is the clearest
+    // proof that a bit number carries no portable meaning.
+    (
+        "planning",
+        &[(1024, "READGROUP", false), (2048, "READALL", false)],
+    ),
+    // KnowbaseItem.php:81-82.
+    (
+        "knowbase",
+        &[(1024, "KNOWBASEADMIN", true), (2048, "READFAQ", false)],
+    ),
+    // Entity.php:72-73.
+    (
+        "entity",
+        &[
+            (1024, "READHELPDESK", false),
+            (2048, "UPDATEHELPDESK", true),
+        ],
+    ),
+    // Glpi/Inventory/Conf.php:151-152. Both mutate.
+    (
+        "inventory",
+        &[(1024, "IMPORTFROMFILE", true), (2048, "UPDATECONFIG", true)],
+    ),
+    // ReservationItem.php:55 - creates a reservation, so a write.
+    ("reservation", &[(1024, "RESERVEANITEM", true)]),
+    // User.php:94-95. Importing users is a write; reading authent is not.
+    (
+        "user",
+        &[
+            (1024, "IMPORTEXTAUTHUSERS", true),
+            (2048, "READAUTHENT", false),
+        ],
+    ),
+    // ProjectTask.php:82, Project.php:65.
+    ("projecttask", &[(1024, "UPDATEMY", true)]),
+    ("project", &[(1024, "READALL", false)]),
+    // TicketValidation.php:47-48 - both create a validation request.
+    (
+        "ticketvalidation",
+        &[
+            (1024, "CREATEREQUEST", true),
+            (2048, "CREATEINCIDENT", true),
+        ],
+    ),
+    // PlanningExternalEvent.php:55.
+    ("externalevent", &[(1024, "MANAGE_BG_EVENTS", true)]),
+    // RuleAsset.php:44 and RuleCommonITILObject.php:42 - PARENT, labelled
+    // "Business rules (entity parent)".
+    //
+    // Classified a READ from how it is enforced rather than from its name:
+    // RuleCommonITILObjectCollection.php:67 is
+    // `haveRightsOr($rightname, [READ, PARENT])`, so PARENT stands in for
+    // READ when deciding whether the collection may be viewed at all, and
+    // line 85 uses it to show the inherited-rules tab. Neither mutates.
+    //
+    // RuleAssetCollection declares `$rightname = 'rule_asset'` but carries no
+    // PARENT check of its own; the bit is still declared and offered in
+    // RuleAsset::getRights, so it is grantable and worth naming.
+    ("rule_asset", &[(1024, "PARENT", false)]),
+    ("rule_ticket", &[(1024, "PARENT", false)]),
+    ("rule_change", &[(1024, "PARENT", false)]),
+    ("rule_problem", &[(1024, "PARENT", false)]),
+    // RSSFeed.php:59 and Reminder.php:66 - PERSONAL = 128, not 1024, which
+    // is why these override a bit the global table calls UNLOCK.
+    ("rssfeed_public", &[(128, "PERSONAL", true)]),
+    ("reminder_public", &[(128, "PERSONAL", true)]),
+];
+
+/// Whether bits 8-11 of this right are the assignable-item rights.
+fn is_assignable(right: &str) -> bool {
+    ASSIGNABLE_RIGHTS.contains(&right) || right.starts_with("asset_")
+}
+
+/// Every bit this code can put a name to for one right, lowest bit first.
+///
+/// Scoped by name on purpose - see `GLOBAL_BITS`. Anything this returns no
+/// entry for lands in `unnamed_bits`.
+fn named_bits(right: &str) -> Vec<BitMeaning> {
+    let overrides: &'static [BitMeaning] = RIGHT_OVERRIDES
+        .iter()
+        .find(|(name, _)| *name == right)
+        .map(|(_, bits)| *bits)
+        .unwrap_or(&[]);
+
+    let overridden = |bit: i64| overrides.iter().any(|(b, _, _)| *b == bit);
+
+    let mut out: Vec<BitMeaning> = Vec::new();
+    for (bit, label) in GLOBAL_BITS {
+        if !overridden(bit) {
+            out.push((bit, label, bit & WRITE_BITS != 0));
+        }
+    }
+    if is_assignable(right) {
+        for (bit, label) in ASSIGNABLE_BITS {
+            if !overridden(bit) {
+                out.push((bit, label, bit & WRITE_BITS != 0));
+            }
+        }
+    }
+    out.extend(overrides.iter().copied());
+    out.sort_by_key(|(bit, _, _)| *bit);
+    out
+}
 
 /// The bits that let the holder change something.
 ///
@@ -115,7 +307,7 @@ pub struct RightEntry {
     /// it is a write. Empty when the right is not granted at all.
     pub bits: Vec<RightBit>,
 
-    /// Whatever `value` holds beyond the twelve global constants, 0 when
+    /// Whatever `value` holds beyond the bits nameable for THIS right, 0 when
     /// there is none.
     ///
     /// Not an error and not padding. GLPI lets a module define its own bits on
@@ -126,6 +318,20 @@ pub struct RightEntry {
     /// is only knowable per module. They are reported rather than masked off:
     /// dropping them would understate what the account can do, which is the
     /// one direction a permissions screen must never err in.
+    ///
+    /// Bits 8-11 land here too for any right that is neither in
+    /// `ASSIGNABLE_RIGHTS` nor in `RIGHT_OVERRIDES`. That is a deliberate
+    /// trade: those bits were previously labelled READ_ASSIGNED,
+    /// UPDATE_ASSIGNED, READ_OWNED and UPDATE_OWNED for every right, which is
+    /// correct only for assignable items and a confident falsehood everywhere
+    /// else. An unnamed bit the UI shows as `+N` says "there is permission
+    /// here I cannot name"; a wrong name says something untrue with the same
+    /// authority as a right one. The first is the honest failure.
+    ///
+    /// It does cost something: `writes` cannot see a write hiding in an
+    /// unnamed bit, so a right whose only mutation bit is unnamed reads as
+    /// read-only. That was already true of bits above 11 - a live `ticket`
+    /// arrives as 138241 - and the panel counting these is what flags it.
     pub unnamed_bits: i64,
 
     /// A known write bit is set, so this right is not read-only.
@@ -176,21 +382,33 @@ impl RightEntry {
     }
 
     fn new(name: String, value: i64) -> Self {
+        // Scoped by right name, not a global table: the same bit means
+        // different things under different names. See `GLOBAL_BITS`.
+        let named = named_bits(&name);
+
+        let bits: Vec<RightBit> = named
+            .iter()
+            .filter(|(bit, _, _)| value & bit != 0)
+            .map(|(_, label, writes)| RightBit {
+                name: (*label).to_string(),
+                writes: *writes,
+            })
+            .collect();
+
+        // Derived from the bits actually named rather than from a mask over
+        // the raw value, which is what keeps a bit's colour and the right's
+        // verdict from disagreeing now that a bit's write-ness depends on
+        // which right it belongs to.
+        let writes = bits.iter().any(|b| b.writes);
+
+        let named_mask = named.iter().fold(0i64, |acc, (bit, _, _)| acc | bit);
+
         Self {
             name,
             value,
-            bits: KNOWN_BITS
-                .iter()
-                .filter(|(bit, _)| value & bit != 0)
-                .map(|(bit, label)| RightBit {
-                    name: (*label).to_string(),
-                    // Same mask that produces `writes` below, so a bit's
-                    // colour and the right's verdict cannot disagree.
-                    writes: bit & WRITE_BITS != 0,
-                })
-                .collect(),
-            unnamed_bits: value & !KNOWN_MASK,
-            writes: value & WRITE_BITS != 0,
+            bits,
+            unnamed_bits: value & !named_mask,
+            writes,
             recorded: true,
             tab: None,
             group: None,
@@ -1101,7 +1319,11 @@ mod tests {
     #[test]
     fn per_bit_write_flags_agree_with_the_rights_verdict() {
         let profiles = vec![profile(1, "p", "central")];
-        // Every value 0..4096 exercises every combination of the twelve bits.
+        // Every value 0..4096 exercises every combination of the twelve
+        // low bits. These names are in no override table and are not
+        // assignable, so bits 8-11 arrive unnamed - which is itself the
+        // property being pinned: the invariant must hold for a right this
+        // code knows nothing about.
         let rights: Vec<serde_json::Value> =
             (0..4096).map(|v| right(1, &format!("r{v}"), v)).collect();
         let r = RightsReport::from_legacy(&profiles, &rights, Some(1), 8192).unwrap();
@@ -1240,7 +1462,12 @@ mod tests {
 
         let change = by("change");
         assert_eq!(change.value, 132129);
-        assert_eq!(names(&change.bits), vec!["READ", "READNOTE", "READ_OWNED"]);
+        // Bit 10 is READALL here (CommonITILObject.php:143), NOT READ_OWNED.
+        // This asserted READ_OWNED until the decode became name-scoped, which
+        // is the clearest statement of what that bug was: a label that read
+        // as authoritative and was wrong for every right but the assignable
+        // ones.
+        assert_eq!(names(&change.bits), vec!["READ", "READNOTE", "READALL"]);
         assert_eq!(
             change.unnamed_bits, 131072,
             "an unnameable bit must survive into the output"
@@ -1249,6 +1476,128 @@ mod tests {
         // 8193 = READ plus 8192, which no global constant covers.
         assert_eq!(by("task").unnamed_bits, 8192);
         assert_eq!(names(&by("task").bits), vec!["READ"]);
+    }
+
+    /// The same bit, three different readings, decided by the right's name.
+    #[test]
+    fn a_bits_meaning_follows_the_right_name() {
+        let profiles = vec![profile(1, "p", "central")];
+        let rights = vec![
+            right(1, "computer", 1024),      // assignable item
+            right(1, "ticket", 1024),        // CommonITILObject::READALL
+            right(1, "planning", 1024),      // Planning::READGROUP - inverted
+            right(1, "knowbase", 1024),      // KnowbaseItem::KNOWBASEADMIN
+            right(1, "asset_vehicle", 1024), // custom asset, by prefix
+            right(1, "somethingelse", 1024), // unknown: must not be guessed
+        ];
+        let r = RightsReport::from_legacy(&profiles, &rights, None, LIMIT).unwrap();
+        let p = &r.profiles[0];
+        let by = |n: &str| p.entries.iter().find(|e| e.name == n).unwrap().clone();
+
+        assert_eq!(names(&by("computer").bits), vec!["READ_OWNED"]);
+        assert_eq!(names(&by("asset_vehicle").bits), vec!["READ_OWNED"]);
+        assert_eq!(names(&by("ticket").bits), vec!["READALL"]);
+        assert_eq!(names(&by("knowbase").bits), vec!["KNOWBASEADMIN"]);
+
+        // planning and ticket put READALL and READGROUP on opposite bits, so
+        // one table could never serve both.
+        assert_eq!(names(&by("planning").bits), vec!["READGROUP"]);
+
+        // An unrecognised right gets no name for bit 10 at all. Reporting it
+        // as unnamed is the honest reading; naming it would be a guess with
+        // the authority of a fact.
+        assert!(by("somethingelse").bits.is_empty());
+        assert_eq!(by("somethingelse").unnamed_bits, 1024);
+    }
+
+    /// `rule_asset` is the trap in the `asset_` prefix rule: it contains
+    /// "asset", does not start with "asset_", and is a rule right rather than
+    /// an assignable one. Its bit 10 is PARENT, not READ_OWNED.
+    #[test]
+    fn the_rule_rights_are_not_mistaken_for_asset_rights() {
+        let profiles = vec![profile(1, "p", "central")];
+        let rights = vec![
+            right(1, "rule_asset", 1024),
+            right(1, "rule_ticket", 1024),
+            right(1, "rule_change", 1024),
+            right(1, "rule_problem", 1024),
+        ];
+        let r = RightsReport::from_legacy(&profiles, &rights, None, LIMIT).unwrap();
+        let p = &r.profiles[0];
+        let by = |n: &str| p.entries.iter().find(|e| e.name == n).unwrap().clone();
+
+        for name in ["rule_asset", "rule_ticket", "rule_change", "rule_problem"] {
+            assert_eq!(names(&by(name).bits), vec!["PARENT"], "{name}");
+            assert!(
+                !by(name).writes,
+                "{name} PARENT stands in for READ, so it is not a write"
+            );
+            assert_eq!(by(name).unnamed_bits, 0, "{name} has nothing left over");
+        }
+    }
+
+    /// Bit 10 is a WRITE under several rights, and the old global table hid
+    /// that: READ_OWNED is absent from WRITE_BITS, so every one of these read
+    /// as read-only on a page whose whole job is saying what an account can
+    /// do. Understating is the one direction this must never err in.
+    #[test]
+    fn writes_hiding_in_bit_ten_are_not_called_read_only() {
+        let profiles = vec![profile(1, "p", "central")];
+        let rights = vec![
+            right(1, "inventory", 1024),        // IMPORTFROMFILE
+            right(1, "user", 1024),             // IMPORTEXTAUTHUSERS
+            right(1, "knowbase", 1024),         // KNOWBASEADMIN
+            right(1, "reservation", 1024),      // RESERVEANITEM
+            right(1, "search_config", 3072),    // PERSONAL | GENERAL
+            right(1, "projecttask", 1024),      // UPDATEMY
+            right(1, "ticketvalidation", 1024), // CREATEREQUEST
+            right(1, "externalevent", 1024),    // MANAGE_BG_EVENTS
+            right(1, "computer", 1024),         // READ_OWNED - a genuine read
+            right(1, "ticket", 1024),           // READALL - a genuine read
+        ];
+        let r = RightsReport::from_legacy(&profiles, &rights, None, LIMIT).unwrap();
+        let p = &r.profiles[0];
+        let writes = |n: &str| p.entries.iter().find(|e| e.name == n).unwrap().writes;
+
+        for name in [
+            "inventory",
+            "user",
+            "knowbase",
+            "reservation",
+            "search_config",
+            "projecttask",
+            "ticketvalidation",
+            "externalevent",
+        ] {
+            assert!(writes(name), "{name} bit 10 mutates and must count as one");
+        }
+
+        assert!(!writes("computer"), "READ_OWNED really is a read");
+        assert!(!writes("ticket"), "READALL really is a read");
+    }
+
+    /// An override replaces the global reading of a bit rather than adding to
+    /// it, which bit 7 is the only live case of: RSSFeed.php:59 and
+    /// Reminder.php:66 both define PERSONAL = 128, where the global table
+    /// says UNLOCK.
+    #[test]
+    fn an_override_replaces_a_global_bit_rather_than_doubling_it() {
+        let profiles = vec![profile(1, "p", "central")];
+        let rights = vec![
+            right(1, "rssfeed_public", 128),
+            right(1, "reminder_public", 128),
+            right(1, "computer", 128),
+        ];
+        let r = RightsReport::from_legacy(&profiles, &rights, None, LIMIT).unwrap();
+        let p = &r.profiles[0];
+        let by = |n: &str| p.entries.iter().find(|e| e.name == n).unwrap().clone();
+
+        assert_eq!(names(&by("rssfeed_public").bits), vec!["PERSONAL"]);
+        assert_eq!(names(&by("reminder_public").bits), vec!["PERSONAL"]);
+        assert_eq!(by("rssfeed_public").unnamed_bits, 0, "no bit left over");
+
+        // Everything else still reads bit 7 as UNLOCK.
+        assert_eq!(names(&by("computer").bits), vec!["UNLOCK"]);
     }
 
     #[test]
