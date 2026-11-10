@@ -588,6 +588,74 @@ fn RightsTable(
                                     on_pick: move |k| {
                                         if sort_key() == k { sort_desc.toggle() } else { sort_key.set(k); sort_desc.set(false) }
                                     },
+                                    info: rsx! {
+                                        InfoButton {
+                                            title: "Value".to_string(),
+                                            body: "The raw number GLPI stores for this right on this \
+                                                   profile. Every other column in the row is a reading \
+                                                   of it, so this is the one figure here that cannot be \
+                                                   wrong."
+                                                .to_string(),
+                                    sections: vec![
+                                InfoSection::new(
+                                    "Row of switches",
+                                    "In binary, every 1 is one permission held. Positions are worth 1, \
+                                     2, 4, 8, 16 and on, each double the last, so any set of switches \
+                                     sums to a total only that set could make: 3072 is 1024 plus 2048, \
+                                     and nothing else gives 3072. The shared names begin READ 1, UPDATE \
+                                     2, CREATE 4, DELETE 8, PURGE 16 - and ALLSTANDARDRIGHT 31 is those \
+                                     five together, not a sixth switch."
+                                ),
+                                InfoSection::new(
+                                    "Per right",
+                                    "The number says WHICH switch, never what it does - GLPI decides \
+                                     that per right. Bit 10 carries fifteen distinct meanings and \
+                                     bit 11 ten: \
+                                     1024 is READALL under ticket, READGROUP under planning, \
+                                     KNOWBASEADMIN under knowbase, READ_OWNED on an asset. ticket and \
+                                     planning even swap the two names between the two bits, so a value \
+                                     cannot be read without the name beside it."
+                                ),
+                                InfoSection::new(
+                                    "Writes hide here",
+                                    "Several bit-10 meanings mutate: IMPORTFROMFILE under inventory, \
+                                     IMPORTEXTAUTHUSERS under user, KNOWBASEADMIN under knowbase, \
+                                     PERSONAL and GENERAL under search_config. Through one global table \
+                                     they all look like READ_OWNED, which is not a write, and the Read- \
+                                     only count above absorbs them. Permissions is decoded per right \
+                                     name for that reason; an unverified bit shows as +N rather than a \
+                                     wrong label."
+                                ),
+                                InfoSection::new(
+                                    "Where it lives",
+                                    "One row per profile per right in glpi_profilerights, unique on \
+                                     (profiles_id, name), the number in a plain signed int - so bits 0 \
+                                     to 30 are usable and the highest GLPI ships is 65536. The meanings \
+                                     are not in the database but in PHP, so SQL can read these values \
+                                     and cannot interpret them. Read here over the v1 API: v2.3 carries \
+                                     no profile rights at all."
+                                ),
+                                InfoSection::new(
+                                    "Zero vs blank",
+                                    "A stored 0 is a decision someone made in the profile form. No row \
+                                     at all means the form never offered the right for this profile. \
+                                     Both deny identically, so the two are tracked apart here rather \
+                                     than both shown as 0. Custom assets make it visible: deactivating \
+                                     a definition deletes its rights rows outright instead of zeroing \
+                                     them."
+                                ),
+                            ],
+
+
+                                            links: vec![
+                                                InfoLink::new("Profiles", "front/profile.php"),
+                                                InfoLink::new(
+                                                    "Asset definitions",
+                                                    "front/asset/assetdefinition.php",
+                                                ),
+                                            ],
+                                        }
+                                    },
                                 }
                                 SortHeader {
                                     label: "Permissions".to_string(),
@@ -1054,10 +1122,21 @@ fn SortHeader(
     active: SortKey,
     desc: bool,
     on_pick: EventHandler<SortKey>,
+    /// An explanation of what the column holds, shown as the usual info icon
+    /// beside the label.
+    ///
+    /// Rendered as a SIBLING of the sort button rather than inside it, for
+    /// two reasons: a button nested in a button is invalid HTML, and
+    /// `InfoButton`'s trigger does not stop propagation, so a click on the
+    /// icon would also re-sort the table underneath the panel that just
+    /// opened.
+    #[props(default = None)]
+    info: Option<Element>,
 ) -> Element {
     let is_active = active == column;
     rsx! {
         th {
+            div { class: "flex items-center gap-1",
             button {
                 class: if is_active {
                     "flex items-center gap-1 font-semibold cursor-pointer"
@@ -1085,6 +1164,10 @@ fn SortHeader(
                         "\u{25B2}"
                     }
                 }
+            }
+            if let Some(i) = info {
+                {i}
+            }
             }
         }
     }

@@ -279,7 +279,19 @@ pub fn InfoButton(
                     // overflow-y-auto stays as the fallback, not the plan: on a
                     // short window something has to give, and scrolling beats
                     // clipping. With room, nothing should need it.
-                    class: "max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl sm:max-w-2xl lg:max-w-3xl",
+                    //
+                    // overflow-x-hidden is NOT symmetric with that, and is
+                    // deliberate. `overflow-y: auto` alone does not leave the
+                    // other axis visible - CSS computes `overflow-x: visible`
+                    // to `auto` when its partner is not visible - so the modal
+                    // grew a horizontal scrollbar of its own whenever anything
+                    // inside was too wide, which is never wanted: body text
+                    // wraps, and the one element that can legitimately exceed
+                    // the width (the tab strip) carries its own scroller and
+                    // stays reachable. Without this the reader gets two
+                    // horizontal scrollbars stacked, and the outer one moves
+                    // the whole panel.
+                    class: "max-h-[90vh] w-full max-w-lg overflow-x-hidden overflow-y-auto rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl sm:max-w-2xl lg:max-w-3xl",
                     onclick: move |e: Event<MouseData>| e.stop_propagation(),
 
                     div { class: "mb-3 flex items-start justify-between gap-3",
