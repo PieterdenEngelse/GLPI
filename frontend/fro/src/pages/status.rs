@@ -80,25 +80,16 @@ fn SessionPanel(session: SessionInfo) -> Element {
                 Row {
                     label: "Profile".to_string(),
                     value: session.profile_name.clone().unwrap_or_else(|| "unknown".into()),
-                    info: "The set of permissions GLPI applied to this session."
+                    info: "The set of permissions GLPI applied to this session. An account \
+                           can be granted several profiles, but GLPI activates exactly one \
+                           per session - the account's default - so holding others does not \
+                           add their permissions; granting a second profile and expecting the \
+                           union is a common and quiet mistake. The profile an account may \
+                           use is granted under its Authorizations in GLPI, and which one is \
+                           used by default is a field on the account itself. Changing the \
+                           permissions inside a profile affects every account that uses it, \
+                           so a dedicated profile is safer than editing a shared one."
                         .to_string(),
-                    sections: vec![
-                        InfoSection::new(
-                            "One profile at a time",
-                            "An account can be granted several profiles, but GLPI activates \
-                             exactly one per session - the account's default - so holding \
-                             others does not add their permissions. Granting a second profile \
-                             and expecting the union is a common and quiet mistake.",
-                        ),
-                        InfoSection::new(
-                            "Where to change it",
-                            "The profile an account may use is granted under its Authorizations \
-                             in GLPI; which one is used by default is a field on the account \
-                             itself. Changing the permissions inside a profile affects every \
-                             account that uses it, so a dedicated profile is safer than editing \
-                             a shared one.",
-                        ),
-                    ],
                     links: vec![
                         InfoLink::new("Users", "front/user.php"),
                         InfoLink::new("Profiles", "front/profile.php"),
@@ -108,23 +99,15 @@ fn SessionPanel(session: SessionInfo) -> Element {
                     label: "Interface".to_string(),
                     value: session.profile_interface.clone().unwrap_or_else(|| "unknown".into()),
                     info: "GLPI profiles come in two kinds, and only one of them can hold the \
-                           permissions this app needs."
+                           permissions this app needs. Standard is the full interface. \
+                           Simplified is the helpdesk view, meant for people who only raise \
+                           tickets, and the permissions this app needs do not exist on it - \
+                           the settings are not merely unticked, the whole section is absent \
+                           from the form. If this says Simplified, no amount of looking for \
+                           the permissions will help: the profile's interface has to be \
+                           changed to Standard first, after which the section appears and the \
+                           two rights below can be granted."
                         .to_string(),
-                    sections: vec![
-                        InfoSection::new(
-                            "Standard and Simplified",
-                            "Standard is the full interface. Simplified is the helpdesk view, \
-                             meant for people who only raise tickets, and the permissions this \
-                             app needs do not exist on it - the settings are not merely \
-                             unticked, the whole section is absent from the form.",
-                        ),
-                        InfoSection::new(
-                            "If this says Simplified",
-                            "No amount of looking for the permissions will help; the profile's \
-                             interface has to be changed to Standard first, after which the \
-                             section appears and the two rights below can be granted.",
-                        ),
-                    ],
                     links: vec![InfoLink::new("Profiles", "front/profile.php")],
                 }
                 Row {
@@ -132,17 +115,12 @@ fn SessionPanel(session: SessionInfo) -> Element {
                     value: session.entity_name.clone().unwrap_or_else(|| "unknown".into()),
                     info: "The part of GLPI this app is working in. GLPI can divide one \
                            installation into entities - separate sites, departments or \
-                           customers."
+                           customers. It affects everything: GLPI filters every list by \
+                           entity before this app sees it, so the entity here decides which \
+                           machines exist as far as any page is concerned. A small \
+                           installation usually has only the root entity, in which case this \
+                           never matters."
                         .to_string(),
-                    sections: vec![
-                        InfoSection::new(
-                            "What it affects",
-                            "Everything. GLPI filters every list by entity before this app sees \
-                             it, so the entity here decides which machines exist as far as any \
-                             page is concerned. A small installation usually has only the root \
-                             entity, in which case this never matters.",
-                        ),
-                    ],
                     links: vec![InfoLink::new("Entities", "front/entity.php")],
                 }
 
@@ -151,26 +129,18 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         span { "Includes child entities" }
                         InfoButton {
                             title: "Includes child entities".to_string(),
-                            body: "Whether this app can also see entities nested below the one \
-                                   above."
+                            body: "Whether this app can also see entities nested below the \
+                                   one above. When it is wrong it is invisible: GLPI removes \
+                                   out-of-scope machines from the results and reports no \
+                                   count of what it removed - no total, no marker, nothing - \
+                                   so a machine you cannot see is indistinguishable from one \
+                                   that was never there, and no amount of checking from \
+                                   inside this app can tell the difference. It is a property \
+                                   of the account's authorization, not of the profile: the \
+                                   same profile can be granted recursively to one account and \
+                                   not another. It is set when the authorization is added, \
+                                   and GLPI marks a recursive one with an R in the list."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why it is invisible when wrong",
-                                    "GLPI removes out-of-scope machines from the results and \
-                                     reports no count of what it removed - no total, no marker, \
-                                     nothing. So a machine you cannot see is indistinguishable \
-                                     from one that was never there, and no amount of checking \
-                                     from inside this app can tell the difference.",
-                                ),
-                                InfoSection::new(
-                                    "How to change it",
-                                    "It is a property of the account's authorization, not of the \
-                                     profile: the same profile can be granted recursively to one \
-                                     account and not another. It is set when the authorization is \
-                                     added, and GLPI marks a recursive one with an R in the list.",
-                                ),
-                            ],
                             links: vec![InfoLink::new("Users", "front/user.php")],
                         }
                     }
@@ -189,23 +159,15 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         InfoButton {
                             title: "Right: agent (read)".to_string(),
                             body: "Permission to list inventory agents. Without it the Agents \
-                                   page cannot load at all."
+                                   page cannot load at all. The permission is called Agent, \
+                                   and it is not the one called Inventory - granting \
+                                   Inventory does nothing for this, and the two sit near each \
+                                   other in the same list, which makes the wrong one easy to \
+                                   tick. Grant it in GLPI under Administration, then \
+                                   Profiles, on the Administration tab of the profile named \
+                                   above; Read is enough, since this app never writes \
+                                   anything."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "The name is not the obvious one",
-                                    "The permission is called Agent, and it is not the one called \
-                                     Inventory - granting Inventory does nothing for this. They \
-                                     sit near each other in the same list, which makes the wrong \
-                                     one easy to tick.",
-                                ),
-                                InfoSection::new(
-                                    "Where to grant it",
-                                    "In GLPI under Administration, then Profiles, on the \
-                                     Administration tab of the profile named above. Read is \
-                                     enough; this app never writes anything.",
-                                ),
-                            ],
                             links: vec![InfoLink::new("Profiles", "front/profile.php")],
                         }
                     }
@@ -223,24 +185,16 @@ fn SessionPanel(session: SessionInfo) -> Element {
                         span { "Right: entity (read)" }
                         InfoButton {
                             title: "Right: entity (read)".to_string(),
-                            body: "Permission to list entities. Without it this app cannot state \
-                                   which part of GLPI it is reading."
+                            body: "Permission to list entities. Without it this app cannot \
+                                   state which part of GLPI it is reading: the line under \
+                                   each table cannot say what the list was drawn from, so a \
+                                   short list and a complete one look the same. On an \
+                                   installation with only the root entity nothing is actually \
+                                   hidden, but the app can no longer say so. Grant it in the \
+                                   same place as the agent permission - Administration, \
+                                   Profiles, Administration tab - where it is listed as \
+                                   Entities, and Read is enough."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why it matters even with one entity",
-                                    "Without it the line under each table cannot say what the list \
-                                     was drawn from, so a short list and a complete one look the \
-                                     same. On an installation with only the root entity nothing is \
-                                     actually hidden, but the app can no longer say so.",
-                                ),
-                                InfoSection::new(
-                                    "Where to grant it",
-                                    "The same place as the agent permission: Administration, \
-                                     Profiles, Administration tab. It is listed as Entities, and \
-                                     Read is enough.",
-                                ),
-                            ],
                             links: vec![InfoLink::new("Profiles", "front/profile.php")],
                         }
                     }

@@ -254,16 +254,11 @@ fn ProfilePanel(profile: ProfileRights, grouped: bool, form_only: Vec<String>) -
                 desc: "look, but cannot change".to_string(),
                 body: "Rights that grant only reading. This is all a dashboard needs: every \
                        page in this app is a view of something GLPI already holds, and it \
-                       never creates, changes or deletes anything."
+                       never creates, changes or deletes anything. Several rights here are a \
+                       combination like READ plus READNOTE - permission to see an item and to \
+                       see the free-text notes attached to it. Neither changes anything, so \
+                       both count as read-only."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Reading notes counts as reading",
-                        "Several rights here are a combination like READ plus READNOTE - \
-                         permission to see an item and to see the free-text notes attached to \
-                         it. Neither changes anything, so both count as read-only.",
-                    ),
-                ],
             }
 
             StatTile {

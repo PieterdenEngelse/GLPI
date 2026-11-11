@@ -10,6 +10,7 @@ pub mod rights;
 pub mod screens;
 pub mod sec;
 pub mod status;
+pub mod templates;
 
 pub use about::About;
 pub use agents::Agents;
@@ -23,3 +24,4 @@ pub use rights::Rights;
 pub use screens::Screens;
 pub use sec::Sec;
 pub use status::Status;
+pub use templates::{TemplateForm, TemplateMessage, TemplateRow, TemplateValues};

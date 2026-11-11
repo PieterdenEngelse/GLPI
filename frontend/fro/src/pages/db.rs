@@ -1059,16 +1059,11 @@ fn Counts(counts: DbCounts) -> Element {
                 value: counts.right_names.to_string(),
                 desc: "distinct permissions".to_string(),
                 body: "The areas of GLPI that permission can be granted over - computers, \
-                       tickets, agents, and so on. One name each."
+                       tickets, agents, and so on. One name each, and not a fixed number: it \
+                       grows. A custom asset type defined in GLPI creates a new right named \
+                       after it, and a plugin can add its own, which is why this figure is \
+                       counted from what GLPI reports rather than written into this page."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why this is not a fixed number",
-                        "It grows. A custom asset type defined in GLPI creates a new right \
-                         named after it, and a plugin can add its own. That is why this figure \
-                         is counted from what GLPI reports rather than written into this page.",
-                    ),
-                ],
             }
 
             StatTile {
@@ -1076,17 +1071,12 @@ fn Counts(counts: DbCounts) -> Element {
                 value: counts.stored_rows.to_string(),
                 desc: "profile × right pairs".to_string(),
                 body: "The actual size of the one table that holds any of this. Counted, not \
-                       multiplied: GLPI stores only the pairs that exist."
+                       multiplied: GLPI stores only the pairs that exist, and profiles times \
+                       rights would overstate it, because a few rights have no entry on some \
+                       profiles at all. An entry that does not exist denies just as one set \
+                       to zero does, but it is a different statement - nobody chose it. The \
+                       Rights page marks those as “no entry”."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why it is not profiles times rights",
-                        "Because a few rights have no entry on some profiles at all, so the \
-                         product would overstate it. An entry that does not exist denies just \
-                         as one set to zero does, but it is a different statement - nobody \
-                         chose it. The Rights page marks those as \u{201c}no entry\u{201d}.",
-                    ),
-                ],
             }
         }
     }
@@ -1211,24 +1201,16 @@ fn NotInTheDatabase() -> Element {
         Panel {
             title: "What a database account would not give you".to_string(),
             subtitle: "The question this page exists to settle".to_string(),
-            info: "Four things that are commonly assumed to be in the database and are not."
+            info: "Four things that are commonly assumed to be in the database and are not. \
+                   Each was looked for in both of GLPI's APIs, in the machine-readable \
+                   description the API publishes of itself, and in GLPI's own command-line \
+                   tool: none of the four is available by any of those routes, and none is in \
+                   the database either - they are all fixed in the program. So a database \
+                   account is the wrong tool for discovering or changing what the API does. \
+                   It would help only for reading data the API declines to expose - a \
+                   different question, with its own cost, since it steps around the \
+                   permission and entity checks every API request applies."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Checked, not assumed",
-                    "Each of these was looked for in both of GLPI's APIs, in the machine-\
-                     readable description the API publishes of itself, and in GLPI's own \
-                     command-line tool. None of the four is available by any of those routes, \
-                     and none is in the database either - they are all fixed in the program.",
-                ),
-                InfoSection::new(
-                    "What it means in practice",
-                    "A database account is the wrong tool for discovering or changing what the \
-                     API does. It would help only for reading data the API declines to expose - \
-                     a different question, with its own cost, since it steps around the \
-                     permission and entity checks every API request applies.",
-                ),
-            ],
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li {

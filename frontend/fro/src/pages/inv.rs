@@ -190,25 +190,16 @@ pub fn InvHardware() -> Element {
                             alarm: bare > 0,
                             desc: "asset exists, inventory never landed".to_string(),
                             body: "Machines with an asset record but no processor, memory, \
-                                   disk or operating system recorded against them."
+                                   disk or operating system recorded against them. That \
+                                   usually means the record was created by hand, or that an \
+                                   agent registered and then never successfully submitted; \
+                                   either way GLPI lists the machine beside every other, with \
+                                   nothing to say that everything known about it was typed \
+                                   in. It is not the same as a machine missing one kind of \
+                                   detail - a laptop that reported its disks but no memory \
+                                   modules is not counted here, only machines where none of \
+                                   the four arrived."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why this is worth its own figure",
-                                    "An asset with no hardware behind it usually means the \
-                                     record was created by hand, or that an agent registered \
-                                     and then never successfully submitted. Either way GLPI \
-                                     lists the machine beside every other, with nothing to \
-                                     say that everything known about it was typed in.",
-                                ),
-                                InfoSection::new(
-                                    "What it is not",
-                                    "It is not the same as a machine missing one kind of \
-                                     detail. A laptop that reported its disks but no memory \
-                                     modules is not counted here - only machines where none \
-                                     of the four arrived.",
-                                ),
-                            ],
                             links: vec![InfoLink::new("Agents", "front/agent.php")],
                         }
                         StatTile {
@@ -216,17 +207,12 @@ pub fn InvHardware() -> Element {
                             value: mb(storage),
                             desc: "across every reported volume".to_string(),
                             body: "The total size of every filesystem the agents reported, \
-                                   added up across the fleet."
+                                   added up across the fleet. That is every volume GLPI holds \
+                                   for these machines, including pseudo-filesystems the agent \
+                                   reported with a size of zero: those add nothing to the \
+                                   total but do appear in the per-machine volume counts \
+                                   below."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "What is counted",
-                                    "Every volume GLPI holds for these machines, including \
-                                     pseudo-filesystems the agent reported with a size of \
-                                     zero. Those add nothing to the total but do appear in \
-                                     the per-machine volume counts below.",
-                                ),
-                            ],
                         }
                     }
 
@@ -523,17 +509,12 @@ pub fn InvSoftware() -> Element {
                             desc: "across {r.computers_covered} machine(s)".to_string(),
                             body: "One per installed version per machine. Higher than the \
                                    title count whenever a machine carries more than one \
-                                   version of the same software."
+                                   version of the same software. It can look enormous: on a \
+                                   package-managed system every library is a title in its own \
+                                   right, so a single Linux machine commonly reports well \
+                                   over a thousand. That is the agent working correctly, not \
+                                   a fault."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why this number can look enormous",
-                                    "On a package-managed system every library is a title in \
-                                     its own right, so a single Linux machine commonly \
-                                     reports well over a thousand. That is the agent working \
-                                     correctly, not a fault.",
-                                ),
-                            ],
                         }
                         StatTile {
                             title: "Multiple versions".to_string(),
@@ -541,17 +522,11 @@ pub fn InvSoftware() -> Element {
                             desc: "titles not on one version".to_string(),
                             body: "Titles present at more than one version across the fleet - \
                                    the usual shape of a rollout that was started and not \
-                                   finished."
+                                   finished. Not automatically a problem: several versions of \
+                                   a shared library installed side by side is normal on some \
+                                   systems and deliberate on others. This counts the cases \
+                                   worth a look, it does not judge them."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Not automatically a problem",
-                                    "Several versions of a shared library installed side by \
-                                     side is normal on some systems and deliberate on others. \
-                                     This counts the cases worth a look, it does not judge \
-                                     them.",
-                                ),
-                            ],
                         }
                     }
 
@@ -559,26 +534,17 @@ pub fn InvSoftware() -> Element {
                         title: "Software".to_string(),
                         subtitle: "Most widely installed first".to_string(),
                         info: "Every software title the agents reported, and how far across \
-                               the fleet each one reaches."
+                               the fleet each one reaches. Machines is how many distinct \
+                               computers carry the title; Installations counts each installed \
+                               version separately, so it is the larger number when one \
+                               machine holds two versions; Versions lists the distinct \
+                               version strings found. This needed the older API: the current \
+                               one reports an installation by its version alone - \"1.33.7\", \
+                               with no title attached - and serves the version-to-title \
+                               mapping only one title at a time, about 1330 requests on this \
+                               install, where the v1 collection returns the whole mapping in \
+                               one call."
                             .to_string(),
-                        info_sections: vec![
-                            InfoSection::new(
-                                "The columns",
-                                "Machines is how many distinct computers carry the title; \
-                                 Installations counts each installed version separately, so \
-                                 it is the larger number when one machine holds two versions. \
-                                 Versions lists the distinct version strings found.",
-                            ),
-                            InfoSection::new(
-                                "Why this needed the older API",
-                                "The current API reports an installation by its version alone \
-                                 - \"1.33.7\", with no title attached - and serves the \
-                                 version-to-title mapping only one title at a time, which \
-                                 would be about 1330 requests on this install. The v1 \
-                                 collection returns the whole mapping in one call, which is \
-                                 what makes the Software column above possible at all.",
-                            ),
-                        ],
                         info_links: vec![InfoLink::new("Software", "front/software.php")],
                         actions: rsx! {
                             RefreshControl {
@@ -718,17 +684,12 @@ pub fn InvNetwork() -> Element {
                             desc: "machines with no interface at all".to_string(),
                             body: "Machines where no network interface was reported. A \
                                    networked machine that reports none has usually never had \
-                                   a successful inventory."
+                                   a successful inventory. Essentially every real machine has \
+                                   at least a loopback interface, so none at all points at \
+                                   the asset record rather than the network - typically one \
+                                   created by hand, or one whose agent has never submitted \
+                                   successfully."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why it stands out",
-                                    "Essentially every real machine has at least a loopback \
-                                     interface, so none at all points at the asset record \
-                                     rather than the network - typically one created by hand, \
-                                     or one whose agent has never submitted successfully.",
-                                ),
-                            ],
                         }
                     }
 

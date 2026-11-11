@@ -296,10 +296,13 @@ screen stops being readable. A working figure of **15 to 30 fields** per type
 is a convention for legibility, not a measured threshold — treat it as the
 point to stop and reorganise.
 
-### 2.2 The nine field types
+### 2.2 The eight field types you can pick
 
 `src/Glpi/Asset/CustomFieldType/`, excluding `AbstractType` and
-`TypeInterface`:
+`TypeInterface`, holds nine concrete classes — but the manager's scan keeps a
+class only if its static `isAllowedForCustomFields` returns true, and `RawType`
+returns false (`RawType.php:46`). Counting the directory gives nine; counting
+what the picker offers gives eight.
 
 | type | use for |
 |---|---|
@@ -311,7 +314,7 @@ point to stop and reorganise.
 | `DateTimeType` | a date and time |
 | `DropdownType` | a value from an existing GLPI itemtype |
 | `URLType` | a link |
-| `RawType` | unprocessed content — the escape hatch, and the one to justify |
+| `RawType` | **not offered** — core-only; `_dc_breadcrumbs` (field 4 above) is one |
 
 `DropdownType` is the one to reach for more often than feels natural. It takes
 `allowed_dropdown_itemtypes` (`CustomFieldDefinition.php:150`), so it points at

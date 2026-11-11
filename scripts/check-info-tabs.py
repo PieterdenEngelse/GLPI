@@ -30,6 +30,29 @@ They are keyed on their exact set of headings, so editing any heading in one
 drops it out of the exemption and it must then meet the budget. That is the
 point: the debt is named rather than hidden behind a cap set high enough to
 swallow it, and it shrinks as those panels are touched.
+
+TWO FLOORS, BECAUSE A WIDTH BUDGET CANNOT SEE AN UNDERWEIGHT PANEL. The check
+above only asks whether the strip fits. A panel with one short tab costs ~30
+against a budget of 95 and passes forever, which is how seventeen of them
+accumulated before anyone looked: every one was a click that revealed less
+than a paragraph.
+
+  MIN_TABS   One tab is not a tab strip. It offers no choice - the reader
+             clicks to see the only thing there is - so the section belongs
+             in the body, where it is already visible. Categorical, with no
+             threshold to argue about.
+
+  FLOOR      Tabs holding less than 400 characters between them are a choice
+             between fragments. 400 is derived from the corpus median
+             section, ~296 characters: a strip whose tabs together hold less
+             than one and a half typical sections is not dividing anything.
+             The thinnest panel that survives it holds 559, so this is a
+             floor with room above it and not a line drawn under the status
+             quo.
+
+A section whose body is not a string literal - `&tile.cannot_check`, built
+per tile - cannot be measured, so its panel is skipped by FLOOR rather than
+guessed at. It is still subject to MIN_TABS and to the width budget.
 """
 
 import re
@@ -50,8 +73,9 @@ GRANDFATHERED = {
     frozenset({'Where this list comes from', 'Two of them need 12.0.1', 'Case, and what empty means', 'All eighteen are reachable from this app'}),
     # inv.rs:118 - cost 119
     frozenset({'Why this is separate from Agents and Computers', 'Where these four read from', 'Refused is still the odd one out'}),
-    # db.rs:48 - cost 117
-    frozenset({'What is on it', 'Why only two tables', 'Not a map of GLPI', '\\u{201c}Schema\\u{201d} also means something else'}),
+    # db.rs:48 - cost 103. Keyed on the RENDERED heading: the script now
+    # decodes \u{...} escapes, so the escaped spelling no longer matches.
+    frozenset({'What is on it', 'Why only two tables', 'Not a map of GLPI', '“Schema” also means something else'}),
     # inv.rs:741 - cost 117
     frozenset({'The columns', 'This page could not be built on the current API', 'Addresses are matched to the right interface'}),
     # rights.rs:1192 - cost 117
@@ -70,11 +94,38 @@ GRANDFATHERED = {
 
 BUDGET = 95
 PER_TAB = 5
+MIN_TABS = 2
+FLOOR = 400
 ROOT = Path(__file__).resolve().parent.parent / "frontend" / "fro" / "src"
 
 
+# Heading, then either a string-literal body or anything else (an expression,
+# which cannot be measured). re.DOTALL is REQUIRED and is not decoration:
+# `\\.` has to match a backslash followed by a newline, which is how every
+# multi-line literal in this corpus is wrapped. Without it the match stops at
+# the first line continuation and every long body measures as its first line -
+# a mistake already made once while auditing this prose.
+SECTION = re.compile(
+    r'InfoSection::new\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*'
+    r'(?:"((?:[^"\\]|\\.)*)"|([^,)]+))',
+    re.DOTALL,
+)
+
+
+def unwrap(literal):
+    """The rendered text of a Rust string literal, for length only."""
+    # A line continuation and the indent that follows it render as nothing.
+    text = re.sub(r"\\\n\s*", "", literal)
+    text = re.sub(r"\\u\{([0-9a-fA-F]+)\}", lambda m: chr(int(m.group(1), 16)), text)
+    return text.replace('\\"', '"').replace("\\'", "'").replace("\\\\", "\\")
+
+
 def panels():
-    """Every `sections: vec![...]` block, as (file, line, headings)."""
+    """Every `sections: vec![...]` block, as (file, line, [(heading, body)]).
+
+    `body` is None where the section's text is an expression rather than a
+    literal, so a caller can tell "nothing there" from "not measurable".
+    """
     for path in sorted(ROOT.rglob("*.rs")):
         text = path.read_text()
         for match in re.finditer(r"sections:\s*vec!\[", text):
@@ -86,32 +137,46 @@ def panels():
                     depth -= 1
                 i += 1
             block = text[match.end() : i]
-            headings = re.findall(
-                r'InfoSection::new\(\s*"((?:[^"\\]|\\.)*)"', block
-            )
-            if headings:
+            sections = [
+                (unwrap(m.group(1)), None if m.group(2) is None else unwrap(m.group(2)))
+                for m in SECTION.finditer(block)
+            ]
+            if sections:
                 line = text.count("\n", 0, match.start()) + 1
-                yield path, line, headings
+                yield path, line, sections
 
 
 def main() -> int:
     over = []
+    thin = []
     worst = 0
+    thinnest = None
     exempt = 0
-    for path, line, headings in panels():
+    for path, line, sections in panels():
+        headings = [h for h, _ in sections]
+        bodies = [b for _, b in sections]
+
+        if len(sections) < MIN_TABS:
+            thin.append((path, line, headings, None))
+        elif all(b is not None for b in bodies):
+            held = sum(len(b) for b in bodies)
+            if held < FLOOR:
+                thin.append((path, line, headings, held))
+            else:
+                thinnest = held if thinnest is None else min(thinnest, held)
+
         cost = sum(len(h) for h in headings) + PER_TAB * len(headings)
         if cost <= BUDGET:
             worst = max(worst, cost)
-            continue
-        if frozenset(headings) in GRANDFATHERED:
+        elif frozenset(headings) in GRANDFATHERED:
             exempt += 1
-            continue
-        over.append((cost, path, line, headings))
+        else:
+            over.append((cost, path, line, headings))
 
-    if not over:
+    if not over and not thin:
         print(
             f"info tabs: ok - worst current panel {worst}, budget {BUDGET}"
-            f", {exempt} grandfathered"
+            f", {exempt} grandfathered; thinnest holds {thinnest}, floor {FLOOR}"
         )
         return 0
 
@@ -121,6 +186,17 @@ def main() -> int:
         for h in sorted(headings, key=len, reverse=True):
             print(f"    {len(h):3}  {h}")
         print("    shorten the headings - the explanation belongs in the body")
+
+    for path, line, headings, held in thin:
+        rel = path.relative_to(ROOT.parent.parent.parent)
+        if held is None:
+            print(f"{rel}:{line}: one tab is not a tab strip")
+        else:
+            print(f"{rel}:{line}: tabs hold {held} characters, floor {FLOOR}")
+        for h in headings:
+            print(f"        {h}")
+        print("    fold the sections into the body - it already shows unclicked")
+
     return 1
 
 

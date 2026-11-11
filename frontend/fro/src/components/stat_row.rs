@@ -37,22 +37,14 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 desc: "registered in GLPI".to_string(),
                 body: "Every inventory agent GLPI knows about. An agent is a small program \
                        running on a machine that collects what hardware and software it has \
-                       and sends that to GLPI, normally once a day.".to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "What it counts",
-                        "One row per registered agent, not per machine. A machine that was \
-                         rebuilt and enrolled again can appear twice, under two identifiers, \
-                         until somebody removes the old record - so this number can exceed \
-                         the number of physical machines you own.",
-                    ),
-                    InfoSection::new(
-                        "Where it comes from",
-                        "GLPI's own list of agents, read through its API. This app never \
-                         creates, changes or deletes anything in GLPI; everything you see \
-                         here exists there already.",
-                    ),
-                ],
+                       and sends that to GLPI, normally once a day. It counts one row per \
+                       registered agent, not per machine: a machine that was rebuilt and \
+                       enrolled again can appear twice, under two identifiers, until somebody \
+                       removes the old record, so this number can exceed the number of \
+                       physical machines you own. It is GLPI's own list of agents, read \
+                       through its API - this app never creates, changes or deletes anything \
+                       in GLPI; everything you see here exists there already."
+                    .to_string(),
                 links: vec![InfoLink::new("Agents", "front/agent.php")],
             }
 
@@ -60,24 +52,16 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 title: "Reporting".to_string(),
                 value: reporting.to_string(),
                 desc: "seen within 26h".to_string(),
-                body: "Agents that have checked in during the last 26 hours.".to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why 26 hours and not 24",
-                        "The agent runs once a day on a timer that is deliberately given a \
-                         few minutes of random delay, so that a hundred machines do not all \
-                         report in the same second. A strict 24 hours would flag perfectly \
-                         healthy machines whose run happened to drift past the hour.",
-                    ),
-                    InfoSection::new(
-                        "What it does not prove",
-                        "That contact was made - not that anything useful arrived. GLPI \
-                         records the check-in separately from the inventory it carries, so \
-                         an agent can be counted here while the machine's details sit \
-                         unchanged. The Computers page shows when each record was last \
-                         actually updated.",
-                    ),
-                ],
+                body: "Agents that have checked in during the last 26 hours, not 24: the \
+                       agent runs once a day on a timer that is deliberately given a few \
+                       minutes of random delay, so that a hundred machines do not all report \
+                       in the same second, and a strict 24 hours would flag perfectly healthy \
+                       machines whose run happened to drift past the hour. It proves that \
+                       contact was made, not that anything useful arrived. GLPI records the \
+                       check-in separately from the inventory it carries, so an agent can be \
+                       counted here while the machine's details sit unchanged; the Computers \
+                       page shows when each record was last actually updated."
+                    .to_string(),
                 links: vec![InfoLink::new("Agents", "front/agent.php")],
             }
 
@@ -155,23 +139,15 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 value: oldest,
                 desc: "worst case of any agent".to_string(),
                 body: "How long ago the least recently seen agent last checked in - the \
-                       single worst case among every agent on this page.".to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "How to read it",
-                        "If this figure is small, nothing has gone quiet and the rest of the \
-                         page needs no attention. It is the one number that summarises every \
-                         agent at once, which is why it sits beside the totals rather than \
-                         inside the table.",
-                    ),
-                    InfoSection::new(
-                        "What it cannot tell you",
-                        "Only agents this app is allowed to see are counted. If the account \
-                         it signs in with cannot reach part of GLPI, machines there are \
-                         missing from this figure with nothing to indicate it. The line under \
-                         the table states that boundary, and the Status page explains it.",
-                    ),
-                ],
+                       single worst case among every agent on this page. If this figure is \
+                       small, nothing has gone quiet and the rest of the page needs no \
+                       attention: it is the one number that summarises every agent at once, \
+                       which is why it sits beside the totals rather than inside the table. \
+                       Only agents this app is allowed to see are counted, though. If the \
+                       account it signs in with cannot reach part of GLPI, machines there are \
+                       missing from this figure with nothing to indicate it - the line under \
+                       the table states that boundary, and the Status page explains it."
+                    .to_string(),
             }
         }
     }

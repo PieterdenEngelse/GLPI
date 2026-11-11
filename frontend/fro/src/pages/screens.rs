@@ -28,8 +28,10 @@
 //! working asset type, in the order that avoids rework, because two of the
 //! decisions cannot be taken back once data exists. Written from
 //! ~/docs/gl-screens.md, which carries the same material at length.
+use crate::app::Route;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
+use dioxus_router::Link;
 
 #[component]
 pub fn Screens() -> Element {
@@ -43,26 +45,17 @@ pub fn Screens() -> Element {
             InfoButton {
                 label: "What is this".to_string(),
                 title: "What this page is".to_string(),
-                body: "What GLPI's own configuration screens can be made to hold - read out of \
-                       GLPI's source, not from its documentation."
+                body: "What GLPI's own configuration screens can be made to hold - read out \
+                       of GLPI's source, not from its documentation. These are questions \
+                       about configuring GLPI rather than about this app's own data, so \
+                       nothing on this page is live. They are written down because they are \
+                       asked once per deployment and then answered from memory the second \
+                       time, and because the commonly circulated answer to the first of them \
+                       is wrong. Each claim names the file, line or schema it came from in \
+                       GLPI 12.0.1: a later GLPI release can make any of them false, and \
+                       naming the source is what makes that cheap to find out instead of \
+                       something this page quietly lies about."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why it is here",
-                        "These are questions about configuring GLPI rather than about this \
-                         app's own data, so nothing on this page is live. They are written \
-                         down because they are asked once per deployment and then answered \
-                         from memory the second time, and because the commonly circulated \
-                         answer to the first of them is wrong.",
-                    ),
-                    InfoSection::new(
-                        "Checked against the source",
-                        "Each claim names the file, line or schema it came from in GLPI \
-                         12.0.1. A later GLPI release can make any of them false, and naming \
-                         the source is what makes that cheap to find out instead of \
-                         something this page quietly lies about.",
-                    ),
-                ],
             }
         }
 
@@ -114,9 +107,15 @@ pub fn Screens() -> Element {
 #[component]
 fn Cf() -> Element {
     rsx! {
-        TheMechanism {}
-        div { class: "mt-5", ThePracticalLimit {} }
-        div { class: "mt-5", WhereToPutItInstead {} }
+        // Two columns from lg up - see Instruct for why row-major and
+        // items-start. Three panels leave the last cell empty, which is
+        // the ordinary result of an odd count and still beats a column of
+        // full-width panels with the right half of the page unused.
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            TheMechanism {}
+            ThePracticalLimit {}
+            WhereToPutItInstead {}
+        }
     }
 }
 
@@ -209,16 +208,12 @@ fn ThePracticalLimit() -> Element {
         Panel {
             title: "The limit you actually meet".to_string(),
             subtitle: "Performance and legibility, not storage".to_string(),
-            info: "Why the absence of a hard cap is not an invitation.".to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Not measured here",
-                    "These are the failure modes the mechanism above makes likely, and the \
-                     figure below is a convention rather than a measurement. Nothing in this \
-                     app has benchmarked a GLPI install with hundreds of custom fields, and \
-                     the panel does not pretend otherwise.",
-                ),
-            ],
+            info: "Why the absence of a hard cap is not an invitation. These are the failure \
+                   modes the mechanism above makes likely, and the figure below is a \
+                   convention rather than a measurement: nothing in this app has benchmarked \
+                   a GLPI install with hundreds of custom fields, and the panel does not \
+                   pretend otherwise."
+                .to_string(),
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li {
@@ -250,18 +245,13 @@ fn WhereToPutItInstead() -> Element {
             title: "Where to put data instead".to_string(),
             subtitle: "Three structures, in the order worth trying".to_string(),
             info: "The organising advice holds; one common version of it rests on a table \
-                   that does not exist."
+                   that does not exist. A separate asset definition is worth making for the \
+                   reasons below - a clean screen and a type that means one thing. It is \
+                   often recommended for a different reason: that it yields a fresh table \
+                   with its own column budget. It does not. Every custom asset lives in \
+                   glpi_assets_assets regardless, so the gain is organisational, not a larger \
+                   allowance."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "One correction",
-                    "A separate asset definition is worth making for the reasons below - a \
-                     clean screen and a type that means one thing. It is often recommended \
-                     for a different reason: that it yields a fresh table with its own column \
-                     budget. It does not. Every custom asset lives in glpi_assets_assets \
-                     regardless, so the gain is organisational, not a larger allowance.",
-                ),
-            ],
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li {
@@ -297,9 +287,15 @@ fn WhereToPutItInstead() -> Element {
 #[component]
 fn Def() -> Element {
     rsx! {
-        WhatADefinitionCreates {}
-        div { class: "mt-5", DisablingACapacityDeletes {} }
-        div { class: "mt-5", HidingVersusRemoving {} }
+        // Two columns from lg up - see Instruct for why row-major and
+        // items-start. Three panels leave the last cell empty, which is
+        // the ordinary result of an odd count and still beats a column of
+        // full-width panels with the right half of the page unused.
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            WhatADefinitionCreates {}
+            DisablingACapacityDeletes {}
+            HidingVersusRemoving {}
+        }
     }
 }
 
@@ -450,17 +446,13 @@ fn HidingVersusRemoving() -> Element {
         Panel {
             title: "Hiding a field is not removing a section".to_string(),
             subtitle: "One keeps the data, the other does not".to_string(),
-            info: "The two ways to simplify a screen, and why only one of them is safe."
+            info: "The two ways to simplify a screen, and why only one of them is safe. Read \
+                   in src/Glpi/Asset/AssetDefinition.php: field order at lines 340 to 350, \
+                   where the array index IS the order, so there is no separate layout model; \
+                   the fallback when the JSON is empty or unparseable in \
+                   getDefaultFieldsDisplay at line 805; and the placeable core fields in \
+                   getAllFields at line 710."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Where this was read",
-                    "Field order: src/Glpi/Asset/AssetDefinition.php lines 340 to 350 - the \
-                     array index IS the order, so there is no separate layout model. The \
-                     fallback when the JSON is empty or unparseable: getDefaultFieldsDisplay \
-                     at line 805. The placeable core fields: getAllFields at line 710.",
-                ),
-            ],
 
             p { class: "mb-3 text-sm",
                 "Both of these shorten a screen. They differ in what survives."
@@ -509,9 +501,15 @@ fn HidingVersusRemoving() -> Element {
 #[component]
 fn Rights() -> Element {
     rsx! {
-        InvisibleUntilGranted {}
-        div { class: "mt-5", TwoBitsOfSearchConfig {} }
-        div { class: "mt-5", VaryByProfile {} }
+        // Two columns from lg up - see Instruct for why row-major and
+        // items-start. Three panels leave the last cell empty, which is
+        // the ordinary result of an odd count and still beats a column of
+        // full-width panels with the right half of the page unused.
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            InvisibleUntilGranted {}
+            TwoBitsOfSearchConfig {}
+            VaryByProfile {}
+        }
     }
 }
 
@@ -521,24 +519,17 @@ fn InvisibleUntilGranted() -> Element {
         Panel {
             title: "A new asset type is invisible until its right is granted".to_string(),
             subtitle: "One right per definition, named after it".to_string(),
-            info: "Why a finished definition does not appear in the menu.".to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Where this was read",
-                    "The name: getCustomObjectRightname at src/Glpi/Asset/AssetDefinition.php \
-                     line 98, which returns sprintf('asset_%s', strtolower(system_name)). \
-                     Storage: glpi_profilerights in install/mysql/glpi-empty.sql - one row \
-                     per profile and right name, unique on (profiles_id, name).",
-                ),
-                InfoSection::new(
-                    "Why this wastes time specifically",
-                    "Nothing looks broken. The definition saved, it is active, its fields \
-                     are there - and it is absent from the menu, so the natural move is to \
-                     go back and re-check the definition, which was never the problem. The \
-                     super-admin profile is not exempt: the right did not exist when that \
-                     profile was created, so it is not held.",
-                ),
-            ],
+            info: "Why a finished definition does not appear in the menu. Nothing looks \
+                   broken: the definition saved, it is active, its fields are there - and it \
+                   is absent from the menu, so the natural move is to go back and re-check \
+                   the definition, which was never the problem. The super-admin profile is \
+                   not exempt either - the right did not exist when that profile was created, \
+                   so it is not held. Read in getCustomObjectRightname at \
+                   src/Glpi/Asset/AssetDefinition.php line 98, which returns \
+                   sprintf('asset_%s', strtolower(system_name)), with storage in \
+                   glpi_profilerights in install/mysql/glpi-empty.sql - one row per profile \
+                   and right name, unique on (profiles_id, name)."
+                .to_string(),
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
             p { class: "mb-3 text-sm",
@@ -678,17 +669,13 @@ fn VaryByProfile() -> Element {
         Panel {
             title: "Vary one screen by profile - do not clone the definition".to_string(),
             subtitle: "readonly and hidden take profiles, not true or false".to_string(),
-            info: "The option that makes a second definition unnecessary.".to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Where this was read",
-                    "src/Glpi/Asset/CustomFieldType/AbstractType.php lines 75 to 83: every \
-                     field gets full_width, required, readonly and hidden. The last two are \
-                     ProfileRestrictOption, not BooleanOption - see \
-                     src/Glpi/Asset/CustomFieldOption/ProfileRestrictOption.php, which \
-                     carries an \"All\" label at line 52.",
-                ),
-            ],
+            info: "The option that makes a second definition unnecessary. Read in \
+                   src/Glpi/Asset/CustomFieldType/AbstractType.php lines 75 to 83: every \
+                   field gets full_width, required, readonly and hidden, and the last two are \
+                   ProfileRestrictOption rather than BooleanOption - see \
+                   src/Glpi/Asset/CustomFieldOption/ProfileRestrictOption.php, which carries \
+                   an \"All\" label at line 52."
+                .to_string(),
 
             p { class: "mb-3 text-sm",
                 "Two of the four options every custom field has are "
@@ -743,6 +730,27 @@ fn VaryByProfile() -> Element {
     }
 }
 
+/// The Instruct tab's sub-tab index, shared through context.
+#[derive(Clone, Copy)]
+struct InstructTab(Signal<usize>);
+
+/// A "step N" reference that takes the reader to the steps themselves.
+///
+/// Rendered as a button rather than a Link: General is a sub-tab, not a
+/// route, so there is no URL to point at. It reads as a link and behaves as
+/// one within the page.
+#[component]
+fn StepRef(n: usize) -> Element {
+    let InstructTab(mut sub) = use_context::<InstructTab>();
+    rsx! {
+        button {
+            class: "link link-primary",
+            onclick: move |_| sub.set(0),
+            "step {n}"
+        }
+    }
+}
+
 /// The ordered procedure: an empty Setup page to a working asset type.
 ///
 /// Seven panels rather than one long list, because the steps are not equally
@@ -752,14 +760,69 @@ fn VaryByProfile() -> Element {
 /// met it in the Def tab.
 #[component]
 fn Instruct() -> Element {
+    // A second strip inside a tab. Deliberately styled smaller than the page
+    // tabs above it - no text-base - so the hierarchy reads at a glance
+    // rather than looking like two peer rows of tabs.
+    // Shared so a panel on the Template tab can send the reader to the steps.
+    // A newtype rather than a bare Signal<usize>: context is keyed by type,
+    // and a second usize signal anywhere above would silently bind instead.
+    let InstructTab(mut sub) = use_context_provider(|| InstructTab(Signal::new(0usize)));
+
+    rsx! {
+        div { role: "tablist", class: "tabs tabs-border mb-3",
+            button {
+                role: "tab",
+                class: if sub() == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(0),
+                "General"
+            }
+            button {
+                role: "tab",
+                class: if sub() == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(1),
+                "Template"
+            }
+        }
+
+        if sub() == 1 {
+            InstructTemplate {}
+        } else {
+            InstructGeneral {}
+        }
+    }
+}
+
+/// The six-step procedure for building the type itself.
+#[component]
+fn InstructGeneral() -> Element {
     rsx! {
         StepZero {}
-        div { class: "mt-5", StepOneName {} }
-        div { class: "mt-5", StepTwoCapacities {} }
-        div { class: "mt-5", StepThreeFields {} }
-        div { class: "mt-5", StepFourRight {} }
-        div { class: "mt-5", StepFiveActivate {} }
-        div { class: "mt-5", StepSixProve {} }
+
+        // Two columns filled COLUMN-MAJOR: steps 1-3 down the left, 4-6 down
+        // the right, read like a printed page rather than left-to-right by
+        // rows.
+        //
+        // Two explicit column containers rather than columns-2 or
+        // grid-flow-col. Multi-column can break a panel across the column
+        // boundary and would need break-inside-avoid; grid-flow-col needs an
+        // explicit row count kept in step with the number of steps. Two divs
+        // need neither, and below lg the outer grid collapses to one column
+        // so the reading order stays 1-2-3-4-5-6.
+        //
+        // items-start on both levels: without it the columns stretch to equal
+        // height and a short panel renders as a mostly empty box.
+        div { class: "mt-5 grid gap-4 items-start lg:grid-cols-2",
+            div { class: "grid gap-4 items-start",
+                StepOneName {}
+                StepTwoCapacities {}
+                StepThreeFields {}
+            }
+            div { class: "grid gap-4 items-start",
+                StepFourRight {}
+                StepFiveActivate {}
+                StepSixProve {}
+            }
+        }
     }
 }
 
@@ -803,7 +866,15 @@ fn StepZero() -> Element {
                 ". Check first that it is what you want."
             }
 
-            ul { class: "ml-5 list-disc space-y-2 text-sm",
+            // Two columns from lg up: this panel stays full width while the
+            // steps below it are half, so one bullet per row left the right
+            // half of it empty. gap-2 replaces space-y-2 because the gap
+            // belongs to the grid once the children are grid items.
+            //
+            // The grid goes on the ul and the li stay list-items, so the
+            // disc markers survive - blockification keeps `list-item`
+            // rather than flattening it to `block`.
+            ul { class: "ml-5 grid list-disc gap-2 text-sm lg:grid-cols-2",
                 li {
                     span { class: "font-medium", "A kind of thing to record - vehicles, IoT devices. " }
                     "A custom asset definition, with its own menu entry, list and form. Steps 1 to 6 \
@@ -1363,19 +1434,13 @@ fn StepFourRight() -> Element {
         Panel {
             title: "Step 4 - grant the right".to_string(),
             subtitle: "Until you do, the type is invisible to everyone".to_string(),
-            info: "The step most often missed, because nothing looks broken when \
-                   it is skipped."
+            info: "The step most often missed, because nothing looks broken when it is \
+                   skipped. The definition saved, it is active, the fields are there - and it \
+                   is absent from the menu. The natural move is to go back and re-check the \
+                   definition, which was never the problem. The super-admin profile is not \
+                   exempt: the right did not exist when that profile was created, so nobody \
+                   holds it."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why it wastes time",
-                    "The definition saved, it is active, the fields are there - and \
-                     it is absent from the menu. The natural move is to go back and \
-                     re-check the definition, which was never the problem. The \
-                     super-admin profile is not exempt: the right did not exist when \
-                     that profile was created, so nobody holds it.",
-                ),
-            ],
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
             p { class: "mb-3 text-sm",
@@ -1409,19 +1474,13 @@ fn StepFiveActivate() -> Element {
         Panel {
             title: "Step 5 - translate, then activate".to_string(),
             subtitle: "Deactivating later deletes the rights rows".to_string(),
-            info: "Two small steps. The second one can be undone, but not for \
-                   free - deactivating costs the grants."
+            info: "Two small steps. The second one can be undone, but not for free - \
+                   deactivating costs the grants. syncProfilesRights in \
+                   src/Glpi/CustomObject/AbstractDefinition.php deletes every profile right \
+                   for the type when the definition is not active, rather than setting them \
+                   to zero, so re-activating does not bring the grants back - they must be \
+                   made again."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Deactivation is not a pause",
-                    "syncProfilesRights in \
-                     src/Glpi/CustomObject/AbstractDefinition.php deletes every \
-                     profile right for the type when the definition is not active, \
-                     rather than setting them to zero. Re-activating does not bring \
-                     the grants back - they must be made again.",
-                ),
-            ],
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li {
@@ -1448,19 +1507,13 @@ fn StepSixProve() -> Element {
         Panel {
             title: "Step 6 - prove it works".to_string(),
             subtitle: "Six checks, in the order that isolates a failure".to_string(),
-            info: "Each check tells you which earlier step went wrong, which a \
-                   single end-to-end look does not."
+            info: "Each check tells you which earlier step went wrong, which a single \
+                   end-to-end look does not. Missing from the menu is step 4, not step 1 - \
+                   the right. Present but missing a tab is step 2, a capacity. Present with a \
+                   field absent is step 3, either the field order or a hidden option set for \
+                   your profile. Checking in this order means the first thing that fails \
+                   names the step to go back to."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Reading a failure",
-                    "Missing from the menu is step 4, not step 1 - the right. \
-                     Present but missing a tab is step 2, a capacity. Present with a \
-                     field absent is step 3, either the field order or a hidden \
-                     option set for your profile. Checking in this order means the \
-                     first thing that fails names the step to go back to.",
-                ),
-            ],
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li { "The type appears in the menu for your own profile." }
@@ -1470,6 +1523,136 @@ fn StepSixProve() -> Element {
                 li { "Set the list columns - globally if everyone should get them, which needs the \
                       GENERAL bit of search_config." }
                 li { "Open it as a lesser profile and confirm readonly and hidden behave as set." }
+            }
+        }
+    }
+}
+
+/// Templates for the type once it exists.
+///
+/// Separate from the six steps because a template is not part of building the
+/// screen - it is something you make with the screen afterwards, and it needs
+/// nothing enabled.
+///
+/// This is NOT a custom-asset feature. The is_template flag is on twenty
+/// tables, core types included, and custom assets simply inherit the same
+/// CommonDBTM behaviour. The tab says so because the opposite is easy to
+/// assume from where it sits.
+#[component]
+fn InstructTemplate() -> Element {
+    rsx! {
+        TemplateWhat {}
+    }
+}
+
+#[component]
+fn TemplateWhat() -> Element {
+    rsx! {
+        Panel {
+            title: "\"Template\" means four different things".to_string(),
+            info: "Which four, where each lives, and why telling them apart \
+                   matters."
+                .to_string(),
+            info_sections: vec![
+                InfoSection::new(
+                    "Where this was read",
+                    "glpi_assets_assets carries is_template tinyint and \
+                     template_name varchar(255), plus two indexes - is_template \
+                     on its own and active_assets on (is_deleted, is_template). \
+                     CommonDBTM::maybeTemplate at line 3427 simply reports whether \
+                     the is_template field exists, so the feature switches itself \
+                     on for any type stored in that table.",
+                ),
+                InfoSection::new(
+                    "Four kinds",
+                    "One word, four shapes - and the base class does not tell them \
+                     apart, since nine of the ten template classes descend from \
+                     CommonDropdown. What the table CARRIES does. A FLAGGED ROW, \
+                     this one: the template is a record of the very type it \
+                     templates - a computer template IS a computer - on the \
+                     twenty tables carrying is_template. A DROPDOWN OF VALUES: \
+                     ProjectTaskTemplate extends CommonDropdown and its table \
+                     mirrors the task's own fields - projects_id, \
+                     plan_start_date, planned_duration, percent_done. A FORM \
+                     DESCRIPTOR: glpi_tickettemplates holds only id, name, entity \
+                     and allowed_statuses, with the actual behaviour in four \
+                     satellite tables - predefined, mandatory, hidden and readonly \
+                     fields, each a (template, field number, value) row.",
+                ),
+                InfoSection::new(
+                    "Defaults",
+                    "And the form-descriptor kind really does define a screen, \
+                     which is why the title above is scoped. tickettemplates_id \
+                     sits on glpi_entities, glpi_profiles and glpi_itilcategories \
+                     - with separate _demand and _incident columns - so GLPI \
+                     resolves a DEFAULT ticket template from the context you are \
+                     in, and it decides which fields are mandatory, hidden, \
+                     readonly or pre-filled. Nothing on this tab does that.",
+                ),
+                InfoSection::new(
+                    "Tasks have both",
+                    "glpi_projecttasks carries is_template AND there is a \
+                     glpi_projecttasktemplates table, so that one type has both \
+                     mechanisms at once: a flagged task you copy, and a dropdown \
+                     of pre-filled values you pick. Worth knowing before \
+                     concluding that a project task template is not working - \
+                     there are two places to look.",
+                ),
+                InfoSection::new(
+                    "No capacity",
+                    "There is no template capacity in src/Glpi/Asset/Capacity, and \
+                     Asset.php mentions templates once. None of step 2 applies: \
+                     this is CommonDBTM behaviour inherited by every custom asset \
+                     type, not a subsystem you bolt on and can purge.",
+                ),
+            ],
+
+            p { class: "mb-3 text-sm",
+                "GLPI calls four unrelated mechanisms a template. They share nothing but the \
+                 name, so advice about one is wrong about the other three. Each has its own page."
+            }
+
+            ul { class: "ml-5 list-disc space-y-2 text-sm",
+                li {
+                    span { class: "font-medium", "A flagged row. " }
+                    "One of your records with "
+                    code { class: "text-xs", "is_template = 1" }
+                    ", used to pre-fill the next one. It has no say in what the form looks like. "
+                    Link { class: "link link-primary text-sm", to: Route::TemplateRow {}, "The flagged row →" }
+                }
+                li {
+                    span { class: "font-medium", "A carrier of values. " }
+                    "A row whose columns mirror the item's own fields - you pick one and it fills \
+                     them in. Six of these: ProjectTaskTemplate and PlanningExternalEventTemplate, \
+                     plus the four ITIL child templates for tasks, solutions, followups and \
+                     validations. "
+                    Link { class: "link link-primary text-sm", to: Route::TemplateValues {}, "Carriers of values →" }
+                }
+                li {
+                    span { class: "font-medium", "A form definition - and it does define the screen. " }
+                    "ITILTemplate and its three subclasses, for tickets, changes and problems. The \
+                     table itself holds almost nothing; the behaviour is in four satellite tables \
+                     for predefined, mandatory, hidden and readonly fields. GLPI resolves a DEFAULT \
+                     one from the entity, the profile and the ITIL category you are in. Nothing on \
+                     this tab behaves like that. "
+                    Link { class: "link link-primary text-sm", to: Route::TemplateForm {}, "Form definitions →" }
+                }
+                li {
+                    span { class: "font-medium", "A message. " }
+                    "NotificationTemplate is a fourth thing again - name, itemtype and css, with \
+                     the subject and body per language in \
+                     glpi_notificationtemplatetranslations. No form and no instance anywhere near \
+                     it. "
+                    Link { class: "link link-primary text-sm", to: Route::TemplateMessage {}, "Message templates →" }
+                }
+            }
+
+            p { class: "mt-3 text-sm text-base-content/70",
+                "Why bother with the flagged-row kind: "
+                StepRef { n: 3 }
+                " warns that 15 to 30 fields is where a screen stops being readable. A template is \
+                 how the field count stays useful and a new record still takes three edits rather \
+                 than twenty."
             }
         }
     }

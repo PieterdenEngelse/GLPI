@@ -11,7 +11,8 @@
 use crate::components::{GlobalErrorBar, Header};
 use crate::pages::{
     About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
-    Netw, PageNotFound, Rights, Screens, Sec, Status,
+    Netw, PageNotFound, Rights, Screens, Sec, Status, TemplateForm, TemplateMessage, TemplateRow,
+    TemplateValues,
 };
 use dioxus::prelude::*;
 use dioxus_router::{Outlet, Routable, Router};
@@ -28,6 +29,17 @@ pub enum Route {
         Status {},
         #[route("/screens")]
         Screens {},
+        // The four things GLPI calls a template, one page each. Flat routes
+        // and no top-nav entry: they are reached from the Screens page, which
+        // is where the question arises. Same shape as the /inv children.
+        #[route("/templates/row")]
+        TemplateRow {},
+        #[route("/templates/values")]
+        TemplateValues {},
+        #[route("/templates/form")]
+        TemplateForm {},
+        #[route("/templates/message")]
+        TemplateMessage {},
         // The inventory section: a landing page and four views under it. Flat
         // routes rather than nested - the sub-header is one component used by
         // all five, so there is nothing a nested layout would factor out.

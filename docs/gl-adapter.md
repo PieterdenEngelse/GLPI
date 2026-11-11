@@ -446,9 +446,21 @@ listing already shows these files exist, and a reader who can see
 `migration_to_12.0.1.log` in the tab strip and cannot open it is being shown
 a locked door.
 
-**Not decided.** It is one constant in `backend/src/logs.rs`, and the right
-moment to decide is the next upgrade, when a migration log is the thing being
-reached for.
+**Decided on 2026-11-08: keep the two.** The deciding point is the simplest
+one and it was missed above - **GLPI's own viewer shows all of them**, and
+whoever runs this dashboard has the `system_logs` right to use it. So the
+twelve are not unreachable, only unreachable *from here*, and each of their
+tabs already carries a button into the screen that does show them. Widening
+would duplicate a complete feature with a worse one: no search, no filtering,
+a 256 KB window, and a second access path to maintain.
+
+That also reframes "the locked door" argument. It is not a locked door, it is
+a signpost - which is the right thing for this app to be about a log that is
+not its subject.
+
+Revisit only if GLPI's viewer stops being usable for this, which would mean
+losing the `system_logs` right or the re-authentication becoming impractical.
+Neither is in prospect.
 
 ---
 
