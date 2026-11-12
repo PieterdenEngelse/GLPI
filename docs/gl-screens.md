@@ -417,9 +417,28 @@ ticket. `AccessControl/` decides who may open it; `ServiceCatalog/` is how it
 is published for end users.
 
 Use a form when you are collecting a lot **from a person**, and an asset
-definition when you are recording a lot **about a thing**. Answers are kept
-relationally (`Answer.php`, `AnswersSet.php`), which is a different shape from
-an asset's flat field list and the right one for a request.
+definition when you are recording a lot **about a thing**.
+
+**Answers are not relational**, which this section previously claimed. There is
+no answers table: `AnswersSet extends CommonDBChild` and `getAnswers()` is a
+`json_decode` of one column (`AnswersSet.php:51` and `:90`), while `Answer` is a
+`final readonly class ... implements JsonSerializable` (`Answer.php:43`) with no
+table behind it. One `answers json` column per submission — the same shape as an
+asset's `custom_fields`, not a different one.
+
+Forms lean on JSON harder than the asset side does, and two of their columns
+hold it **without being declared `json`**:
+
+| column | declared | the comment that says it is JSON |
+|---|---|---|
+| `glpi_forms_questions.default_value` | `text` | "The default value type may not be the same for all questions type" |
+| `glpi_forms_questions.extra_data` | `text` | "Extra configuration field(s) depending on the questions type" |
+
+Both are the same pattern as `field_options` in §2.1 — shape decided by a
+sibling column, here the question type — but carrying the payload in a comment
+rather than a type, so neither gets the `CHECK (json_valid(...))` constraint a
+`json` column would. Counting columns *declared* `json` gives 21 across the
+12.0.0 schema; counting columns that *hold* JSON gives 23.
 
 ### Dashboards — `src/Glpi/Dashboard/`
 

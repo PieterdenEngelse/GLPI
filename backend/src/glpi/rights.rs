@@ -733,7 +733,7 @@ pub struct RightsReport {
     ///
     /// NOT a drift signal, though it looks like one. GLPI ships at least one
     /// such right: `DefaultFilter::$rightname = 'defaultfilter'` is on the
-    /// form, yet `glpi-empty.sql` seeds zero `defaultfilter` rows and no
+    /// form, yet `glpi-12.0.0-empty.sql` seeds zero `defaultfilter` rows and no
     /// migration adds any. `Session::haveRight` denies an unrecorded right, so
     /// these are rights nobody holds and nobody can be granted through a
     /// stored value - worth stating, not worth alarming about.

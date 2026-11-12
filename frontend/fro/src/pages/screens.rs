@@ -4,7 +4,7 @@
 //! questions about configuring GLPI that get asked once per deployment and
 //! then re-answered from memory, wrongly.
 //!
-//! Every claim on all three tabs was read in the GLPI 12.0.1 source or in
+//! Every claim on all four tabs was read in the GLPI 12.0.1 source or in
 //! its install schema, both named inline so they can be re-checked against a
 //! later release. That matters more here than usual, and for a different
 //! reason on each tab:
@@ -35,7 +35,7 @@ use dioxus_router::Link;
 
 #[component]
 pub fn Screens() -> Element {
-    // Two tabs. The machinery is db.rs's - one button each and one branch -
+    // Four tabs. The machinery is db.rs's - one button each and one branch -
     // which is the whole reason the panels are behind components rather than
     // rendered directly here.
     let mut tab = use_signal(|| 0usize);
@@ -132,7 +132,7 @@ fn TheMechanism() -> Element {
                 InfoSection::new(
                     "Where this was read",
                     "Values: src/Glpi/Asset/Asset.php line 517 encodes them and line 526 \
-                     decodes them. Storage: install/mysql/glpi-11.0.12-empty.sql line 10035, \
+                     decodes them. Storage: install/mysql/glpi-12.0.0-empty.sql line 10358, \
                      the last column of glpi_assets_assets. Definitions: the table \
                      glpi_assets_customfielddefinitions in the same file.",
                 ),
@@ -281,20 +281,25 @@ fn WhereToPutItInstead() -> Element {
 
 /// Making a screen, and the one adjustment that destroys data.
 ///
-/// Same three-panel shape as `Cf`, and `mt-5` wrappers for the same
-/// mechanical reason: the stylesheet is generated from the class names found
-/// in these files, and `space-y-5` is not among the ones already emitted.
+/// Five panels, so the grid has a trailing empty cell as `Cf` and `Rights` do.
+/// `mt-5` wrappers for the same mechanical reason: the stylesheet is
+/// generated from the class names found in these files, and `space-y-5` is
+/// not among the ones already emitted.
 #[component]
 fn Def() -> Element {
     rsx! {
         // Two columns from lg up - see Instruct for why row-major and
-        // items-start. Three panels leave the last cell empty, which is
-        // the ordinary result of an odd count and still beats a column of
-        // full-width panels with the right half of the page unused.
+        // items-start. Five panels, so the last cell is empty again - the
+        // ordinary result of an odd count, and still better than a column
+        // of full-width panels with the right half of the page unused.
+        // Deleting follows disabling deliberately: it is the same purge,
+        // for every capacity at once.
         div { class: "grid gap-4 items-start lg:grid-cols-2",
             WhatADefinitionCreates {}
             DisablingACapacityDeletes {}
+            DeletingADefinition {}
             HidingVersusRemoving {}
+            WhichViewYouLandOn {}
         }
     }
 }
@@ -348,6 +353,17 @@ fn WhatADefinitionCreates() -> Element {
                     code { class: "text-xs", "translations" }
                     ". That is why defining a type needs no schema change, and also why none \
                      of it is visible to a query that does not know to look inside JSON."
+                }
+                li {
+                    span { class: "font-medium", "And nothing in the database protects it. " }
+                    "A JSON column takes no foreign keys, so the profile ids inside "
+                    code { class: "text-xs", "profiles" }
+                    " are just numbers - deleting a profile cannot cascade into the \
+                     definitions that name it. GLPI does that work in PHP instead: \
+                     Profile.php lines 369 and 372 call removeProfileFromField on each \
+                     definition, and cleanRights at AssetDefinition.php line 479 strips a \
+                     withdrawn right out of the stored bitmasks. No schema change is the \
+                     benefit; hand-written cascades are the bill."
                 }
                 li {
                     span { class: "font-medium", "Four tabs, and that is the whole surface. " }
@@ -493,6 +509,138 @@ fn HidingVersusRemoving() -> Element {
     }
 }
 
+/// Deleting a definition: the same purge as disabling, for all of it at once.
+///
+/// Sits after `DisablingACapacityDeletes` because it is that panel's warning
+/// multiplied, and the page carried the smaller one only.
+#[component]
+fn DeletingADefinition() -> Element {
+    rsx! {
+        Panel {
+            title: "Deleting a definition takes more than the type".to_string(),
+            subtitle: "No bin, three classes, every capacity at once".to_string(),
+            info: "Read in src/Glpi/Asset/AssetDefinition.php and \
+                   src/Glpi/CustomObject/AbstractDefinition.php. cleanDBonPurge at \
+                   AssetDefinition.php 436 loops onCapacityDisabled over the decoded \
+                   capacities, then calls purgeConcreteClassFromDb for the asset, model \
+                   and type classes; that helper is at AbstractDefinition.php 626 and \
+                   uses deleteByCriteria with force true and history false, then deletes \
+                   the DisplayPreference rows for the itemtype. The definitions table has \
+                   no is_deleted column, which is what makes delete and purge the same \
+                   action here. Not verified: what the UI asks before running it."
+                .to_string(),
+
+            p { class: "mb-3 text-sm",
+                "The panel above is about one capacity. This is the same destruction with \
+                 nothing left behind, and it is the larger of the two."
+            }
+
+            ul { class: "ml-5 list-disc space-y-2 text-sm",
+                li {
+                    span { class: "font-medium", "There is no bin. " }
+                    code { class: "text-xs", "glpi_assets_assetdefinitions" }
+                    " has no "
+                    code { class: "text-xs", "is_deleted" }
+                    " column, so unlike the assets it defines, a definition cannot be \
+                     trashed and restored. Deleting runs the purge immediately."
+                }
+                li {
+                    span { class: "font-medium", "Every capacity fires first. " }
+                    "cleanDBonPurge walks the enabled capacities and disables each one, so \
+                     whatever the panel above would destroy for a single capacity is \
+                     destroyed for all of them in one action."
+                }
+                li {
+                    span { class: "font-medium", "Three classes, not one. " }
+                    "The asset class is purged, and so are its model and type classes - the \
+                     two dropdowns the definition created. Their contents go with the type \
+                     rather than surviving as orphaned dropdown values."
+                }
+                li {
+                    span { class: "font-medium", "Forced, and no history. " }
+                    "The purge passes force and turns history off, and it also deletes \
+                     every "
+                    code { class: "text-xs", "DisplayPreference" }
+                    " row for the itemtype, so each user's column choices go too. Nothing \
+                     about it is recorded in the log that would show a field change."
+                }
+            }
+
+            p { class: "mt-3 text-sm text-base-content/70",
+                "Deactivating is the reversible one. Clearing is_active drops the right's \
+                 rows through ProfileRight::deleteProfileRights and leaves every asset \
+                 where it is - the profiles JSON stays on the definition row, so \
+                 reactivating writes the same rights back."
+            }
+        }
+    }
+}
+
+/// Which saved view a list opens on, and why it is not DisplayPreference.
+///
+/// The fourth Def panel. Columns and filters are separate mechanisms with
+/// separate rights, and the page covered only the first until now.
+#[component]
+fn WhichViewYouLandOn() -> Element {
+    rsx! {
+        Panel {
+            title: "Which view a list opens on".to_string(),
+            subtitle: "Columns are one mechanism, filters are another".to_string(),
+            info: "Read in src/SavedSearch.php and install/mysql/glpi-12.0.0-empty.sql. \
+                   The right is \
+                   bookmark_public at line 56; markDefault at 594 writes \
+                   glpi_savedsearches_users at 606, unmarkDefault at 637 and \
+                   unmarkDefaults at 672 remove it. glpi_savedsearches holds the search \
+                   itself - query is one text column, read back with parse_str at line \
+                   581, so the criteria are a serialised URL rather than a modelled set. \
+                   Not verified: whether a stored query can also pin the columns, which \
+                   would overlap DisplayPreference. SavedSearch.php names no forcedisplay."
+                .to_string(),
+
+            p { class: "mb-3 text-sm",
+                "A screen that should open already filtered is a saved search, not a \
+                 display preference. The two are often confused because both change what \
+                 you see on arrival."
+            }
+
+            ul { class: "ml-5 list-disc space-y-2 text-sm",
+                li {
+                    span { class: "font-medium", "Columns versus filters. " }
+                    code { class: "text-xs", "DisplayPreference" }
+                    " decides which columns a list shows and nothing else - see the \
+                     Rights tab for its two bits. A saved search carries the criteria, \
+                     and marking one default decides which of them you land on."
+                }
+                li {
+                    span { class: "font-medium", "The default is per user. " }
+                    code { class: "text-xs", "glpi_savedsearches_users" }
+                    " is unique on "
+                    code { class: "text-xs", "(users_id, itemtype)" }
+                    ", so there is exactly one default per person per type. A search can \
+                     be shared while the decision to land on it stays personal, which is \
+                     why one user's list opens filtered and a colleague's does not."
+                }
+                li {
+                    span { class: "font-medium", "Sharing is a right. " }
+                    "A search defaults to private - "
+                    code { class: "text-xs", "is_private" }
+                    " is 1 - and the public ones are governed by "
+                    code { class: "text-xs", "bookmark_public" }
+                    ", the class rightname. Without it a shared landing view cannot be \
+                     created, only a personal one."
+                }
+            }
+
+            p { class: "mt-3 text-sm text-base-content/70",
+                "None of this is part of a custom asset definition. It applies to any \
+                 itemtype with a list, built-in or custom, which is why an \"empty\" or \
+                 \"wrong\" screen is sometimes neither the definition nor the rights but \
+                 a default view someone marked."
+            }
+        }
+    }
+}
+
 /// Who can see a screen, and who can change it.
 ///
 /// Three panels, stacked with `mt-5` for the same mechanical reason as `Cf`
@@ -527,7 +675,8 @@ fn InvisibleUntilGranted() -> Element {
                    so it is not held. Read in getCustomObjectRightname at \
                    src/Glpi/Asset/AssetDefinition.php line 98, which returns \
                    sprintf('asset_%s', strtolower(system_name)), with storage in \
-                   glpi_profilerights in install/mysql/glpi-empty.sql - one row per profile \
+                   glpi_profilerights in install/mysql/glpi-12.0.0-empty.sql - one row per \
+                     profile \
                    and right name, unique on (profiles_id, name)."
                 .to_string(),
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
@@ -580,6 +729,15 @@ fn InvisibleUntilGranted() -> Element {
                         ],
                         links: vec![InfoLink::new("Profiles", "front/profile.php")],
                     }
+                }
+                li {
+                    span { class: "font-medium", "A helpdesk profile is always zero. " }
+                    "syncProfilesRights reads each profile's interface and writes 0 for every \
+                     one on the helpdesk interface, whatever the definition's Profiles tab \
+                     holds - AbstractDefinition.php line 717, where the ternary chooses \
+                     between 0 and the stored value. The grant saves without complaint and \
+                     the right is still absent, so a type that must reach helpdesk users is \
+                     not made reachable this way."
                 }
             }
         }

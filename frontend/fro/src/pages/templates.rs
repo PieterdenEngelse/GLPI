@@ -67,7 +67,8 @@ pub fn TemplateRow() -> Element {
         TemplatesNav {}
         Panel {
             title: "A flagged row".to_string(),
-            info: "Read in the install schema and CommonDBTM. The columns are \
+            info: "Read in install/mysql/glpi-12.0.0-empty.sql and CommonDBTM. The \
+                   columns are \
                    is_template tinyint NOT NULL DEFAULT '0' and template_name \
                    varchar(255), indexed as is_template and as active_assets on \
                    (is_deleted, is_template) - the pair the list query adds, at \
