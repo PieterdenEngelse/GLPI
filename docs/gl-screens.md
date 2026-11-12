@@ -187,8 +187,8 @@ Read those three arguments:
 
 So toggling a capacity off to "tidy up the screen" deletes every volume, or
 every software entry, or every network port, on every asset of that type —
-silently and permanently. The same happens on purge of the whole definition
-(`cleanDBonPurge()`, line 436).
+silently and permanently. The same happens on purge of the whole definition,
+for every capacity at once — see §1.8.
 
 `HasSoftwares` and `IsInventoriable` carry the most deletion calls of the
 twenty-seven (seven and five respectively), which is a rough proxy for how
@@ -267,12 +267,57 @@ technician is as likely to be a profile gap as a capacity gap — and
 `gl-rights.md` in this directory is the companion for diagnosing that, since a
 403 in GLPI tells you nothing about which right was missing.
 
+**The rights exist twice, and neither copy is the master.**
+`syncProfilesRights()` (`AbstractDefinition.php:701`) writes the `profiles` JSON
+out to `glpi_profilerights` on every save, and `Profile.php:270` writes back the
+other way, so editing either side updates the other. Two things do not survive
+that round trip. A profile whose `interface` is `helpdesk` is written as **0
+regardless of what the Profiles tab holds** (`AbstractDefinition.php:717`,
+where the ternary picks between 0 and the stored value), so the grant saves
+without complaint and the right is still absent. And while the definition is
+inactive the sync calls `ProfileRight::deleteProfileRights()` (line 708),
+removing the rows outright rather than zeroing them.
+
+**Nothing in the database protects the JSON.** A JSON column takes no foreign
+keys, so the profile ids inside `profiles` are just numbers — deleting a profile
+cannot cascade into the definitions that name it. GLPI does that in PHP:
+`Profile.php:369` and `:372` call `removeProfileFromField()` on each definition,
+and `cleanRights()` (`AssetDefinition.php:479`) strips a withdrawn right value
+out of the stored bitmasks. The §1.1 benefit — no schema change — is paid for in
+maintenance code.
+
 ### 1.7 Tab 4 — Translations
 
 The type's name per language, held in the `translations` JSON. Worth setting
 even in a single-language deployment: the plural form is what list headers and
 tab labels use, and an unset plural shows up as awkward text in places you did
 not expect to look.
+
+### 1.8 ⚠ Deleting a definition
+
+**There is no bin.** `glpi_assets_assetdefinitions` has no `is_deleted` column,
+so unlike the assets it defines, a definition cannot be trashed and restored:
+deleting runs `cleanDBonPurge()` (`AssetDefinition.php:436`) straight away. That
+method, in order:
+
+- disables **every** enabled capacity, so the whole of §1.4 happens in one
+  action instead of one capacity at a time;
+- calls `purgeConcreteClassFromDb` three times — the asset class, the asset
+  **model** class and the asset **type** class, so the two dropdowns §1.1
+  created are emptied with it;
+- and that helper (`AbstractDefinition.php:626`) deletes by criteria with
+  `force: true, history: false`, then removes every `DisplayPreference` row for
+  the itemtype, taking each user's column layout (§3.1).
+
+So deleting a type is strictly larger than the §1.4 warning, and just as
+absent from the history log.
+
+**Deactivating is the reversible one.** Clearing `is_active` drops the right's
+rows through the sync in §1.6 and leaves every asset where it is; because
+`profiles` stays on the definition row, reactivating writes the same rights
+back.
+
+Not verified: what the interface asks for confirmation before running this.
 
 ---
 
