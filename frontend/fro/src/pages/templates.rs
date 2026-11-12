@@ -12,7 +12,7 @@
 //! Reference, not telemetry - nothing on these pages is live. Every claim was
 //! read in the GLPI 12.0.1 source or its install schema and names where.
 use crate::app::Route;
-use crate::components::{InfoSection, Panel};
+use crate::components::{InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
@@ -69,8 +69,10 @@ pub fn TemplateRow() -> Element {
             title: "A flagged row".to_string(),
             info: "Read in the install schema and CommonDBTM. The columns are \
                    is_template tinyint NOT NULL DEFAULT '0' and template_name \
-                   varchar(255), with two indexes per table and no constraint on \
-                   the value; maybeTemplate at line 3427 only reports whether the \
+                   varchar(255), indexed as is_template and as active_assets on \
+                   (is_deleted, is_template) - the pair the list query adds, at \
+                   SQLProvider lines 4947 and 4965 - and the value itself is \
+                   unconstrained; maybeTemplate at line 3427 only reports whether the \
                    field exists, so the feature switches itself on for any type \
                    whose table has the column, and the meaning of 1 is the code's \
                    rather than the schema's - isTemplate at 3442 casts the column \
@@ -82,12 +84,18 @@ pub fn TemplateRow() -> Element {
                    check a template's output before trusting it with a field that \
                    must be unique."
                 .to_string(),
+            // Computers because they are what this app is about; the page is
+            // per-itemtype, so there is no one link that covers all twenty.
+            info_links: vec![InfoLink::new(
+                "Computer templates",
+                "front/setup.templates.php?itemtype=Computer&add=0",
+            )],
             p { class: "mb-3 text-sm",
                 "A row in the item's own table with "
                 code { class: "text-xs", "is_template = 1" }
-                ". Item here is any type with its own table, which is why four of the twenty \
-                 below are not assets at all. It pre-fills the next record and has no say in \
-                 what the form looks like."
+                ". Item here is any type whose table carries an is_template column, which is \
+                 why four of the twenty below are not assets at all. It pre-fills the next \
+                 record and has no say in what the form looks like."
             }
 
             ul { class: "ml-5 list-disc space-y-2 text-sm",
@@ -106,7 +114,23 @@ pub fn TemplateRow() -> Element {
                 }
                 li {
                     span { class: "font-medium", "Kept out of the item lists. " }
-                    "The is_template index exists so the two can be queried apart."
+                    "An index is a sorted copy of the column with a pointer back to each row, \
+                     so asking for one value means seeking the run of matching entries instead \
+                     of reading the table. There are two per table, and they answer the two \
+                     questions. "
+                    code { class: "text-xs", "is_template" }
+                    " alone serves the template picker, which asks for "
+                    code { class: "text-xs", "is_template = 1" }
+                    " - the short run, a handful per type. "
+                    code { class: "text-xs", "active_assets" }
+                    ", on "
+                    code { class: "text-xs", "(is_deleted, is_template)" }
+                    ", is the pair the item list filters on, in that order: the deleted flag \
+                     first - 0 for the normal list, 1 for the bin - then is_template = 0 \
+                     always. What that second one narrows is another matter, since nearly \
+                     every row holds 0 for both, and whether the database uses the index or \
+                     reads the table is its own decision - not something this app can check, \
+                     as its database account reaches two tables and neither is this one."
                 }
                 li {
                     span { class: "font-medium", "Nothing to enable. " }
@@ -127,19 +151,44 @@ pub fn TemplateRow() -> Element {
                      it, which is worth knowing before reading the flag from outside GLPI."
                 }
                 li {
-                    span { class: "font-medium", "Custom fields come along. " }
+                    span {
+                        class: "font-medium text-red-orange",
+                        "Custom fields come along, on custom assets only. "
+                    }
                     "They live in one "
                     code { class: "text-xs", "custom_fields" }
-                    " JSON column on the same row, so whatever copies the row copies them."
+                    " JSON column on the same row, so whatever copies the row copies them. That \
+                     column is on "
+                    code { class: "text-xs", "glpi_assets_assets" }
+                    " and nowhere else - it occurs once in the whole schema - so for the other \
+                     nineteen tables there is nothing to carry. A plugin can add fields to them, \
+                     which is outside GLPI itself and outside what this page covers. Note what \
+                     the row implies: every custom asset type shares that one table, separated \
+                     by assets_assetdefinitions_id rather than by having a table of its own."
                 }
                 li {
                     span { class: "font-medium", "Making one. " }
-                    "Open the type's form with "
-                    code { class: "text-xs", "withtemplate=1" }
-                    ", fill in the fields that are the same every time, and name the template. "
+                    "Open the type's own list in GLPI and click Templates in the header, the \
+                     link beside Add; its tooltip reads Manage templates. Which menu holds \
+                     that list follows the type - Assets for a computer, Management for a \
+                     contract or a licence, Tools for a project - because the page takes its \
+                     sector from the itemtype rather than being a setup screen of its own. \
+                     New template there opens the type's ordinary form: fill in what is the \
+                     same every time, give it a template name, and save. The URLs behind \
+                     that, if you ever need them: Templates and Add are both "
+                    code { class: "text-xs", "setup.templates.php" }
+                    ", with "
+                    code { class: "text-xs", "add=0" }
+                    " and "
+                    code { class: "text-xs", "add=1" }
+                    " - because the table has the column, a blank form is no longer what Add \
+                     opens. New template is that form at "
+                    code { class: "text-xs", "id=-1&withtemplate=1" }
+                    ", while picking a template from Add's list is "
                     code { class: "text-xs", "withtemplate=2" }
-                    " then starts a real record pre-filled from it - and the link GLPI renders for \
-                     a template already carries the parameter, because isTemplate appends it."
+                    ", a real record pre-filled from it - and the link GLPI renders for a \
+                     template already carries the parameter, because isTemplate appends it. \
+                     Saving a template returns you to the template list, not the asset list."
                 }
                 li {
                     span { class: "font-medium", "Not inheritance. " }
@@ -222,7 +271,7 @@ pub fn TemplateForm() -> Element {
         TemplatesNav {}
         Panel {
             title: "A form definition".to_string(),
-            subtitle: "The only kind that decides what a screen looks like".to_string(),
+            subtitle: "The only template kind that decides what a screen looks like".to_string(),
             info: "ITILTemplate and its three subclasses, and why the table \
                    itself looks empty."
                 .to_string(),
@@ -231,9 +280,11 @@ pub fn TemplateForm() -> Element {
                     "Where this was read",
                     "glpi_tickettemplates holds id, name, entities_id, \
                      is_recursive, comment and allowed_statuses - no ticket fields \
-                     at all. The behaviour lives in glpi_tickettemplatepredefined \
-                     fields, mandatoryfields, hiddenfields and readonlyfields, each \
-                     a (template, field number, value) row. ITILTemplate extends \
+                     at all. The behaviour lives in four tables per kind, and they \
+                     are not alike: hiddenfields, readonlyfields and \
+                     mandatoryfields carry only a template and a field number, \
+                     unique on that pair, while predefinedfields alone adds a \
+                     value column and has no such unique key. ITILTemplate extends \
                      CommonDropdown; TicketTemplate, ChangeTemplate and \
                      ProblemTemplate extend ITILTemplate.",
                 ),
@@ -274,14 +325,37 @@ pub fn TemplateForm() -> Element {
                 }
                 li {
                     span { class: "font-medium", "The table is nearly empty on purpose. " }
-                    "Four satellite tables carry the behaviour, one per kind of rule, so a field \
-                     can be mandatory in one template and hidden in another without either table \
-                     growing a column."
+                    "Four satellite tables carry the behaviour, one per kind of rule - for \
+                     tickets "
+                    code { class: "text-xs", "glpi_tickettemplatehiddenfields" }
+                    ", "
+                    code { class: "text-xs", "glpi_tickettemplatereadonlyfields" }
+                    ", "
+                    code { class: "text-xs", "glpi_tickettemplatemandatoryfields" }
+                    " and "
+                    code { class: "text-xs", "glpi_tickettemplatepredefinedfields" }
+                    ", with the same four named for change and for problem, twelve in all. The \
+                     first three hold nothing but a template and a field number, unique on that \
+                     pair: the row existing is the rule. Only predefinedfields adds a value \
+                     column, being the only one with something to say beyond yes. So a field \
+                     can be mandatory in one template and hidden in another without either \
+                     table growing a column."
                 }
                 li {
                     span { class: "font-medium", "Tickets have no is_template column. " }
                     "Nothing from the flagged-row page applies here, and nothing here applies \
                      there."
+                }
+                li {
+                    span { class: "font-medium", "Templates are not the only way a screen gets \
+                                                  decided. " }
+                    "A custom asset definition does the same job without being a template: the \
+                     field order is its own, and each field can be marked hidden or readonly \
+                     per profile. It is reached from the definition rather than from a template \
+                     list, which is why it sits on the "
+                    Link { class: "link link-primary", to: Route::Screens {}, "Screens page" }
+                    " - but for a custom asset it is the thing to reach for, and no ITILTemplate \
+                     covers it."
                 }
             }
         }

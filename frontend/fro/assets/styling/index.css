@@ -46,6 +46,27 @@
   --color-primary-content: #ffffff;
 }
 
+/* Red-orange, for a bullet's lead-in that bounds the claim under it.
+
+   Not a daisyUI token because the palette has no such hue: error is red
+   (hue 13) and warning is amber (84), with nothing in between. Declared here
+   rather than at the use site so it flips with the theme, which is this
+   file's rule - and declared the way daisyUI selects its own themes: the
+   bare rule carries the DARK value, because dark is what applies when no
+   data-theme is set, and light is the explicit override. A `dark:` utility
+   would be wrong for the same reason - it follows the system preference,
+   while this app follows the header toggle.
+
+   The hue sits beside the brand rust (#7C2A02 is around 47), so it reads as
+   part of that family rather than as an arbitrary red. */
+.text-red-orange {
+  color: oklch(74% 0.16 48);
+}
+
+[data-theme="light"] .text-red-orange {
+  color: oklch(50% 0.18 45);
+}
+
 /* Freeze the page while an info panel is open.
 
    Set as an attribute on the root element by components/info.rs, for the same
