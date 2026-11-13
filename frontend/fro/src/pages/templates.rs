@@ -354,7 +354,7 @@ pub fn TemplateForm() -> Element {
                      field order is its own, and each field can be marked hidden or readonly \
                      per profile. It is reached from the definition rather than from a template \
                      list, which is why it sits on the "
-                    Link { class: "link link-primary", to: Route::Screens {}, "Screens page" }
+                    Link { class: "link link-primary", to: Route::Screens { tab: String::new() }, "Screens page" }
                     " - but for a custom asset it is the thing to reach for, and no ITILTemplate \
                      covers it."
                 }

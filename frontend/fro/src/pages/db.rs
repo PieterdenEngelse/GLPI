@@ -14,11 +14,13 @@
 //! re-checks rots into a lie, and this app has already shipped one wrong
 //! denominator for exactly that reason.
 use crate::api::{self, RightsReport};
+use crate::app::Route;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
+use dioxus_router::use_navigator;
 
 #[component]
-pub fn Db() -> Element {
+pub fn Db(tab: String, sub: String) -> Element {
     let report = use_resource(|| async move { api::fetch_rights().await });
 
     // The reference panels do not depend on the fetch, so they render either
@@ -30,7 +32,12 @@ pub fn Db() -> Element {
         _ => None,
     };
 
-    let mut tab = use_signal(|| 0usize);
+    let nav = use_navigator();
+
+    // Names, not indices, so a reordered strip cannot change what an existing
+    // link points at. Unknown or absent is Overview, never an error.
+    const TABS: [&str; 4] = ["overview", "db-read", "api-read", "maria"];
+    let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
         // Above the tabs, not inside either one: what this page covers is the
@@ -91,39 +98,47 @@ pub fn Db() -> Element {
         div { role: "tablist", class: "tabs tabs-border mb-5",
             button {
                 role: "tab",
-                class: if tab() == 0 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(0),
+                class: if at == 0 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Db { tab: TABS[0].to_string(), sub: String::new() });
+                },
                 "Overview"
             }
             button {
                 role: "tab",
-                class: if tab() == 1 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(1),
+                class: if at == 1 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Db { tab: TABS[1].to_string(), sub: String::new() });
+                },
                 "db-read"
             }
             button {
                 role: "tab",
-                class: if tab() == 2 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(2),
+                class: if at == 2 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Db { tab: TABS[2].to_string(), sub: String::new() });
+                },
                 "api-read"
             }
             button {
                 role: "tab",
-                class: if tab() == 3 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(3),
+                class: if at == 3 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Db { tab: TABS[3].to_string(), sub: String::new() });
+                },
                 "Maria"
             }
         }
 
-        if tab() == 3 {
-            Maria {}
-        } else if tab() == 1 {
+        if at == 3 {
+            Maria { sub: sub.clone() }
+        } else if at == 1 {
             DbRead {}
-        } else if tab() == 2 {
+        } else if at == 2 {
             // Fetches inside the tab, never with the page: this one pulls
             // GLPI's whole OpenAPI document, about 4.6 MB, and the Overview
             // must not pay for a tab nobody opened.
-            ApiRead {}
+            ApiRead { sub: sub.clone() }
         } else {
             match counts {
                 Some(c) => rsx! { Counts { counts: c } },
@@ -307,8 +322,11 @@ not arrive.";
 /// A container for two sub-tabs: storage for the choices GLPI's installer
 /// makes, db's for what else is on the server.
 #[component]
-fn Maria() -> Element {
-    let mut sub = use_signal(|| 0usize);
+fn Maria(sub: String) -> Element {
+    let nav = use_navigator();
+
+    const NAMES: [&str; 2] = ["storage", "databases"];
+    let at = NAMES.iter().position(|s| *s == sub).unwrap_or(0);
 
     rsx! {
         // A second row of tabs, inside the tab - the same boxed style api-read
@@ -316,19 +334,23 @@ fn Maria() -> Element {
         div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
             button {
                 role: "tab",
-                class: if sub() == 0 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(0),
+                class: if at == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[0].to_string() });
+                },
                 "storage"
             }
             button {
                 role: "tab",
-                class: if sub() == 1 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(1),
+                class: if at == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[1].to_string() });
+                },
                 "db\u{2019}s"
             }
         }
 
-        if sub() == 1 {
+        if at == 1 {
             Databases {}
         } else {
             MariaStorage {}
@@ -748,7 +770,7 @@ fn Databases() -> Element {
 /// 12.0.1 adds ten more such conditions than 11.0.12 has, so this stops being
 /// theoretical at the upgrade. See backend/src/glpi/schema_check.rs.
 #[component]
-fn ApiRead() -> Element {
+fn ApiRead(sub: String) -> Element {
     let report = use_resource(|| async move { api::fetch_field_gaps().await });
 
     // Only when there is a document to list. An empty catalogue and an absent
@@ -767,7 +789,10 @@ fn ApiRead() -> Element {
         _ => api::FilterReach::default(),
     };
 
-    let mut sub = use_signal(|| 0usize);
+    let nav = use_navigator();
+
+    const NAMES: [&str; 3] = ["fields", "schema", "rsql"];
+    let at = NAMES.iter().position(|s| *s == sub).unwrap_or(0);
 
     rsx! {
         // A second row of tabs, inside the tab. Boxed rather than bordered so
@@ -776,25 +801,31 @@ fn ApiRead() -> Element {
         div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
             button {
                 role: "tab",
-                class: if sub() == 0 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(0),
+                class: if at == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[0].to_string() });
+                },
                 "fields"
             }
             button {
                 role: "tab",
-                class: if sub() == 1 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(1),
+                class: if at == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[1].to_string() });
+                },
                 "schema"
             }
             button {
                 role: "tab",
-                class: if sub() == 2 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(2),
+                class: if at == 2 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[2].to_string() });
+                },
                 "rsql"
             }
         }
 
-        if sub() == 1 {
+        if at == 1 {
             match catalogue {
                 Some(rows) => rsx! { Catalogue { rows } },
                 // The fetch states live on the fields tab, which is the
@@ -806,7 +837,7 @@ fn ApiRead() -> Element {
                     }
                 },
             }
-        } else if sub() == 2 {
+        } else if at == 2 {
             Rsql { reach }
         } else {
         Panel {

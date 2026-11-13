@@ -27,15 +27,22 @@ pub fn NavTabs() -> Element {
         (Route::Agents {}, "Agents"),
         (Route::Computers {}, "Computers"),
         (Route::Status {}, "Status"),
-        (Route::Screens {}, "Screens"),
+        (Route::Screens { tab: String::new() }, "Screens"),
         (Route::Inv {}, "Inv"),
-        (Route::Rights {}, "Rights"),
-        (Route::Db {}, "DB"),
+        (Route::Rights { tab: String::new() }, "Rights"),
+        (
+            Route::Db {
+                tab: String::new(),
+                sub: String::new(),
+            },
+            "DB",
+        ),
         // Empty so far - see pages/netw.rs. Distinct from the fleet network
         // view at /inv/network, which stays where it is under Inv.
         (Route::Netw {}, "Netw"),
         (Route::Sec {}, "Security"),
-        (Route::Logs {}, "Logs"),
+        // Empty log: the bare page, which falls back to the first file.
+        (Route::Logs { log: String::new() }, "Logs"),
     ];
 
     rsx! {

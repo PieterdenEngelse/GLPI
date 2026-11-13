@@ -1,4 +1,4 @@
-use crate::app::Route;
+use crate::app::{PageTitle, Route};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -7,7 +7,9 @@ pub fn PageNotFound(#[props(default = vec![])] segments: Vec<String>) -> Element
     rsx! {
         // Outside the Layout by design - a 404 should not pretend to be a
         // page of the app - so it carries the surface itself rather than
-        // rendering on whatever the browser defaults to.
+        // rendering on whatever the browser defaults to. Same reason it
+        // repeats PageTitle: nothing above it sets one here.
+        PageTitle {}
         div { class: "flex min-h-screen flex-col bg-base-200 p-4 text-base-content",
             div { class: "rounded-box border border-base-300 bg-base-100 p-5 shadow-sm",
                 div { class: "font-semibold", "No such page." }

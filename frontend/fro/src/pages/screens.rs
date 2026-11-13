@@ -31,14 +31,24 @@
 use crate::app::Route;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
-use dioxus_router::Link;
+use dioxus_router::{use_navigator, Link};
 
 #[component]
-pub fn Screens() -> Element {
+pub fn Screens(tab: String) -> Element {
     // Four tabs. The machinery is db.rs's - one button each and one branch -
     // which is the whole reason the panels are behind components rather than
     // rendered directly here.
-    let mut tab = use_signal(|| 0usize);
+    let nav = use_navigator();
+
+    // Names, not indices: a reordered strip must not silently change what an
+    // existing link points at.
+    const TABS: [&str; 4] = ["cf", "def", "rights", "instruct"];
+
+    // The strip's position comes from the URL rather than a signal, so a
+    // pasted link, a reload and the Back button all land on the tab the
+    // reader was looking at. Unknown or absent means the first tab, never an
+    // error - the same fallback /logs uses.
+    let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
         div { class: "mb-3",
@@ -62,35 +72,43 @@ pub fn Screens() -> Element {
         div { role: "tablist", class: "tabs tabs-border mb-5",
             button {
                 role: "tab",
-                class: if tab() == 0 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(0),
+                class: if at == 0 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Screens { tab: TABS[0].to_string() });
+                },
                 "CF"
             }
             button {
                 role: "tab",
-                class: if tab() == 1 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(1),
+                class: if at == 1 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Screens { tab: TABS[1].to_string() });
+                },
                 "Def"
             }
             button {
                 role: "tab",
-                class: if tab() == 2 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(2),
+                class: if at == 2 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Screens { tab: TABS[2].to_string() });
+                },
                 "Rights"
             }
             button {
                 role: "tab",
-                class: if tab() == 3 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| tab.set(3),
+                class: if at == 3 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| {
+                    nav.push(Route::Screens { tab: TABS[3].to_string() });
+                },
                 "Instruct"
             }
         }
 
-        if tab() == 3 {
+        if at == 3 {
             Instruct {}
-        } else if tab() == 2 {
+        } else if at == 2 {
             Rights {}
-        } else if tab() == 1 {
+        } else if at == 1 {
             Def {}
         } else {
             Cf {}

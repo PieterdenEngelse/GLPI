@@ -29,8 +29,10 @@
 //!
 //! See backend/src/logs.rs and gl-adapter.md section 4.
 use crate::api;
+use crate::app::Route;
 use crate::components::Panel;
 use dioxus::prelude::*;
+use dioxus_router::use_navigator;
 
 /// What a given log holds, for the ones whose writer was identified in the
 /// GLPI source. Returns None for anything else - a file this app has nothing
@@ -92,9 +94,9 @@ fn describe(file: &str) -> Option<&'static str> {
 }
 
 #[component]
-pub fn Logs() -> Element {
+pub fn Logs(log: String) -> Element {
     let listing = use_resource(|| async move { api::fetch_logs().await });
-    let mut tab = use_signal(|| 0usize);
+    let nav = use_navigator();
 
     match &*listing.read_unchecked() {
         None => rsx! {
@@ -122,9 +124,16 @@ pub fn Logs() -> Element {
                 };
             }
 
-            // Clamp rather than trust: the list is refetched, and a file that
-            // disappeared between renders must not index past the end.
-            let i = tab().min(list.entries.len() - 1);
+            // Select by name, not by index. The strip is built from the
+            // directory, so an index in the URL would point at a different
+            // file whenever the listing changes. An absent or unknown `log`
+            // falls back to the first entry rather than failing - the same
+            // reason this is a query argument and not a path segment.
+            let i = list
+                .entries
+                .iter()
+                .position(|e| e.file.trim_end_matches(".log") == log)
+                .unwrap_or(0);
             let e = &list.entries[i];
 
             rsx! {
@@ -137,7 +146,15 @@ pub fn Logs() -> Element {
                             key: "{entry.file}",
                             role: "tab",
                             class: if i == n { "tab text-base tab-active" } else { "tab text-base" },
-                            onclick: move |_| tab.set(n),
+                            // push, not replace: a log worth its own URL is
+                            // worth a history entry, so Back returns to the
+                            // log you were reading rather than leaving /logs.
+                            onclick: {
+                                let stem = entry.file.trim_end_matches(".log").to_string();
+                                move |_| {
+                                    nav.push(Route::Logs { log: stem.clone() });
+                                }
+                            },
                             "{entry.file.trim_end_matches(\".log\")}"
                             // Marks the two whose contents this app serves, so
                             // the other thirteen are not mistaken for tabs
