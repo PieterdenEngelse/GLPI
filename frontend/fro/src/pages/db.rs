@@ -107,9 +107,17 @@ pub fn Db() -> Element {
                 onclick: move |_| tab.set(2),
                 "api-read"
             }
+            button {
+                role: "tab",
+                class: if tab() == 3 { "tab text-base tab-active" } else { "tab text-base" },
+                onclick: move |_| tab.set(3),
+                "Maria"
+            }
         }
 
-        if tab() == 1 {
+        if tab() == 3 {
+            Maria {}
+        } else if tab() == 1 {
             DbRead {}
         } else if tab() == 2 {
             // Fetches inside the tab, never with the page: this one pulls
@@ -292,6 +300,430 @@ const RIGHTS_NOTE: &str = "A withheld field is a permissions fact, not a schema 
 declares the field and this account may not read it. Which right it wants, and which profile \
 would grant it, is on the Rights page - this tab only establishes that something promised did \
 not arrive.";
+
+/// What the engine does with GLPI's schema, as distinct from what GLPI puts
+/// in it.
+///
+/// A container for two sub-tabs: storage for the choices GLPI's installer
+/// makes, db's for what else is on the server.
+#[component]
+fn Maria() -> Element {
+    let mut sub = use_signal(|| 0usize);
+
+    rsx! {
+        // A second row of tabs, inside the tab - the same boxed style api-read
+        // uses, so nesting reads the same way in both places.
+        div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
+            button {
+                role: "tab",
+                class: if sub() == 0 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(0),
+                "storage"
+            }
+            button {
+                role: "tab",
+                class: if sub() == 1 { "tab tab-active" } else { "tab" },
+                onclick: move |_| sub.set(1),
+                "db\u{2019}s"
+            }
+        }
+
+        if sub() == 1 {
+            Databases {}
+        } else {
+            MariaStorage {}
+        }
+    }
+}
+
+/// MariaDB's storage choices, as GLPI's installer makes them.
+///
+/// Both panels are read out of install/mysql/glpi-12.0.0-empty.sql rather than
+/// the live server. That was once a necessity - the account reached two tables
+/// - and since 2026-11-13 it is a preference: the file is version-pinned and
+/// re-checkable by anyone without a database at all.
+#[component]
+fn MariaStorage() -> Element {
+    rsx! {
+        // A named link rather than the icon, for the same reason the page-level
+        // one above is: this answers what the whole tab is for, and a reader who
+        // does not know that has nothing to hover yet. Body only, no sections -
+        // two short tabs here would be a click that reveals less than a
+        // paragraph.
+        div { class: "mb-3",
+            InfoButton {
+                label: "What is this".to_string(),
+                title: "What the storage tab is".to_string(),
+                body: "How MariaDB actually keeps GLPI's data, as opposed to which databases \
+                       exist beside it - that is the other tab. Two things decide it, and \
+                       both are settled by the installer rather than by anything \
+                       configurable later: the type each column really has, and the four \
+                       table-level choices repeated identically across all 447 tables \
+                       (InnoDB, utf8mb4, utf8mb4_unicode_ci, ROW_FORMAT=DYNAMIC). It matters \
+                       in two places a reader meets by accident. A column GLPI calls json is \
+                       longtext with a CHECK constraint, because MariaDB has no JSON type, so \
+                       a schema diff against another server reports a difference that is not \
+                       one - GLPI's own checker rewrites it before comparing. And \
+                       utf8mb4_unicode_ci folds case, so two values differing only in \
+                       capitalisation collide on a UNIQUE key, which is how a custom asset \
+                       definition can refuse a system name that looks unused. Everything here \
+                       was read in install/mysql/glpi-12.0.0-empty.sql and in GLPI's source, \
+                       so it can be re-checked without a database account - this app's \
+                       account reaches two tables and could verify none of it."
+                    .to_string(),
+            }
+        }
+
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            Panel {
+                title: "json is longtext with a constraint".to_string(),
+                subtitle: "MariaDB has no JSON storage type".to_string(),
+                info: "Read in the install schema and in GLPI's own schema checker. \
+                       DatabaseSchemaIntegrityChecker.php line 470 carries a regex that \
+                       rewrites longtext ... CHECK (json_valid(col)) back to json before \
+                       comparing a live table against the expected schema - which is GLPI \
+                       stating the same thing from the other direction. The two undeclared \
+                       columns are glpi_forms_questions.default_value and .extra_data, both \
+                       text with a comment beginning JSON."
+                    .to_string(),
+
+                p { class: "mb-3 text-sm",
+                    "A "
+                    code { class: "text-xs", "json" }
+                    " column is a "
+                    code { class: "text-xs", "longtext" }
+                    " plus a "
+                    code { class: "text-xs", "CHECK (json_valid(col))" }
+                    ". That matters here because it decides what a direct read can and \
+                     cannot do."
+                }
+
+                ul { class: "ml-5 list-disc space-y-2 text-sm",
+                    li {
+                        span { class: "font-medium", "SHOW CREATE TABLE will not say json. " }
+                        "It reports the longtext and the constraint, so a schema diff that \
+                         expects the word json reports drift that is not there. GLPI undoes \
+                         this with a regex rather than trusting the type name."
+                    }
+                    li {
+                        span { class: "font-medium", "No key, no constraint, no cascade. " }
+                        "Nothing inside the document can be indexed or referenced, so a value \
+                         held there is invisible to a query that does not know to look inside \
+                         it, and nothing in the database protects it."
+                    }
+                    li {
+                        span { class: "font-medium", "Declared and actual differ. " }
+                        "21 columns are declared json in the 12.0.0 schema; 23 hold JSON. The \
+                         other two are text with a comment saying so, which means counting by \
+                         type undercounts, and those two get no json_valid check at all."
+                    }
+                }
+            }
+
+            Panel {
+                title: "447 tables, one set of choices".to_string(),
+                subtitle: "InnoDB, utf8mb4, utf8mb4_unicode_ci, ROW_FORMAT=DYNAMIC".to_string(),
+                info: "Counted in install/mysql/glpi-12.0.0-empty.sql: 447 CREATE TABLE \
+                       statements, all four settings identical in every one. Worth stating \
+                       because a grep for the literal ENGINE=InnoDB returns 445 - \
+                       glpi_validationsteps and glpi_itils_validationsteps write the clause \
+                       with spaces around the equals signs, so a pattern count invites the \
+                       conclusion that two tables are unpinned. They are not."
+                    .to_string(),
+
+                p { class: "mb-3 text-sm",
+                    "There is no per-table variation to account for. Every table declares the \
+                     same engine, charset, collation and row format."
+                }
+
+                ul { class: "ml-5 list-disc space-y-2 text-sm",
+                    li {
+                        span { class: "font-medium", "Nothing inherits a server default. " }
+                        "Each CREATE TABLE pins all four, so the schema does not change meaning \
+                         with the server's own defaults - which is what makes reading the file \
+                         a substitute for querying the database."
+                    }
+                    li {
+                        span { class: "font-medium", "utf8mb4_unicode_ci is case-insensitive. " }
+                        "Comparisons and unique keys on text fold case, so two rows differing \
+                         only in capitalisation collide on a UNIQUE key. The system_name \
+                         uniqueness on asset definitions is one such key."
+                    }
+                    li {
+                        span { class: "font-medium", "Count by pattern and you get 445. " }
+                        "The two outliers are a whitespace style in the DDL, not a different \
+                         engine. Named here because the wrong number is the easy one to reach."
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The databases on this MariaDB server, and what each is for.
+///
+/// Every claim here was measured on this install rather than taken from
+/// MariaDB's manual: the row counts, the disabled performance_schema, the
+/// privilege errors, and the grants that decide who sees what.
+#[component]
+fn Databases() -> Element {
+    rsx! {
+        // Named link, not the icon, and above the list rather than beside one
+        // entry: what it heads off - reading seven databases as seven things
+        // GLPI uses - is a conclusion a reader reaches from the list itself,
+        // before there is anything to hover.
+        div { class: "mb-3",
+            InfoButton {
+                label: "What is this".to_string(),
+                title: "What these seven are".to_string(),
+                body: "Seven databases, and only two of them have anything to do with GLPI. \
+                       Four are the server's own bookkeeping and exist on every MariaDB \
+                       install whether GLPI is there or not: mysql, which holds the accounts, \
+                       grants and plugins; information_schema, a description of everything \
+                       else that is generated per query rather than stored; \
+                       performance_schema, the instrumentation, switched off on this server; \
+                       and sys, a layer of readable views over that instrumentation. test is \
+                       an empty historical leftover that MariaDB has shipped for decades. \
+                       That leaves glpi, the live database, and test_glpi_schema, the schema \
+                       copy made for reading in this app. GLPI's own data never crosses \
+                       between them: no GLPI table joins across schemas, so nothing in the \
+                       other six changes what any GLPI page shows. The one crossing is \
+                       metadata rather than data - DBmysql.php and the schema checker read \
+                       information_schema to list GLPI's own tables, and telemetry reads it \
+                       for the database size - and a lookup there is not a join."
+                    .to_string(),
+            }
+        }
+
+        div { class: "mb-4 text-sm",
+            span { class: "text-base-content/60", "Seven on this server: " }
+            a { class: "link link-primary", href: "#db-glpi", "glpi" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-schema-copy", "test_glpi_schema" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-test", "test" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-mysql", "mysql" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-information-schema", "information_schema" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-performance-schema", "performance_schema" }
+            " \u{b7} "
+            a { class: "link link-primary", href: "#db-sys", "sys" }
+            span { class: "text-base-content/60",
+                " - how many of them you see depends on the account you connect with."
+            }
+        }
+
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            div { id: "db-glpi",
+                Panel {
+                    title: "glpi".to_string(),
+                    subtitle: "The live one".to_string(),
+                    info: "Created by the NixOS module - services.mysql.ensureDatabases = \
+                           [ \"glpi\" ] in /etc/nixos/glpi.nix - and filled by GLPI's own \
+                           installer. Row counts below measured on this install."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "Everything GLPI knows: assets, agents, tickets, profiles, rights, \
+                         logs. 447 tables, the same set listed in the install schema. This is \
+                         production data for the GLPI running on this machine - nothing here \
+                         is a copy, and a dropped table is a restore from backup, not an undo."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "This app reaches two tables of it. " }
+                            "Its account holds SELECT on "
+                            code { class: "text-xs", "glpi_refusedequipments" }
+                            " and "
+                            code { class: "text-xs", "glpi_logs" }
+                            " and nothing else, which is why a schema browser pointed at that \
+                             account shows two tables rather than 447."
+                        }
+                        li {
+                            span { class: "font-medium", "What is actually in those two. " }
+                            "Measured today: glpi_logs holds 1424 rows, glpi_refusedequipments \
+                             holds none - no inventory submission has ever been refused on \
+                             this install, which is a finding rather than a gap."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-schema-copy",
+                Panel {
+                    title: "test_glpi_schema".to_string(),
+                    subtitle: "A readable copy of the schema, with no data in it".to_string(),
+                    info: "Imported from install/mysql/glpi-12.0.0-empty.sql, which carries \
+                           447 DROP/CREATE TABLE pairs and zero INSERTs. No root was needed: \
+                           see the test entry."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "Every GLPI table with every column, index and type, and not one row. \
+                         It exists because the account above cannot browse the real schema, \
+                         while the question \u{201c}what columns does this table have\u{201d} comes up \
+                         constantly. Here it can be answered in a GUI instead of by grepping \
+                         a 400 KB SQL file."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "It is disposable. " }
+                            "Nothing points at it and nothing writes to it. "
+                            code { class: "text-xs", "DROP DATABASE test_glpi_schema" }
+                            " costs nothing and it can be re-imported in seconds."
+                        }
+                        li {
+                            span { class: "font-medium", "It is a schema, not a mirror. " }
+                            "It reflects the shipped 12.0.0 schema file, not the live database. \
+                             Plugins, migrations or hand edits on the real install would not \
+                             appear here."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-test",
+                Panel {
+                    title: "test".to_string(),
+                    subtitle: "MariaDB's own scratch database, and it is not inert".to_string(),
+                    info: "SHOW GRANTS on this install lists two PUBLIC grants: full rights \
+                           on `test`.* and on `test\\_%`.* for every account."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "Shipped empty by MariaDB and usually ignored, but on this server it \
+                         is the reason an unprivileged account can do anything at all: the \
+                         default PUBLIC grants hand every authenticated account full rights \
+                         on test and on any database whose name begins test_."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "That is why the schema copy exists. " }
+                            "test_glpi_schema matches "
+                            code { class: "text-xs", "test\\_%" }
+                            ", so creating and filling it needed no root and no new grant."
+                        }
+                        li {
+                            span { class: "font-medium", "It is also a soft spot. " }
+                            "Any account that can log in can create and fill databases under \
+                             that prefix. Harmless on a single-user laptop, worth knowing \
+                             anywhere else."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-mysql",
+                Panel {
+                    title: "mysql".to_string(),
+                    subtitle: "The server's own bookkeeping".to_string(),
+                    info: "Reading it needs privileges this app's account does not have: \
+                           SELECT on mysql.user is refused with ERROR 1142."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "Accounts, their authentication plugins, every grant, stored \
+                         routines, time zones and the event scheduler's state. The two-table \
+                         scope described above is not a setting in GLPI or in this app - it \
+                         is rows in here."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "It decides who may connect how. " }
+                            "Accounts on this server authenticate with the unix_socket plugin, \
+                             which the kernel can only satisfy over a local socket - so they \
+                             cannot authenticate over TCP at all, whatever password is offered."
+                        }
+                        li {
+                            span { class: "font-medium", "Editing it by hand is the wrong tool. " }
+                            "CREATE USER and GRANT keep the in-memory privilege tables in step; \
+                             direct writes here need a FLUSH PRIVILEGES to take effect and can \
+                             leave the two views disagreeing."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-information-schema",
+                Panel {
+                    title: "information_schema".to_string(),
+                    subtitle: "Not stored anywhere - generated per query".to_string(),
+                    info: "Privilege-filtered by design: the same query returns different \
+                           rows to different accounts."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "A virtual database describing the others: tables, columns, indexes, \
+                         constraints, engines, character sets. There are no files behind it - \
+                         the server composes the answer while you ask."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "It reports what you may see, not what exists. " }
+                            "Counting glpi's tables through it as this app's account returns 2, \
+                             not 447. That is the grant talking, and it is the single easiest \
+                             way to mislead yourself about a database you do not fully own."
+                        }
+                        li {
+                            span { class: "font-medium", "Useful anyway. " }
+                            "Column types, nullability and index membership for everything you \
+                             can reach, queryable with ordinary SQL - which is how the figures \
+                             elsewhere on this page are produced."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-performance-schema",
+                Panel {
+                    title: "performance_schema".to_string(),
+                    subtitle: "Present and switched off".to_string(),
+                    info: "Measured here: @@performance_schema = 0, so the instrumentation \
+                           tables exist but stay empty."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "MariaDB's instrumentation: where time goes, which statements run, \
+                         what waits on what, memory by allocation site. On this server it is \
+                         disabled, so the database is listed and its tables return nothing."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "Turning it on is not free. " }
+                            "It costs memory and some throughput, and it needs a server \
+                             restart - performance_schema cannot be switched on at runtime."
+                        }
+                        li {
+                            span { class: "font-medium", "Nothing here depends on it. " }
+                            "No page in this app reads it, and GLPI does not either. It is \
+                             listed because it is one of the seven, not because it is in use."
+                        }
+                    }
+                }
+            }
+
+            div { id: "db-sys",
+                Panel {
+                    title: "sys".to_string(),
+                    subtitle: "Readable views over performance_schema".to_string(),
+                    info: "Its usefulness is tied to the entry above: with \
+                           performance_schema off, most of these views have nothing to show."
+                        .to_string(),
+                    p { class: "mb-3 text-sm",
+                        "A thin layer of views and helper routines that turn \
+                         performance_schema's raw counters into readable answers - slowest \
+                         statements, unused indexes, tables by I/O. It stores nothing of its \
+                         own."
+                    }
+                    ul { class: "ml-5 list-disc space-y-2 text-sm",
+                        li {
+                            span { class: "font-medium", "Empty here, by consequence. " }
+                            "With the instrumentation disabled these views return empty \
+                             results rather than errors, which reads as \u{201c}nothing is wrong\u{201d} \
+                             when it actually means \u{201c}nothing is being measured\u{201d}."
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// What this app reads out of GLPI's API - the other half of `DbRead`.
 ///

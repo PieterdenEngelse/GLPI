@@ -78,26 +78,79 @@ GLPI 11.0.12, not assumed:
   changed between runs" is unreachable *in v2.3*. v1 does answer it, per asset,
   via `with_logs=true` — see the note below on the `glpi_logs` grant.
 
-Both live in the database. The options are a read-only MariaDB user scoped to
-those two tables, or doing without. **Still not decided for those two** — do
-not quietly reach for SQL. Going direct to MariaDB bypasses GLPI's entity
-permissions and couples this app to GLPI's schema across upgrades, which is
-why the API is the default despite the gap.
+Both live in the database.
+
+**Decided on 2026-11-13, reversing what this section used to say.** The app
+reads the GLPI database directly, and not through a scoped grant: the account
+holds `ALL PRIVILEGES ON *.* ... WITH GRANT OPTION`, which is root-equivalent
+on this server. This section previously said "still not decided for those two
+— do not quietly reach for SQL"; that restriction is lifted, and the reasoning
+it rested on is not, so both halves are recorded here.
+
+What the reversal buys: the two gaps below stop being gaps, fleet-wide history
+becomes one query instead of one per machine, and the next question of this
+shape does not need a new grant and a new decision before it can be answered.
+
+What it costs, unchanged from the argument against it:
+
+- **Entity permissions are bypassed.** A profile scopes what the API returns;
+  a `SELECT` sees every entity. Anything read this way must not be presented
+  as though it had been filtered.
+- **The schema is now an interface.** A column renamed upstream breaks a query
+  at runtime, where the API would have dropped a field and left an `Option`
+  blank. Treat every direct read as needing the same per-column care
+  `glpi_refusedequipments` already gets — see the `db-read` tab.
+- **The API stays the default.** The rule is not "SQL is now fine", it is
+  "SQL is available where the API cannot answer". Where v2.3 or v1 answers a
+  question, use it: same account, same profile rights, same entity scope.
+- **Read-only is now a convention, not a constraint.** The grant permits
+  `INSERT`, `UPDATE`, `DELETE` and DDL on every database, so nothing in the
+  database refuses a write any more. This app reads and must keep reading:
+  GLPI maintains its own history, entity scoping and derived state, and
+  writing behind it corrupts the install in ways the UI will not show. The
+  grant no longer enforces that — the code and the reviewer do.
+
+The grant is to `pde@localhost` authenticating through the `unix_socket`
+plugin, which is the identity the service already connects as — the unit is a
+user unit and `GLPI_DB_URL` is `mysql://pde@localhost/glpi`, unchanged by any
+of this. The two narrow grants on `glpi_logs` and `glpi_refusedequipments`
+still appear in `SHOW GRANTS` and are now redundant.
+
+What the socket plugin still gives: no password exists anywhere, and the
+account cannot authenticate over TCP at all, because the plugin needs a peer
+credential the kernel supplies only over a local socket. That is the whole of
+the remaining protection, and it is about *reachability*, not authority.
+
+What it does not give is any scoping. The grant is **not scoped to this app** —
+it belongs to the login account, so every process running as `pde` is a DBA:
+any shell, any editor plugin, any agent. `DROP DATABASE glpi` needs no
+password, and `mysql.global_priv` (every account's authentication string) is
+readable. Scoping it to the service would mean a separate Unix user and a
+system unit; that has not been done, and until it is, "who may write to GLPI's
+database" is answered by "whoever is running as pde".
 
 What *has* been settled, in `docs/gl-db-api.md`: a database account does not
 help with anything about the API itself. The endpoint list, each endpoint's
 field list, the right → (tab, group) taxonomy, and which right an endpoint
 requires are all PHP, not rows. And where a question *is* answerable outside
 v2.3, the legacy v1 API answers it at lower cost — same account, same profile
-rights, same entity scope, none of which direct SQL preserves. So the open
-question is now narrow: `RefusedEquipment` and `glpi_logs` only.
+rights, same entity scope, none of which direct SQL preserves. That is still
+the reason to prefer v1 over a query wherever v1 answers; what changed above is
+only that a query is now available when it does not.
 
 ### The `glpi_logs` grant is provisioning. Do not revoke it as a tidy-up.
 
-The database account holds `SELECT` on `glpi_refusedequipments` **and**
-`glpi_logs`. Only the first is read by any code today, so an audit by present
-usage concludes the second is cruft. **That conclusion is wrong**, and it has
-already been reached once and argued for in detail before being caught.
+**Superseded on 2026-11-13 as to its scope** — the account now holds all
+privileges server-wide, so there is no longer a two-table grant to audit or
+revoke.
+The argument is kept because the reasoning is what matters and it generalises:
+it is the worked example of the rule at the end of this section, and the same
+mistake is now available against any table nothing reads yet.
+
+The grant used to be `SELECT` on `glpi_refusedequipments` **and** `glpi_logs`.
+Only the first was read by any code, so an audit by present usage concluded the
+second was cruft. **That conclusion is wrong**, and it had already been reached
+once and argued for in detail before being caught.
 
 It is held for field-level change history — "what changed between runs". A
 serial or MAC that silently changed between inventories is the natural fourth
