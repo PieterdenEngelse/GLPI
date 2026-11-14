@@ -66,9 +66,8 @@ pub const DB_TABS: [(&str, &str); 4] = [
 
 /// Third-level names: the sub-tabs two of the DB tabs carry, as they appear in
 /// the URL's `sub`.
-pub const MARIA_SUBS: [(&str, &str); 4] = [
+pub const MARIA_SUBS: [(&str, &str); 3] = [
     ("general", "general"),
-    ("engine", "engine"),
     ("storage", "storage"),
     ("databases", "db\u{2019}s"),
 ];
