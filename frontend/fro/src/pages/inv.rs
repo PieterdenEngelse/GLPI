@@ -16,7 +16,7 @@
 //! processors - converted for display here and nowhere else, so what the
 //! backend serves still matches what GLPI stores.
 use crate::api::{self, HardwareRow, NetworkRow, SoftwareRow};
-use crate::components::{InfoLink, InfoSection, Panel, RefreshControl, StatTile};
+use crate::components::{InfoLink, Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
 
 /// How often the three fleet views refetch, matching the other pages.
@@ -77,33 +77,22 @@ pub fn Inv() -> Element {
         Panel {
             title: "Inventory".to_string(),
             subtitle: "Four fleet-wide views of what the agents collected".to_string(),
-            info: "What the inventory agents collect, split by the kind of thing it is."
+            info: "What the inventory agents collect, split by the kind of thing it is. Why \
+                  this is separate from Agents and Computers: Those two pages answer whether \
+                  the collecting is working - which agents report, and which machines no \
+                  agent speaks for. These four are about what was collected. A fleet can be \
+                  perfectly healthy by the first measure and still hold nothing you can act \
+                  on. Where these four read from: GLPI's older v1 API, unlike every other \
+                  page here. Not a preference: the current API exposes components, volumes \
+                  and software installs only one machine at a time, and exposes network \
+                  ports and IP addresses at no address at all. v1 answers each of them for \
+                  the whole estate in a single call. It is the same account with the same \
+                  profile and the same entity scope, so these pages show exactly what the \
+                  rest of the app can see. Refused is still the odd one out: The other three \
+                  are read from GLPI's API. Refused equipment is in neither API and is read \
+                  from the database directly, which is why that page says so and explains \
+                  the trade on its own terms."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why this is separate from Agents and Computers",
-                    "Those two pages answer whether the collecting is working - which agents \
-                     report, and which machines no agent speaks for. These four are about what \
-                     was collected. A fleet can be perfectly healthy by the first measure and \
-                     still hold nothing you can act on.",
-                ),
-                InfoSection::new(
-                    "Where these four read from",
-                    "GLPI's older v1 API, unlike every other page here. Not a preference: the \
-                     current API exposes components, volumes and software installs only one \
-                     machine at a time, and exposes network ports and IP addresses at no \
-                     address at all. v1 answers each of them for the whole estate in a single \
-                     call. It is the same account with the same profile and the same entity \
-                     scope, so these pages show exactly what the rest of the app can see.",
-                ),
-                InfoSection::new(
-                    "Refused is still the odd one out",
-                    "The other three are read from GLPI's API. Refused equipment is in neither \
-                     API and is read from the database directly, which is why that page says \
-                     so and explains the trade on its own terms.",
-                ),
-            ],
-
             p { class: "max-w-prose text-sm text-base-content/80",
                 "Pick a view above. Hardware is what is inside each machine, Software is what \
                  is installed across the fleet, Network is the ports and addresses each \
@@ -183,32 +172,21 @@ pub fn InvHardware() -> Element {
                         title: "Hardware".to_string(),
                         subtitle: "Machines with nothing collected first".to_string(),
                         info: "What the agents found inside each machine - processors, \
-                               memory, disks and the operating system on them."
+                              memory, disks and the operating system on them. The columns: \
+                              Processor is the model the agent reported, with its core and \
+                              thread count and rated speed. Memory is the installed total \
+                              and how many modules make it up. Storage is the sum of every \
+                              volume and how full they are together. OS is the operating \
+                              system with its kernel version. Where it comes from: GLPI's v1 \
+                              collections, one call each for the whole fleet. The current \
+                              API serves the same facts only one machine at a time, so a \
+                              fleet view there would cost ten requests per machine instead \
+                              of ten in total. Why a figure can be missing: A blank cell \
+                              means the agent did not report that detail, not that the \
+                              machine lacks it. Virtual machines routinely report no memory \
+                              modules, and an architecture is often absent even where the \
+                              operating system is known."
                             .to_string(),
-                        info_sections: vec![
-                            InfoSection::new(
-                                "The columns",
-                                "Processor is the model the agent reported, with its core and \
-                                 thread count and rated speed. Memory is the installed total \
-                                 and how many modules make it up. Storage is the sum of every \
-                                 volume and how full they are together. OS is the operating \
-                                 system with its kernel version.",
-                            ),
-                            InfoSection::new(
-                                "Where it comes from",
-                                "GLPI's v1 collections, one call each for the whole fleet. \
-                                 The current API serves the same facts only one machine at a \
-                                 time, so a fleet view there would cost ten requests per \
-                                 machine instead of ten in total.",
-                            ),
-                            InfoSection::new(
-                                "Why a figure can be missing",
-                                "A blank cell means the agent did not report that detail, not \
-                                 that the machine lacks it. Virtual machines routinely report \
-                                 no memory modules, and an architecture is often absent even \
-                                 where the operating system is known.",
-                            ),
-                        ],
                         info_links: vec![InfoLink::new("Computers", "front/computer.php")],
                         actions: rsx! {
                             RefreshControl {
@@ -658,34 +636,23 @@ pub fn InvNetwork() -> Element {
                         title: "Network".to_string(),
                         subtitle: "One row per port, machines without any first".to_string(),
                         info: "The network interfaces each machine reported, with their \
-                               hardware addresses and the IP addresses on them."
+                              hardware addresses and the IP addresses on them. The columns: \
+                              Port is the interface name as the operating system knows it. \
+                              Type is what kind of interface GLPI recorded - Ethernet, Wifi, \
+                              Local for loopback. MAC is the hardware address, and Addresses \
+                              lists every IP on that interface, v4 and v6 together. This \
+                              page could not be built on the current API: Network ports have \
+                              a schema in GLPI's current API but no address to fetch them \
+                              from, and IP addresses are absent from it entirely. The \
+                              nearest it offers is a MAC per network card, one request per \
+                              machine, with no addresses attached. The older API serves \
+                              ports and addresses for the whole fleet in two calls, which is \
+                              why this page uses it. Addresses are matched to the right \
+                              interface: GLPI hangs an address off a name, and the name off \
+                              a port, so an address is traced back through both rather than \
+                              merely attributed to the machine. An address on the wrong \
+                              interface is usually the thing worth finding."
                             .to_string(),
-                        info_sections: vec![
-                            InfoSection::new(
-                                "The columns",
-                                "Port is the interface name as the operating system knows it. \
-                                 Type is what kind of interface GLPI recorded - Ethernet, \
-                                 Wifi, Local for loopback. MAC is the hardware address, and \
-                                 Addresses lists every IP on that interface, v4 and v6 \
-                                 together.",
-                            ),
-                            InfoSection::new(
-                                "This page could not be built on the current API",
-                                "Network ports have a schema in GLPI's current API but no \
-                                 address to fetch them from, and IP addresses are absent from \
-                                 it entirely. The nearest it offers is a MAC per network \
-                                 card, one request per machine, with no addresses attached. \
-                                 The older API serves ports and addresses for the whole fleet \
-                                 in two calls, which is why this page uses it.",
-                            ),
-                            InfoSection::new(
-                                "Addresses are matched to the right interface",
-                                "GLPI hangs an address off a name, and the name off a port, \
-                                 so an address is traced back through both rather than merely \
-                                 attributed to the machine. An address on the wrong interface \
-                                 is usually the thing worth finding.",
-                            ),
-                        ],
                         info_links: vec![InfoLink::new("Computers", "front/computer.php")],
                         actions: rsx! {
                             RefreshControl {
@@ -788,37 +755,25 @@ pub fn InvRefused() -> Element {
             title: "Refused".to_string(),
             subtitle: "Submissions GLPI threw away".to_string(),
             info: "Equipment GLPI rejected when an agent tried to submit it. The agent \
-                   reports success and exits cleanly; nothing appears; nothing says why."
+                  reports success and exits cleanly; nothing appears; nothing says why. Why \
+                  this is the failure worth catching: The agent runs, reports success and \
+                  exits cleanly; GLPI rejects what it sent; the machine never appears, or \
+                  its record silently stops being updated. Nothing in the agent's own log \
+                  says so. Worse, the agent still counts as reporting on the Agents page, \
+                  because GLPI records the moment of contact before it inspects what was \
+                  sent - so this failure looks healthy from every other angle. Where this \
+                  comes from: GLPI's database, directly. There is no address for refused \
+                  equipment anywhere in its API - not the current one, not the older one - \
+                  so this is the single thing in the app that is not read through GLPI's own \
+                  interface. Does that step around GLPI's permissions?: It would, left \
+                  alone, which is why it is not left alone. The rows shown are restricted to \
+                  the same entities the API reports as visible, so this page means the same \
+                  thing by \"everything\" as every other page. That restriction is now the \
+                  whole of it: the database account used to be narrower than the one the \
+                  rest of the app signs in with, and is not any more - it holds every \
+                  privilege on this server. What keeps this page honest is the entity filter \
+                  above and the single query behind it, not the grant."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why this is the failure worth catching",
-                    "The agent runs, reports success and exits cleanly; GLPI rejects what it \
-                     sent; the machine never appears, or its record silently stops being \
-                     updated. Nothing in the agent's own log says so. Worse, the agent still \
-                     counts as reporting on the Agents page, because GLPI records the moment \
-                     of contact before it inspects what was sent - so this failure looks \
-                     healthy from every other angle.",
-                ),
-                InfoSection::new(
-                    "Where this comes from",
-                    "GLPI's database, directly. There is no address for refused equipment \
-                     anywhere in its API - not the current one, not the older one - so this \
-                     is the single thing in the app that is not read through GLPI's own \
-                     interface.",
-                ),
-                InfoSection::new(
-                    "Does that step around GLPI's permissions?",
-                    "It would, left alone, which is why it is not left alone. The rows shown \
-                     are restricted to the same entities the API reports as visible, so this \
-                     page means the same thing by \"everything\" as every other page. That \
-                     restriction is now the whole of it: the database account used to be \
-                     narrower than the one the rest of the app signs in with, and is not any \
-                     more - it holds every privilege on this server. What keeps this page \
-                     honest is the entity filter above and the single query behind it, not \
-                     the grant.",
-                ),
-            ],
             info_links: vec![
                 InfoLink::new("Import rules", "front/ruleimportasset.php"),
                 InfoLink::new("Agents", "front/agent.php"),

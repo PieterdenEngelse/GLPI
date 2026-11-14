@@ -164,34 +164,22 @@ fn GlpiHealthPanel() -> Element {
             title: "GLPI's own health".to_string(),
             subtitle: "What the install says about itself".to_string(),
             info: "GLPI runs scheduled work of its own, and a task that stops looks exactly \
-                   like a task with nothing to do - the same blind spot this app exists to \
-                   close for inventory agents."
+                  like a task with nothing to do - the same blind spot this app exists to \
+                  close for inventory agents. Why a stuck task matters here: GLPI's \
+                  automatic actions are what keep its own data moving. One that has hung \
+                  reports nothing and blocks nothing visibly; the only trace is in this \
+                  status check. 12.0 added a separate list for actions that failed \
+                  repeatedly and now need a human, which is a stronger signal than hung. Why \
+                  the headline figure is not shown: GLPI publishes an overall status, and it \
+                  is the rollup across every service written back into the GLPI entry - so \
+                  it reads as a problem whenever anything at all is unhappy, including a \
+                  stuck task that has nothing to do with GLPI's own health. The schema check \
+                  below is GLPI's actual condition; the rollup is shown separately and \
+                  labelled as such. Unknown is most of this install: LDAP, IMAP, CAS and \
+                  mail collection all report no data here because none of them is \
+                  configured. That is not a fault and is not shown as one - but it is also \
+                  not health, so it reads as unknown."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why a stuck task matters here",
-                    "GLPI's automatic actions are what keep its own data moving. One that \
-                     has hung reports nothing and blocks nothing visibly; the only trace is \
-                     in this status check. 12.0 added a separate list for actions that \
-                     failed repeatedly and now need a human, which is a stronger signal \
-                     than hung.",
-                ),
-                InfoSection::new(
-                    "Why the headline figure is not shown",
-                    "GLPI publishes an overall status, and it is the rollup across every \
-                     service written back into the GLPI entry - so it reads as a problem \
-                     whenever anything at all is unhappy, including a stuck task that has \
-                     nothing to do with GLPI's own health. The schema check below is GLPI's \
-                     actual condition; the rollup is shown separately and labelled as such.",
-                ),
-                InfoSection::new(
-                    "Unknown is most of this install",
-                    "LDAP, IMAP, CAS and mail collection all report no data here because \
-                     none of them is configured. That is not a fault and is not shown as \
-                     one - but it is also not health, so it reads as unknown.",
-                ),
-            ],
-
             match &*status.read_unchecked() {
                 None => rsx! {
                     div { class: "flex items-center gap-2 text-base-content/60",
@@ -343,34 +331,21 @@ fn LoginSessionPanel() -> Element {
         Panel {
             title: "Login sessions".to_string(),
             subtitle: "New in GLPI 12".to_string(),
-            info: "Who holds a live session in GLPI, authenticating how, and from where. \
-                   GLPI 11 could not answer this at any API version."
+            info: "Who holds a live session in GLPI, authenticating how, and from where. GLPI \
+                  11 could not answer this at any API version. Read the scope before the \
+                  list: GLPI narrows this list to the account's own sessions unless that \
+                  account may change configuration - and it answers successfully either way, \
+                  without saying it narrowed anything. So under a narrowed scope a short \
+                  list means \u{201c}only mine\u{201d} and says nothing whatever about who \
+                  else is signed in. The scope is stated above the table for that reason. \
+                  Why this app's own sessions dominate: Each time this dashboard \
+                  authenticates, GLPI records a session, and an API sign-in never explicitly \
+                  ends - it expires. So these accumulate, and most of them are this app. \
+                  GLPI 12 added a scheduled task to purge old login history, which is the \
+                  intended answer to that growth. It starts at the upgrade: The table behind \
+                  this is new in GLPI 12, so it holds nothing from before this install was \
+                  upgraded. An empty or short history is not evidence about the past."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Read the scope before the list",
-                    "GLPI narrows this list to the account's own sessions unless that \
-                     account may change configuration - and it answers successfully either \
-                     way, without saying it narrowed anything. So under a narrowed scope a \
-                     short list means \u{201c}only mine\u{201d} and says nothing whatever \
-                     about who else is signed in. The scope is stated above the table for \
-                     that reason.",
-                ),
-                InfoSection::new(
-                    "Why this app's own sessions dominate",
-                    "Each time this dashboard authenticates, GLPI records a session, and an \
-                     API sign-in never explicitly ends - it expires. So these accumulate, \
-                     and most of them are this app. GLPI 12 added a scheduled task to purge \
-                     old login history, which is the intended answer to that growth.",
-                ),
-                InfoSection::new(
-                    "It starts at the upgrade",
-                    "The table behind this is new in GLPI 12, so it holds nothing from \
-                     before this install was upgraded. An empty or short history is not \
-                     evidence about the past.",
-                ),
-            ],
-
             match &*report.read_unchecked() {
                 None => rsx! {
                     div { class: "flex items-center gap-2 text-base-content/60",

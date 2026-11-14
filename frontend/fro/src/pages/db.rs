@@ -15,7 +15,7 @@
 //! denominator for exactly that reason.
 use crate::api::{self, RightsReport};
 use crate::components::nav;
-use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
+use crate::components::{InfoButton, InfoLink, Panel, StatTile};
 use dioxus::prelude::*;
 
 #[component]
@@ -132,37 +132,25 @@ fn DbRead() -> Element {
             title: "glpi_refusedequipments".to_string(),
             subtitle: "Granted, and read - 12 of its 14 columns".to_string(),
             info: "The submissions GLPI threw away. This is the table the refused view reads, \
-                   and the only source for it anywhere."
+                  and the only source for it anywhere. Why the columns are listed at all: \
+                  Because this is the cost of reading a database instead of an API. An API \
+                  that drops a field says which field; a query for a column that no longer \
+                  exists just fails, and a column quietly renamed returns nothing. Every \
+                  column here is treated as optional and renders blank rather than failing \
+                  the page, so the failure mode is a gap on screen - which is only \
+                  diagnosable if the expected columns are written down somewhere. The name \
+                  is plural, and that cost a GRANT: The table is glpi_refusedequipments. \
+                  GLPI pluralises its table names, so searching the source for the singular \
+                  matches every occurrence of the plural as a prefix and reads back as \
+                  confirmation that the singular is right. That mistake reached a real GRANT \
+                  statement, which failed with \u{201c}Table glpi.glpi_refusedequipment \
+                  doesn't exist\u{201d}. Where this comes from: GLPI's own install SQL for \
+                  12.0.1, not the live database - which the account could now be asked, \
+                  since the grant was widened, and is deliberately not. A release's file is \
+                  identical on every install and diffable between versions, where a live \
+                  query describes this one server only. The limit is the honest one: this \
+                  list is as current as the GLPI release it was read from."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why the columns are listed at all",
-                    "Because this is the cost of reading a database instead of an API. An API \
-                     that drops a field says which field; a query for a column that no longer \
-                     exists just fails, and a column quietly renamed returns nothing. Every \
-                     column here is treated as optional and renders blank rather than failing \
-                     the page, so the failure mode is a gap on screen - which is only \
-                     diagnosable if the expected columns are written down somewhere.",
-                ),
-                InfoSection::new(
-                    "The name is plural, and that cost a GRANT",
-                    "The table is glpi_refusedequipments. GLPI pluralises its table names, so \
-                     searching the source for the singular matches every occurrence of the \
-                     plural as a prefix and reads back as confirmation that the singular is \
-                     right. That mistake reached a real GRANT statement, which failed with \
-                     \u{201c}Table glpi.glpi_refusedequipment doesn't exist\u{201d}.",
-                ),
-                InfoSection::new(
-                    "Where this comes from",
-                    "GLPI's own install SQL for 12.0.1, not the live database - which the \
-                     account could now be asked, since the grant was widened, and is \
-                     deliberately not. A release's file is identical on every install and \
-                     diffable between versions, where a live query describes this one server \
-                     only. The limit is the honest one: this list is as current as the GLPI \
-                     release it was read from.",
-                ),
-            ],
-
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     thead {
@@ -197,39 +185,26 @@ fn DbRead() -> Element {
                 title: "glpi_logs".to_string(),
                 subtitle: "Granted, and not read yet - held for what is coming".to_string(),
                 info: "GLPI's own change history. The grant covers it; no query in this app \
-                       touches it."
+                      touches it. Why grant a table nothing reads: It was granted alongside \
+                      the refused table because widening a grant later means another round \
+                      of deciding. It is listed here rather than left implicit, so that an \
+                      unused grant is visible rather than forgotten. Not a loose end to tidy \
+                      away: The obvious audit - nothing reads it, so it should come out - is \
+                      the wrong test while an app is still being built, and this page said \
+                      otherwise until recently. The question is whether the capability is on \
+                      its way, and this one is: a serial or a MAC that changed quietly \
+                      between two inventories is the natural fourth failure beside stopped \
+                      reporting, never landed and no agent. What the grant buys is the whole \
+                      estate in one query, which is the part no API offers. What it would \
+                      answer: What changed on an asset between two inventory runs - \
+                      \u{201c}this machine's memory halved last Tuesday\u{201d}. Not \
+                      strictly unanswerable without it, and this page claimed otherwise \
+                      until recently: the older API returns an asset's history when asked \
+                      for it by id, one machine per request. That is the same per-machine \
+                      cost that sent the inventory pages to collections instead, and it is \
+                      the whole difference - a question asked of the fleet, rather than of \
+                      one machine at a time."
                     .to_string(),
-                info_sections: vec![
-                    InfoSection::new(
-                        "Why grant a table nothing reads",
-                        "It was granted alongside the refused table because widening a grant \
-                         later means another round of deciding. It is listed here rather than \
-                         left implicit, so that an unused grant is visible rather than \
-                         forgotten.",
-                    ),
-                    InfoSection::new(
-                        "Not a loose end to tidy away",
-                        "The obvious audit - nothing reads it, so it should come out - is the \
-                         wrong test while an app is still being built, and this page said \
-                         otherwise until recently. The question is whether the capability is \
-                         on its way, and this one is: a serial or a MAC that changed quietly \
-                         between two inventories is the natural fourth failure beside stopped \
-                         reporting, never landed and no agent. What the grant buys is the \
-                         whole estate in one query, which is the part no API offers.",
-                    ),
-                    InfoSection::new(
-                        "What it would answer",
-                        "What changed on an asset between two inventory runs - \u{201c}this \
-                         machine's memory halved last Tuesday\u{201d}. Not strictly \
-                         unanswerable without it, and this page claimed otherwise until \
-                         recently: the older API returns an asset's history when asked for it \
-                         by id, one machine per request. That is the same per-machine cost \
-                         that sent the inventory pages to collections instead, and it is the \
-                         whole difference - a question asked of the fleet, rather than of one \
-                         machine at a time.",
-                    ),
-                ],
-
                 div { class: "overflow-x-auto",
                     table { class: "table table-sm",
                         thead {
@@ -988,41 +963,26 @@ fn ApiRead(sub: String) -> Element {
             title: "Fields the API withholds".to_string(),
             subtitle: "Declared against received".to_string(),
             info: "A call can succeed and still be short a field. GLPI drops fields the \
-                   account may not read instead of refusing the request, so this compares \
-                   what GLPI's own schema promises against what actually arrived."
+                  account may not read instead of refusing the request, so this compares \
+                  what GLPI's own schema promises against what actually arrived. Why this is \
+                  not visible anywhere else: A withheld field is absent, not null, and this \
+                  app makes every field optional on purpose so that a drifting GLPI degrades \
+                  to a blank cell instead of a failed page. That is the right trade and it \
+                  is exactly what hides this: the cell looks like data GLPI does not have, \
+                  rather than data this account may not see. Where the comparison comes \
+                  from: GLPI publishes its own OpenAPI document, and it is generated from \
+                  the schema declarations rather than from the caller's rights - so it lists \
+                  every field, while the response carries only the permitted ones. The \
+                  difference between the two is the answer, and no second source is needed. \
+                  Write-only fields are not counted: A password field is declared and is \
+                  never returned to anybody. Counting those would report a permanent problem \
+                  on every call, so they are excluded and listed separately where present. \
+                  What it cannot tell you: Only top-level fields: a withheld key inside a \
+                  nested object is invisible to it. And it reports that a promised field did \
+                  not arrive, never why - a field held back by rights and a field GLPI \
+                  stopped sending are both simply missing. Nothing arriving to compare \
+                  against is reported as unknown rather than as clean."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why this is not visible anywhere else",
-                    "A withheld field is absent, not null, and this app makes every field \
-                     optional on purpose so that a drifting GLPI degrades to a blank cell \
-                     instead of a failed page. That is the right trade and it is exactly what \
-                     hides this: the cell looks like data GLPI does not have, rather than data \
-                     this account may not see.",
-                ),
-                InfoSection::new(
-                    "Where the comparison comes from",
-                    "GLPI publishes its own OpenAPI document, and it is generated from the \
-                     schema declarations rather than from the caller's rights - so it lists \
-                     every field, while the response carries only the permitted ones. The \
-                     difference between the two is the answer, and no second source is needed.",
-                ),
-                InfoSection::new(
-                    "Write-only fields are not counted",
-                    "A password field is declared and is never returned to anybody. Counting \
-                     those would report a permanent problem on every call, so they are \
-                     excluded and listed separately where present.",
-                ),
-                InfoSection::new(
-                    "What it cannot tell you",
-                    "Only top-level fields: a withheld key inside a nested object is invisible \
-                     to it. And it reports that a promised field did not arrive, never why - a \
-                     field held back by rights and a field GLPI stopped sending are both \
-                     simply missing. Nothing arriving to compare against is reported as \
-                     unknown rather than as clean.",
-                ),
-            ],
-
             match &*report.read_unchecked() {
                 None => rsx! {
                     div { class: "flex items-center gap-2 text-base-content/60",
@@ -1164,44 +1124,28 @@ fn Catalogue(rows: Vec<api::SchemaSummary>) -> Element {
         Panel {
             title: "Every schema the API declares".to_string(),
             subtitle: format!("{total} declared, {audited} of them audited"),
-            info: "GLPI's API publishes a description of itself, and this is the whole of what \
-                   it describes. Every name here is the shape of an API response - not a \
-                   database table, and not one of the tables under db-read."
+            info: "GLPI's API publishes a description of itself, and this is the whole of \
+                  what it describes. Every name here is the shape of an API response - not a \
+                  database table, and not one of the tables under db-read. Why the whole \
+                  list is here: Because it is the denominator. The audit above covers five \
+                  schemas, and five clean endpoints read as a clean API unless you can see \
+                  how many there are. The count is taken from the document on every load \
+                  rather than written down here, because a number nobody re-checks rots into \
+                  a lie. Why there is no Received column: Because it would cost one request \
+                  per schema - hundreds against one install - where the audited five cost \
+                  five. A figure that cannot be had cheaply is left out rather than \
+                  estimated from whatever the first page of a collection happened to carry. \
+                  Declared, readable, write-only: Declared is every property the schema \
+                  names. Write-only ones are never returned to anybody - a password field is \
+                  the clear case - so readable is what a caller could actually expect back, \
+                  and it is the number the audit compares against. They are split rather \
+                  than summed so a schema that is mostly write-only cannot look like one \
+                  that withholds. Not the same thing as db-read: db-read lists the two \
+                  tables of GLPI's database this app reads, by column. This lists response \
+                  shapes from GLPI's API. Nothing here is a table, nothing there is an \
+                  endpoint, and both are called a schema by somebody - which is why they are \
+                  two tabs on one page rather than one list."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why the whole list is here",
-                    "Because it is the denominator. The audit above covers five schemas, and \
-                     five clean endpoints read as a clean API unless you can see how many \
-                     there are. The count is taken from the document on every load rather \
-                     than written down here, because a number nobody re-checks rots into a \
-                     lie.",
-                ),
-                InfoSection::new(
-                    "Why there is no Received column",
-                    "Because it would cost one request per schema - hundreds against one \
-                     install - where the audited five cost five. A figure that cannot be had \
-                     cheaply is left out rather than estimated from whatever the first page \
-                     of a collection happened to carry.",
-                ),
-                InfoSection::new(
-                    "Declared, readable, write-only",
-                    "Declared is every property the schema names. Write-only ones are never \
-                     returned to anybody - a password field is the clear case - so readable \
-                     is what a caller could actually expect back, and it is the number the \
-                     audit compares against. They are split rather than summed so a schema \
-                     that is mostly write-only cannot look like one that withholds.",
-                ),
-                InfoSection::new(
-                    "Not the same thing as db-read",
-                    "db-read lists the two tables of GLPI's database this app reads, by \
-                     column. This lists response shapes from GLPI's API. \
-                     Nothing here is a table, nothing there is an endpoint, and both are \
-                     called a schema by somebody - which is why they are two tabs on one page \
-                     rather than one list.",
-                ),
-            ],
-
             // Capped and scrolled rather than laid out full: at this length the
             // list is something you look a name up in, and a page that scrolls
             // for hundreds of rows buries everything under it.
@@ -1362,44 +1306,28 @@ fn Operators() -> Element {
         Panel {
             title: "Operators".to_string(),
             subtitle: format!("All {} GLPI defines, whether or not this app uses them", OPERATORS.len()),
-            info: "RSQL is the filter language GLPI's API takes in its filter parameter. These \
-                   are every operator its parser defines - the full surface, not the part this \
-                   app currently builds."
+            info: "RSQL is the filter language GLPI's API takes in its filter parameter. \
+                  These are every operator its parser defines - the full surface, not the \
+                  part this app currently builds. Where this list comes from: GLPI's own \
+                  parser, read in the source of both releases and diffed - 16 operators in \
+                  11.0.12 and 18 in 12.0.1. It is not read from the API document, because \
+                  the document does not contain it: the filter parameter is described there \
+                  in full as \u{201c}RSQL query string\u{201d} and names no operator at all. \
+                  Two of them need 12.0.1: =istruthy= and =isnottruthy= are the only \
+                  operators 12.0.1 adds. An install still on 11.0.12 answers them with an \
+                  RSQL error rather than ignoring them, so the failure is loud either way - \
+                  which is the useful kind. Case, and what empty means: =like= is matched \
+                  against a BINARY cast and is therefore case sensitive, where =ilike= is \
+                  not; that is the only difference between them. =empty= covers both the \
+                  empty string and NULL, where =isnull= covers only NULL - so a column \
+                  holding \u{27}\u{27} answers =empty= and not =isnull=. All eighteen are \
+                  reachable from this app: The filter builder in this app covers every \
+                  operator listed here, including the two that need 12.0.1, and flags those \
+                  so a caller can avoid them on an older install. What it does not do is \
+                  guess: values are always quoted and escaped, because an unquoted value \
+                  containing a semicolon or a comma silently changes the shape of the query \
+                  rather than failing."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Where this list comes from",
-                    "GLPI's own parser, read in the source of both releases and diffed - 16 \
-                     operators in 11.0.12 and 18 in 12.0.1. It is not read from the API \
-                     document, because the document does not contain it: the filter parameter \
-                     is described there in full as \u{201c}RSQL query string\u{201d} and names \
-                     no operator at all.",
-                ),
-                InfoSection::new(
-                    "Two of them need 12.0.1",
-                    "=istruthy= and =isnottruthy= are the only operators 12.0.1 adds. An \
-                     install still on 11.0.12 answers them with an RSQL error rather than \
-                     ignoring them, so the failure is loud either way - which is the useful \
-                     kind.",
-                ),
-                InfoSection::new(
-                    "Case, and what empty means",
-                    "=like= is matched against a BINARY cast and is therefore case sensitive, \
-                     where =ilike= is not; that is the only difference between them. =empty= \
-                     covers both the empty string and NULL, where =isnull= covers only NULL - \
-                     so a column holding \u{27}\u{27} answers =empty= and not =isnull=.",
-                ),
-                InfoSection::new(
-                    "All eighteen are reachable from this app",
-                    "The filter builder in this app covers every operator listed here, \
-                     including the two that need 12.0.1, and flags those so a caller can \
-                     avoid them on an older install. What it does not do is guess: values are \
-                     always quoted and escaped, because an unquoted value containing a \
-                     semicolon or a comma silently changes the shape of the query rather than \
-                     failing.",
-                ),
-            ],
-
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     thead {
@@ -1449,28 +1377,19 @@ fn Grammar() -> Element {
             title: "Grammar".to_string(),
             subtitle: "What joins terms, and what must be escaped".to_string(),
             info: "An operator on its own is not a query. These are the characters that \
-                   combine terms, group them, and quote a value - every one of them from \
-                   GLPI's lexer rather than from an example that happened to work."
+                  combine terms, group them, and quote a value - every one of them from \
+                  GLPI's lexer rather than from an example that happened to work. Why \
+                  escaping is the whole hazard: An unquoted value runs until the next \
+                  unescaped comma, semicolon or closing parenthesis. So a computer named \
+                  foo;bar, interpolated straight into a filter, does not fail - it becomes \
+                  two terms joined by AND, and the answer comes back wrong and plausible. \
+                  Quoting and escaping is why this app builds filters rather than formatting \
+                  them. Dots reach into joined records: A property name may contain dots, \
+                  and GLPI resolves the path across the joins its schema declares - so \
+                  user.name filters computers by the name of the user they are assigned to, \
+                  in one request. That is the part worth knowing: the filter is not \
+                  restricted to the columns of one table."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why escaping is the whole hazard",
-                    "An unquoted value runs until the next unescaped comma, semicolon or \
-                     closing parenthesis. So a computer named foo;bar, interpolated \
-                     straight into a filter, does not fail - it becomes two terms joined \
-                     by AND, and the answer comes back wrong and plausible. Quoting and \
-                     escaping is why this app builds filters rather than formatting them.",
-                ),
-                InfoSection::new(
-                    "Dots reach into joined records",
-                    "A property name may contain dots, and GLPI resolves the path across \
-                     the joins its schema declares - so user.name filters computers by \
-                     the name of the user they are assigned to, in one request. That is \
-                     the part worth knowing: the filter is not restricted to the columns \
-                     of one table.",
-                ),
-            ],
-
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     thead {
@@ -1514,35 +1433,22 @@ fn Usage(reach: api::FilterReach) -> Element {
                 "Counts unavailable - the reference below is unaffected".to_string()
             },
             info: "Which calls can be filtered at all, and the three ways GLPI rejects a \
-                   filter it will not run."
+                  filter it will not run. The counts are live: Read off GLPI's own API \
+                  document on this install each time the tab opens, not written down here - \
+                  the same rule the rest of this page follows. Zero means the document could \
+                  not be read, which the fields tab explains; it does not mean filtering is \
+                  unavailable. Mapped properties are refused: A property GLPI computes from \
+                  another one - declared x-mapped-from in its schema - cannot be filtered, \
+                  and the request fails with \u{201c}Mapped properties cannot be used in \
+                  RSQL\u{201d}. There are 43 such declarations in 12.0.1 against 31 in \
+                  11.0.12, so the surface grows at the upgrade. None of them are \
+                  discoverable from the document: it strips the extension, so the only way \
+                  to know a property is unfilterable is to filter on it and read the error. \
+                  The three refusals: Unknown property, unknown operator, and mapped \
+                  property. All three name the offending term rather than failing the whole \
+                  call silently, which is the one respect in which this is friendlier than \
+                  the database: a filter that cannot run says so."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "The counts are live",
-                    "Read off GLPI's own API document on this install each time the tab \
-                     opens, not written down here - the same rule the rest of this page \
-                     follows. Zero means the document could not be read, which the fields \
-                     tab explains; it does not mean filtering is unavailable.",
-                ),
-                InfoSection::new(
-                    "Mapped properties are refused",
-                    "A property GLPI computes from another one - declared x-mapped-from in \
-                     its schema - cannot be filtered, and the request fails with \
-                     \u{201c}Mapped properties cannot be used in RSQL\u{201d}. There are 43 \
-                     such declarations in 12.0.1 against 31 in 11.0.12, so the surface \
-                     grows at the upgrade. None of them are discoverable from the \
-                     document: it strips the extension, so the only way to know a \
-                     property is unfilterable is to filter on it and read the error.",
-                ),
-                InfoSection::new(
-                    "The three refusals",
-                    "Unknown property, unknown operator, and mapped property. All three \
-                     name the offending term rather than failing the whole call silently, \
-                     which is the one respect in which this is friendlier than the \
-                     database: a filter that cannot run says so.",
-                ),
-            ],
-
             div { class: "max-w-prose space-y-2 text-sm text-base-content/70",
                 p {
                     "Filtering is a GET-only affair, and the "
@@ -1698,26 +1604,17 @@ fn WhereItLives() -> Element {
             title: "Where GLPI keeps this".to_string(),
             subtitle: "What is data, and what is program".to_string(),
             info: "Which parts of GLPI's behaviour live in its database, and which are fixed \
-                   in its code."
+                  in its code. Why it is worth knowing: It decides what can be changed, by \
+                  whom, and what a database account would be good for. Anything in the \
+                  database can be edited by an administrator and differs between \
+                  installations. Anything in the code is the same everywhere and changes \
+                  only when GLPI is upgraded. This app does not read the database: \
+                  Everything it shows comes through GLPI's API, as the account on the Status \
+                  page. That is deliberate: the API applies the account's own permissions \
+                  and its entity scope on every request, and reading the database directly \
+                  would bypass both - as well as tying this app to GLPI's internal table \
+                  layout across upgrades."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why it is worth knowing",
-                    "It decides what can be changed, by whom, and what a database account \
-                     would be good for. Anything in the database can be edited by an \
-                     administrator and differs between installations. Anything in the code is \
-                     the same everywhere and changes only when GLPI is upgraded.",
-                ),
-                InfoSection::new(
-                    "This app does not read the database",
-                    "Everything it shows comes through GLPI's API, as the account on the \
-                     Status page. That is deliberate: the API applies the account's own \
-                     permissions and its entity scope on every request, and reading the \
-                     database directly would bypass both - as well as tying this app to \
-                     GLPI's internal table layout across upgrades.",
-                ),
-            ],
-
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     thead {
@@ -1858,33 +1755,20 @@ fn CustomObjects() -> Element {
             title: "The one exception".to_string(),
             subtitle: "Custom asset and dropdown types".to_string(),
             info: "Custom types are the one case where defining something in GLPI's database \
-                   creates both a new API address and a new right."
+                  creates both a new API address and a new right. How it works: A custom \
+                  type is a row describing it. GLPI builds the class for that type when it \
+                  starts, taking the right's name from the row - so a type whose internal \
+                  name is kiosk gets a right called asset_kiosk - and keeps the rights table \
+                  in step as the definition's profiles are edited. No code changes. Why it \
+                  is worth flagging: It means the API's address list is not fixed, and \
+                  neither is the set of rights. Anything that treats either as a constant - \
+                  including a page like this one - is wrong in principle. It is also why the \
+                  figures above are counted from GLPI rather than written down here. Not \
+                  observed here: This installation defines no custom types, so the addresses \
+                  exist as templates with nothing behind them. The behaviour described above \
+                  was read in GLPI's source and confirmed only as far as the empty result; \
+                  it has never been watched happen on this box."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "How it works",
-                    "A custom type is a row describing it. GLPI builds the class for that type \
-                     when it starts, taking the right's name from the row - so a type whose \
-                     internal name is kiosk gets a right called asset_kiosk - and keeps the \
-                     rights table in step as the definition's profiles are edited. No code \
-                     changes.",
-                ),
-                InfoSection::new(
-                    "Why it is worth flagging",
-                    "It means the API's address list is not fixed, and neither is the set of \
-                     rights. Anything that treats either as a constant - including a page like \
-                     this one - is wrong in principle. It is also why the figures above are \
-                     counted from GLPI rather than written down here.",
-                ),
-                InfoSection::new(
-                    "Not observed here",
-                    "This installation defines no custom types, so the addresses exist as \
-                     templates with nothing behind them. The behaviour described above was \
-                     read in GLPI's source and confirmed only as far as the empty result; it \
-                     has never been watched happen on this box.",
-                ),
-            ],
-
             p { class: "max-w-prose text-sm text-base-content/80",
                 "Define a custom asset type called Kiosk in GLPI and three things appear "
                 "together, with no change to this app or to GLPI's code: an API address for "

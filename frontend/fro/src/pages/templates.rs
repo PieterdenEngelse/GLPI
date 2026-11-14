@@ -12,7 +12,7 @@
 //! Reference, not telemetry - nothing on these pages is live. Every claim was
 //! read in the GLPI 12.0.1 source or its install schema and names where.
 use crate::app::Route;
-use crate::components::{InfoLink, InfoSection, Panel};
+use crate::components::{InfoLink, Panel};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -242,32 +242,20 @@ pub fn TemplateForm() -> Element {
         Panel {
             title: "A form definition".to_string(),
             subtitle: "The only template kind that decides what a screen looks like".to_string(),
-            info: "ITILTemplate and its three subclasses, and why the table \
-                   itself looks empty."
+            info: "ITILTemplate and its three subclasses, and why the table itself looks \
+                  empty. Where this was read: glpi_tickettemplates holds id, name, \
+                  entities_id, is_recursive, comment and allowed_statuses - no ticket fields \
+                  at all. The behaviour lives in four tables per kind, and they are not \
+                  alike: hiddenfields, readonlyfields and mandatoryfields carry only a \
+                  template and a field number, unique on that pair, while predefinedfields \
+                  alone adds a value column and has no such unique key. ITILTemplate extends \
+                  CommonDropdown; TicketTemplate, ChangeTemplate and ProblemTemplate extend \
+                  ITILTemplate. Resolved from context: tickettemplates_id sits on \
+                  glpi_entities, glpi_profiles and glpi_itilcategories, with separate \
+                  _demand and _incident columns, so the DEFAULT template depends on the \
+                  entity, the profile and the category you are in rather than being set in \
+                  one place."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Where this was read",
-                    "glpi_tickettemplates holds id, name, entities_id, \
-                     is_recursive, comment and allowed_statuses - no ticket fields \
-                     at all. The behaviour lives in four tables per kind, and they \
-                     are not alike: hiddenfields, readonlyfields and \
-                     mandatoryfields carry only a template and a field number, \
-                     unique on that pair, while predefinedfields alone adds a \
-                     value column and has no such unique key. ITILTemplate extends \
-                     CommonDropdown; TicketTemplate, ChangeTemplate and \
-                     ProblemTemplate extend ITILTemplate.",
-                ),
-                InfoSection::new(
-                    "Resolved from context",
-                    "tickettemplates_id sits on glpi_entities, glpi_profiles and \
-                     glpi_itilcategories, with separate _demand and _incident \
-                     columns, so the DEFAULT template depends on the entity, the \
-                     profile and the category you are in rather than being set in \
-                     one place.",
-                ),
-            ],
-
             p { class: "mb-3 text-sm",
                 "This is the kind that "
                 span { class: "font-medium", "does" }

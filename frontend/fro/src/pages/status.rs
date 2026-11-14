@@ -50,27 +50,17 @@ fn SessionPanel(session: SessionInfo) -> Element {
         Panel {
             title: "GLPI session".to_string(),
             subtitle: "The identity and rights this dashboard reads with".to_string(),
-            info: "This app signs in to GLPI as an ordinary user and can only see what \
-                   that user is allowed to see."
+            info: "This app signs in to GLPI as an ordinary user and can only see what that \
+                  user is allowed to see. When GLPI refuses a request it answers with a \
+                  single sentence - you do not have permission to perform this action - and \
+                  does not say which permission was missing. There is no way to tell from \
+                  the refusal alone whether the account cannot list agents, cannot list \
+                  entities, or is simply pointed at the wrong part of GLPI. This page shows \
+                  all of it at once. If a page is empty, check in this order: both rights below are granted; the \
+                  interface is Standard; and child entities are included. An empty list with \
+                  all four green means GLPI genuinely has nothing to show, which is a \
+                  different and much better answer."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why this page exists",
-                    "When GLPI refuses a request it answers with a single sentence - you do \
-                     not have permission to perform this action - and does not say which \
-                     permission was missing. There is no way to tell from the refusal alone \
-                     whether the account cannot list agents, cannot list entities, or is \
-                     simply pointed at the wrong part of GLPI. This page shows all of it at \
-                     once.",
-                ),
-                InfoSection::new(
-                    "If a page is empty",
-                    "Check in this order: both rights below are granted; the interface is \
-                     Standard; and child entities are included. An empty list with all four \
-                     green means GLPI genuinely has nothing to show, which is a different \
-                     and much better answer.",
-                ),
-            ],
             info_links: vec![
                 InfoLink::new("Users", "front/user.php"),
                 InfoLink::new("Profiles", "front/profile.php"),
@@ -296,32 +286,18 @@ fn AuthTable(rows: Vec<Authorization>) -> Element {
         Panel {
             title: "Authorizations".to_string(),
             subtitle: "Every profile this account may use, the one in force first".to_string(),
-            info: "What this account is allowed to be in GLPI, and what each of those \
-                   options would grant."
+            info: "What this account is allowed to be in GLPI, and what each of those options \
+                  would grant. GLPI activates exactly one profile per session - the \
+                  account's default - so the others are available but inactive. Holding a \
+                  second authorization does not add its permissions to the first; it only \
+                  means the account could be switched to it. Agent and Entity are the two \
+                  permissions this app needs, shown as GLPI stores them. Anything other than \
+                  none means read access is present. A helpdesk profile always shows none, \
+                  because those permissions cannot exist on one. GLPI's current API does not \
+                  expose authorizations at all - not for this account, not for any other. \
+                  This panel reads GLPI's older interface, which still does. It is the only \
+                  way to see this without opening GLPI itself."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Only one is in force",
-                    "GLPI activates exactly one profile per session - the account's default - \
-                     so the others are available but inactive. Holding a second authorization \
-                     does not add its permissions to the first; it only means the account \
-                     could be switched to it.",
-                ),
-                InfoSection::new(
-                    "Reading the rights",
-                    "Agent and Entity are the two permissions this app needs, shown as GLPI \
-                     stores them. Anything other than none means read access is present. A \
-                     helpdesk profile always shows none, because those permissions cannot \
-                     exist on one.",
-                ),
-                InfoSection::new(
-                    "Where this comes from",
-                    "GLPI's current API does not expose authorizations at all - not for this \
-                     account, not for any other. This panel reads GLPI's older interface, \
-                     which still does. It is the only way to see this without opening GLPI \
-                     itself.",
-                ),
-            ],
             info_links: vec![
                 InfoLink::new("Users", "front/user.php"),
                 InfoLink::new("Profiles", "front/profile.php"),

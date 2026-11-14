@@ -1,5 +1,5 @@
 use crate::api::AgentStatus;
-use crate::components::{InfoLink, InfoSection, StatTile};
+use crate::components::{InfoLink, StatTile};
 use dioxus::prelude::*;
 
 /// The four numbers worth seeing before the table.
@@ -71,31 +71,20 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 alarm: stale > 0,
                 desc: "overdue or never seen".to_string(),
                 body: "Agents that have not checked in for more than 26 hours, or that have \
-                       never checked in at all.".to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why this app exists",
-                        "GLPI has no notion of an agent being overdue. It shows the machine \
-                         the agent created and goes on showing it, looking perfectly healthy, \
-                         however long ago that agent went quiet. Nothing in GLPI turns \
-                         amber. This number is the whole reason for this dashboard.",
-                    ),
-                    InfoSection::new(
-                        "Never seen counts here",
-                        "An agent that registered and was then never heard from is counted \
-                         as stale, not as unknown. Silent from the very start is a worse \
-                         sign than late: it usually means the agent was installed but could \
-                         never reach GLPI, and nobody noticed because an asset did appear.",
-                    ),
-                    InfoSection::new(
-                        "What to check",
-                        "In rough order: the machine is off or off the network; the agent \
-                         service stopped or was removed; the machine was retired but its \
-                         agent record was not; or GLPI is refusing the submissions. That \
-                         last one is invisible from here - GLPI does not expose rejected \
-                         inventories through its API at all.",
-                    ),
-                ],
+                      never checked in at all. Why this app exists: GLPI has no notion of an \
+                      agent being overdue. It shows the machine the agent created and goes \
+                      on showing it, looking perfectly healthy, however long ago that agent \
+                      went quiet. Nothing in GLPI turns amber. This number is the whole \
+                      reason for this dashboard. Never seen counts here: An agent that \
+                      registered and was then never heard from is counted as stale, not as \
+                      unknown. Silent from the very start is a worse sign than late: it \
+                      usually means the agent was installed but could never reach GLPI, and \
+                      nobody noticed because an asset did appear. What to check: In rough \
+                      order: the machine is off or off the network; the agent service \
+                      stopped or was removed; the machine was retired but its agent record \
+                      was not; or GLPI is refusing the submissions. That last one is \
+                      invisible from here - GLPI does not expose rejected inventories \
+                      through its API at all.".to_string(),
                 links: vec![InfoLink::new("Agents", "front/agent.php")],
             }
 
@@ -104,34 +93,22 @@ pub fn StatRow(agents: Vec<AgentStatus>) -> Element {
                 value: not_landing.to_string(),
                 alarm: not_landing > 0,
                 desc: "reporting, nothing stored".to_string(),
-                body: "Agents that are checking in normally while nothing they send is \
-                       being kept."
+                body: "Agents that are checking in normally while nothing they send is being \
+                      kept. Why this looks healthy everywhere else: GLPI records the moment \
+                      of contact from the submission's own header, before it inspects what \
+                      was sent. If an import rule then throws the submission away, the \
+                      contact time has already been written - so the agent appears to be \
+                      reporting, because it is. Nothing in GLPI's asset list says the data \
+                      was discarded. How it is detected: By comparing two dates GLPI does \
+                      keep honestly: when the agent last made contact, and when its \
+                      machine's record was last actually written. A machine whose details \
+                      have not changed still gets its record stamped, so a gap between the \
+                      two means the submissions are arriving and not being stored. What to \
+                      do: Look at the import rules in GLPI - something is matching this \
+                      machine and refusing it. The refusal itself is recorded in GLPI's \
+                      database but is not available through its API, so this page can say \
+                      that it is happening but not yet which rule is responsible."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why this looks healthy everywhere else",
-                        "GLPI records the moment of contact from the submission's own \
-                         header, before it inspects what was sent. If an import rule then \
-                         throws the submission away, the contact time has already been \
-                         written - so the agent appears to be reporting, because it is. \
-                         Nothing in GLPI's asset list says the data was discarded.",
-                    ),
-                    InfoSection::new(
-                        "How it is detected",
-                        "By comparing two dates GLPI does keep honestly: when the agent \
-                         last made contact, and when its machine's record was last \
-                         actually written. A machine whose details have not changed still \
-                         gets its record stamped, so a gap between the two means the \
-                         submissions are arriving and not being stored.",
-                    ),
-                    InfoSection::new(
-                        "What to do",
-                        "Look at the import rules in GLPI - something is matching this \
-                         machine and refusing it. The refusal itself is recorded in GLPI's \
-                         database but is not available through its API, so this page can \
-                         say that it is happening but not yet which rule is responsible.",
-                    ),
-                ],
                 links: vec![InfoLink::new("Import rules", "front/ruleimportasset.php")],
             }
             StatTile {

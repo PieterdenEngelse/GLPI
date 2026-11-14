@@ -5,7 +5,7 @@
 //! orphaned asset does not go quiet, it simply never changes again, which
 //! looks exactly like hardware that has not changed.
 use crate::api::{self, ComputerStatus, Named};
-use crate::components::{InfoLink, InfoSection, Panel, RefreshControl, StatTile};
+use crate::components::{InfoLink, Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
 
 const REFRESH_MS: u32 = 5 * 60 * 1000;
@@ -59,32 +59,23 @@ pub fn Computers() -> Element {
                             value: orphans.to_string(),
                             alarm: orphans > 0,
                             desc: "nothing will update these".to_string(),
-                            body: "Computers that no agent reports for. Their details are frozen at \
-                                   whatever was last recorded, and nothing will ever correct them."
+                            body: "Computers that no agent reports for. Their details are \
+                                  frozen at whatever was last recorded, and nothing will \
+                                  ever correct them. Why this is hard to spot: An agent that \
+                                  stops reporting at least goes quiet, and the Agents page \
+                                  can measure that silence. A machine with no agent never \
+                                  goes quiet - it simply never changes again, which looks \
+                                  exactly like hardware that has not changed. GLPI shows it \
+                                  beside every other asset with nothing to distinguish it. \
+                                  Common causes: The agent was never installed; it was \
+                                  removed or its package uninstalled; the machine was \
+                                  retired and the asset kept; or the record was created by \
+                                  hand and never matched to a real agent. How this is worked \
+                                  out: Each agent in GLPI points at the item it inventories. \
+                                  This counts computers that no agent points at, matching on \
+                                  the record GLPI itself stores - so it reflects GLPI's own \
+                                  linkage, not a guess based on names."
                                 .to_string(),
-                            sections: vec![
-                                InfoSection::new(
-                                    "Why this is hard to spot",
-                                    "An agent that stops reporting at least goes quiet, and the Agents \
-                                     page can measure that silence. A machine with no agent never goes \
-                                     quiet - it simply never changes again, which looks exactly like \
-                                     hardware that has not changed. GLPI shows it beside every other \
-                                     asset with nothing to distinguish it.",
-                                ),
-                                InfoSection::new(
-                                    "Common causes",
-                                    "The agent was never installed; it was removed or its package \
-                                     uninstalled; the machine was retired and the asset kept; or the \
-                                     record was created by hand and never matched to a real agent.",
-                                ),
-                                InfoSection::new(
-                                    "How this is worked out",
-                                    "Each agent in GLPI points at the item it inventories. This counts \
-                                     computers that no agent points at, matching on the record GLPI \
-                                     itself stores - so it reflects GLPI's own linkage, not a guess \
-                                     based on names.",
-                                ),
-                            ],
                             links: vec![
                                 InfoLink::new("Computers", "front/computer.php"),
                                 InfoLink::new("Agents", "front/agent.php"),

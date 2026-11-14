@@ -13,7 +13,7 @@
 //! backend/src/glpi/rights.rs for why v2.3 cannot answer this, and why the
 //! obvious v2.3 workaround silently answers it wrongly.
 use crate::api::{self, CallStatus, ProfileRights, RightEntry, RightsReport};
-use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
+use crate::components::{InfoButton, InfoLink, Panel, StatTile};
 use dioxus::prelude::*;
 
 #[component]
@@ -102,34 +102,23 @@ fn Report(report: RightsReport, tab: String) -> Element {
             Panel {
                 title: "Profiles".to_string(),
                 subtitle: format!("{} in this GLPI", profiles.len()),
-                info: "Every profile GLPI holds, not only the ones this app's account may use. \
-                       Select one to see its rights in full."
+                info: "Every profile GLPI holds, not only the ones this app's account may \
+                      use. Select one to see its rights in full. Why every profile is \
+                      listed: A permissions question is rarely about the profile you are \
+                      already in. It is usually either comparing one against another - this \
+                      profile works and that one does not - or checking that a profile \
+                      nobody is watching has not been given more than it needs. The active \
+                      one: Marked below. GLPI activates exactly one profile per session, so \
+                      that is the only one in force for this app; an account authorised for \
+                      others gains nothing from them until one becomes its default. The \
+                      Status page shows the authorisations side of this. Where this comes \
+                      from: GLPI's older API. Its current one cannot report the rights of \
+                      any profile except the one the request is already running as, and the \
+                      header that looks like it should change that is ignored for any \
+                      profile the account is not authorised for - returning the account's \
+                      own rights, successfully, under the other profile's name. Reading the \
+                      rights directly avoids that trap entirely."
                     .to_string(),
-                info_sections: vec![
-                    InfoSection::new(
-                        "Why every profile is listed",
-                        "A permissions question is rarely about the profile you are already in. It \
-                         is usually either comparing one against another - this profile works and \
-                         that one does not - or checking that a profile nobody is watching has not \
-                         been given more than it needs.",
-                    ),
-                    InfoSection::new(
-                        "The active one",
-                        "Marked below. GLPI activates exactly one profile per session, so that is \
-                         the only one in force for this app; an account authorised for others gains \
-                         nothing from them until one becomes its default. The Status page shows the \
-                         authorisations side of this.",
-                    ),
-                    InfoSection::new(
-                        "Where this comes from",
-                        "GLPI's older API. Its current one cannot report the rights of any profile \
-                         except the one the request is already running as, and the header that \
-                         looks like it should change that is ignored for any profile the account is \
-                         not authorised for - returning the account's own rights, successfully, \
-                         under the other profile's name. Reading the rights directly avoids that \
-                         trap entirely.",
-                    ),
-                ],
                 info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
                 div { class: "flex flex-wrap gap-2",
@@ -199,35 +188,24 @@ fn ProfilePanel(profile: ProfileRights, grouped: bool, form_only: Vec<String>) -
                 value: format!("{} of {}", granted.len(), total),
                 desc: "rights this profile holds".to_string(),
                 body: "GLPI divides permission into one right per area of the application - \
-                       computers, tickets, agents, and so on. This counts how many of them \
-                       this profile has been given at least some access to."
+                      computers, tickets, agents, and so on. This counts how many of them \
+                      this profile has been given at least some access to. Why the total \
+                      matters too: The denominator is every right that exists anywhere in \
+                      this GLPI, so the ones this profile does NOT have are listed below as \
+                      well. That is deliberate: when GLPI refuses a request it never names \
+                      the missing permission, so seeing that a right exists and is not \
+                      granted is usually the answer. The same total for every profile: GLPI \
+                      does not record every right against every profile - it keeps only the \
+                      entries that exist, and a few rights are recorded on some profiles and \
+                      not others. Counting each profile against its own entries would give \
+                      them different denominators and make two profiles look comparable when \
+                      they are not, so every profile here is counted against the same full \
+                      set. “No entry” in the table: Means GLPI holds no setting for that \
+                      right on this profile, as opposed to holding one that is switched off. \
+                      The effect is identical - GLPI denies both - but only one of them is a \
+                      decision somebody made, so the table does not call the other one “not \
+                      granted”."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Why the total matters too",
-                        "The denominator is every right that exists anywhere in this GLPI, so \
-                         the ones this profile does NOT have are listed below as well. That is \
-                         deliberate: when GLPI refuses a request it never names the missing \
-                         permission, so seeing that a right exists and is not granted is \
-                         usually the answer.",
-                    ),
-                    InfoSection::new(
-                        "The same total for every profile",
-                        "GLPI does not record every right against every profile - it keeps only \
-                         the entries that exist, and a few rights are recorded on some profiles \
-                         and not others. Counting each profile against its own entries would \
-                         give them different denominators and make two profiles look comparable \
-                         when they are not, so every profile here is counted against the same \
-                         full set.",
-                    ),
-                    InfoSection::new(
-                        "“No entry” in the table",
-                        "Means GLPI holds no setting for that right on this profile, as opposed \
-                         to holding one that is switched off. The effect is identical - GLPI \
-                         denies both - but only one of them is a decision somebody made, so the \
-                         table does not call the other one “not granted”.",
-                    ),
-                ],
                 links: vec![InfoLink::new("Profiles", "front/profile.php")],
             }
 
@@ -250,26 +228,18 @@ fn ProfilePanel(profile: ProfileRights, grouped: bool, form_only: Vec<String>) -
                 alarm: alarm_writes,
                 desc: if profile.is_active { "more than this app needs".to_string() } else { "can change things".to_string() },
                 body: "Rights that include permission to change something - create, update, \
-                       delete, purge, or unlock a field."
+                      delete, purge, or unlock a field. When this is worth acting on: For \
+                      most profiles it is simply what they are for - an administrator \
+                      profile that cannot write would be useless. It matters for the profile \
+                      marked active, because that is the one this dashboard signs in with, \
+                      and this app never writes to GLPI. Any write access there is privilege \
+                      held by credentials sitting in a file on the machine running it. What \
+                      counts as a write: UPDATE, CREATE, DELETE and PURGE, plus UPDATENOTE \
+                      for the notes on an item, UPDATE_ASSIGNED and UPDATE_OWNED for items \
+                      assigned to or owned by the user, and UNLOCK - which clears the lock \
+                      on a field imported by inventory so it can be edited by hand. That \
+                      last is not an obvious write, but it does change what GLPI stores."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "When this is worth acting on",
-                        "For most profiles it is simply what they are for - an administrator \
-                         profile that cannot write would be useless. It matters for the profile \
-                         marked active, because that is the one this dashboard signs in with, \
-                         and this app never writes to GLPI. Any write access there is privilege \
-                         held by credentials sitting in a file on the machine running it.",
-                    ),
-                    InfoSection::new(
-                        "What counts as a write",
-                        "UPDATE, CREATE, DELETE and PURGE, plus UPDATENOTE for the notes on an \
-                         item, UPDATE_ASSIGNED and UPDATE_OWNED for items assigned to or owned \
-                         by the user, and UNLOCK - which clears the lock on a field imported by \
-                         inventory so it can be edited by hand. That last is not an obvious \
-                         write, but it does change what GLPI stores.",
-                    ),
-                ],
                 links: vec![InfoLink::new("Profiles", "front/profile.php")],
             }
 
@@ -278,26 +248,18 @@ fn ProfilePanel(profile: ProfileRights, grouped: bool, form_only: Vec<String>) -
                 value: module_defined.to_string(),
                 desc: "bits this app cannot name".to_string(),
                 body: "Rights whose value contains permission bits beyond GLPI's twelve \
-                       standard ones. They are real access; only their name is unavailable."
+                      standard ones. They are real access; only their name is unavailable. \
+                      Where the extra bits come from: A right is a number whose individual \
+                      bits each mean one permission. Twelve of those bits are defined \
+                      globally and mean the same thing everywhere. Parts of GLPI - tickets, \
+                      changes, problems, tasks - define further bits of their own for things \
+                      that only exist there, like being allowed to assign a ticket. Why they \
+                      are shown as a number: GLPI resolves those names from the profile \
+                      form's own definition, which is not available through either API. The \
+                      alternative to showing the leftover as a number would be to drop it \
+                      silently, which would understate what the profile can do - the one \
+                      direction a permissions screen must not be wrong in."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "Where the extra bits come from",
-                        "A right is a number whose individual bits each mean one permission. \
-                         Twelve of those bits are defined globally and mean the same thing \
-                         everywhere. Parts of GLPI - tickets, changes, problems, tasks - define \
-                         further bits of their own for things that only exist there, like being \
-                         allowed to assign a ticket.",
-                    ),
-                    InfoSection::new(
-                        "Why they are shown as a number",
-                        "GLPI resolves those names from the profile form's own definition, which \
-                         is not available through either API. The alternative to showing the \
-                         leftover as a number would be to drop it silently, which would \
-                         understate what the profile can do - the one direction a permissions \
-                         screen must not be wrong in.",
-                    ),
-                ],
             }
         }
 
@@ -429,38 +391,24 @@ fn RightsTable(
                 interface,
                 if profile.is_default { " · GLPI's default profile" } else { "" },
             ),
-            info: "Every right GLPI records for this profile, granted or not.".to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "The columns",
-                    "Right is GLPI's own internal name for it, left exactly as GLPI spells it \
-                     so it can be searched for in GLPI's source or matched against a profile \
-                     form. Value is the raw number GLPI stores. Permissions is that number \
-                     decoded into the individual permissions it contains.",
-                ),
-                InfoSection::new(
-                    "Why the raw value is shown",
-                    "Because it is the authoritative figure and the decoding is an \
-                     interpretation of it. The twelve standard bits mean the same thing \
-                     throughout GLPI, but a module may reuse a higher bit for something of its \
-                     own, so a name shown here is the standard meaning rather than a promise \
-                     about that particular right. When the two could differ, the number is the \
-                     one to trust.",
-                ),
-                InfoSection::new(
-                    "The interface matters",
-                    "A helpdesk profile cannot hold the rights this app needs at all - the \
-                     section is absent from GLPI's form rather than merely unticked. If a \
-                     profile looks inexplicably empty of the permissions you expect, check \
-                     this line before hunting for the checkbox.",
-                ),
-                InfoSection::new(
-                    "Where to change any of this",
-                    "In GLPI under Administration, then Profiles, on the profile named above. \
-                     Changing a right there affects every account that uses the profile, so a \
-                     profile dedicated to this app is safer to edit than a shared one.",
-                ),
-            ],
+            info: "Every right GLPI records for this profile, granted or not. The columns: \
+                  Right is GLPI's own internal name for it, left exactly as GLPI spells it \
+                  so it can be searched for in GLPI's source or matched against a profile \
+                  form. Value is the raw number GLPI stores. Permissions is that number \
+                  decoded into the individual permissions it contains. Why the raw value is \
+                  shown: Because it is the authoritative figure and the decoding is an \
+                  interpretation of it. The twelve standard bits mean the same thing \
+                  throughout GLPI, but a module may reuse a higher bit for something of its \
+                  own, so a name shown here is the standard meaning rather than a promise \
+                  about that particular right. When the two could differ, the number is the \
+                  one to trust. The interface matters: A helpdesk profile cannot hold the \
+                  rights this app needs at all - the section is absent from GLPI's form \
+                  rather than merely unticked. If a profile looks inexplicably empty of the \
+                  permissions you expect, check this line before hunting for the checkbox. \
+                  Where to change any of this: In GLPI under Administration, then Profiles, \
+                  on the profile named above. Changing a right there affects every account \
+                  that uses the profile, so a profile dedicated to this app is safer to edit \
+                  than a shared one.".to_string(),
             info_links: vec![
                 InfoLink::new("Profiles", "front/profile.php"),
                 InfoLink::new("Users", "front/user.php"),
@@ -569,62 +517,59 @@ fn RightsTable(
                                     info: rsx! {
                                         InfoButton {
                                             title: "Value".to_string(),
-                                            body: "The raw number GLPI stores for this right on this \
-                                                   profile. Every other column in the row is a reading \
-                                                   of it, so this is the one figure here that cannot be \
-                                                   wrong."
+                                            body: "The raw number GLPI stores for this right \
+                                                  on this profile. Every other column in the \
+                                                  row is a reading of it, so this is the one \
+                                                  figure here that cannot be wrong. Row of \
+                                                  switches: In binary, every 1 is one \
+                                                  permission held. Positions are worth 1, 2, \
+                                                  4, 8, 16 and on, each double the last, so \
+                                                  any set of switches sums to a total only \
+                                                  that set could make: 3072 is 1024 plus \
+                                                  2048, and nothing else gives 3072. The \
+                                                  shared names begin READ 1, UPDATE 2, \
+                                                  CREATE 4, DELETE 8, PURGE 16 - and \
+                                                  ALLSTANDARDRIGHT 31 is those five \
+                                                  together, not a sixth switch. Per right: \
+                                                  The number says WHICH switch, never what \
+                                                  it does - GLPI decides that per right. Bit \
+                                                  10 carries fifteen distinct meanings and \
+                                                  bit 11 ten: 1024 is READALL under ticket, \
+                                                  READGROUP under planning, KNOWBASEADMIN \
+                                                  under knowbase, READ_OWNED on an asset. \
+                                                  ticket and planning even swap the two \
+                                                  names between the two bits, so a value \
+                                                  cannot be read without the name beside it. \
+                                                  Writes hide here: Several bit-10 meanings \
+                                                  mutate: IMPORTFROMFILE under inventory, \
+                                                  IMPORTEXTAUTHUSERS under user, \
+                                                  KNOWBASEADMIN under knowbase, PERSONAL and \
+                                                  GENERAL under search_config. Through one \
+                                                  global table they all look like \
+                                                  READ_OWNED, which is not a write, and the \
+                                                  Read- only count above absorbs them. \
+                                                  Permissions is decoded per right name for \
+                                                  that reason; an unverified bit shows as +N \
+                                                  rather than a wrong label. Where it lives: \
+                                                  One row per profile per right in \
+                                                  glpi_profilerights, unique on \
+                                                  (profiles_id, name), the number in a plain \
+                                                  signed int - so bits 0 to 30 are usable \
+                                                  and the highest GLPI ships is 65536. The \
+                                                  meanings are not in the database but in \
+                                                  PHP, so SQL can read these values and \
+                                                  cannot interpret them. Read here over the \
+                                                  v1 API: v2.3 carries no profile rights at \
+                                                  all. Zero vs blank: A stored 0 is a \
+                                                  decision someone made in the profile form. \
+                                                  No row at all means the form never offered \
+                                                  the right for this profile. Both deny \
+                                                  identically, so the two are tracked apart \
+                                                  here rather than both shown as 0. Custom \
+                                                  assets make it visible: deactivating a \
+                                                  definition deletes its rights rows \
+                                                  outright instead of zeroing them."
                                                 .to_string(),
-                                    sections: vec![
-                                InfoSection::new(
-                                    "Row of switches",
-                                    "In binary, every 1 is one permission held. Positions are worth 1, \
-                                     2, 4, 8, 16 and on, each double the last, so any set of switches \
-                                     sums to a total only that set could make: 3072 is 1024 plus 2048, \
-                                     and nothing else gives 3072. The shared names begin READ 1, UPDATE \
-                                     2, CREATE 4, DELETE 8, PURGE 16 - and ALLSTANDARDRIGHT 31 is those \
-                                     five together, not a sixth switch."
-                                ),
-                                InfoSection::new(
-                                    "Per right",
-                                    "The number says WHICH switch, never what it does - GLPI decides \
-                                     that per right. Bit 10 carries fifteen distinct meanings and \
-                                     bit 11 ten: \
-                                     1024 is READALL under ticket, READGROUP under planning, \
-                                     KNOWBASEADMIN under knowbase, READ_OWNED on an asset. ticket and \
-                                     planning even swap the two names between the two bits, so a value \
-                                     cannot be read without the name beside it."
-                                ),
-                                InfoSection::new(
-                                    "Writes hide here",
-                                    "Several bit-10 meanings mutate: IMPORTFROMFILE under inventory, \
-                                     IMPORTEXTAUTHUSERS under user, KNOWBASEADMIN under knowbase, \
-                                     PERSONAL and GENERAL under search_config. Through one global table \
-                                     they all look like READ_OWNED, which is not a write, and the Read- \
-                                     only count above absorbs them. Permissions is decoded per right \
-                                     name for that reason; an unverified bit shows as +N rather than a \
-                                     wrong label."
-                                ),
-                                InfoSection::new(
-                                    "Where it lives",
-                                    "One row per profile per right in glpi_profilerights, unique on \
-                                     (profiles_id, name), the number in a plain signed int - so bits 0 \
-                                     to 30 are usable and the highest GLPI ships is 65536. The meanings \
-                                     are not in the database but in PHP, so SQL can read these values \
-                                     and cannot interpret them. Read here over the v1 API: v2.3 carries \
-                                     no profile rights at all."
-                                ),
-                                InfoSection::new(
-                                    "Zero vs blank",
-                                    "A stored 0 is a decision someone made in the profile form. No row \
-                                     at all means the form never offered the right for this profile. \
-                                     Both deny identically, so the two are tracked apart here rather \
-                                     than both shown as 0. Custom assets make it visible: deactivating \
-                                     a definition deletes its rights rows outright instead of zeroing \
-                                     them."
-                                ),
-                            ],
-
-
                                             links: vec![
                                                 InfoLink::new("Profiles", "front/profile.php"),
                                                 InfoLink::new(
@@ -740,25 +685,17 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                 )
             },
             info: "Every request this dashboard makes to GLPI, and whether the profile it \
-                   signs in with is allowed to make it."
+                  signs in with is allowed to make it. Why this is the first thing here: \
+                  When GLPI refuses a request it answers with one sentence - you do not have \
+                  permission to perform this action - and never says which permission was \
+                  missing. This table is that missing sentence: it names the request, the \
+                  page that breaks without it, and the exact right to grant. Permitted is \
+                  not the same as working: A right is necessary, never sufficient. GLPI \
+                  filters results by entity after it has checked permission, so a request \
+                  can be fully permitted and still come back empty because the account \
+                  cannot see that part of the estate. A green row here rules out permissions \
+                  as the cause; it does not promise data."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why this is the first thing here",
-                    "When GLPI refuses a request it answers with one sentence - you do not \
-                     have permission to perform this action - and never says which permission \
-                     was missing. This table is that missing sentence: it names the request, \
-                     the page that breaks without it, and the exact right to grant.",
-                ),
-                InfoSection::new(
-                    "Permitted is not the same as working",
-                    "A right is necessary, never sufficient. GLPI filters results by entity \
-                     after it has checked permission, so a request can be fully permitted and \
-                     still come back empty because the account cannot see that part of the \
-                     estate. A green row here rules out permissions as the cause; it does not \
-                     promise data.",
-                ),
-            ],
             info_links: vec![InfoLink::new("Profiles", "front/profile.php")],
 
             div { class: "overflow-x-auto",
@@ -775,57 +712,47 @@ fn CallPanel(calls: Vec<CallStatus>) -> Element {
                                     span { "API" }
                                     InfoButton {
                                         title: "API version".to_string(),
-                                        body: "Which of GLPI's two interfaces this request uses. \
-                                               The badge on each row below says v2.3 or v1."
+                                        body: "Which of GLPI's two interfaces this request \
+                                              uses. The badge on each row below says v2.3 or \
+                                              v1. v2.3 and v1: GLPI serves two generations \
+                                              of interface side by side, and every request \
+                                              in this table is tagged with the one it uses. \
+                                              v2.3 is the current one; v1 is the older, \
+                                              lower-level one. GLPI lists five in all - v1, \
+                                              then v2.0, v2.1 and v2.2 all marked \
+                                              deprecated, then v2.3 - so these two are the \
+                                              only ones worth using: the newest, and the one \
+                                              that predates the series. Why both: Not \
+                                              preference. The current interface cannot \
+                                              answer some questions at all: it has no way to \
+                                              report the rights of any profile except the \
+                                              one it is signed in as, and no way to report \
+                                              who may use which profile. GLPI says as much \
+                                              itself, describing the older interface as more \
+                                              powerful and able to do things the newer one \
+                                              cannot. So everything this app can get from \
+                                              v2.3 it does, and v1 covers only the requests \
+                                              with no newer equivalent. The cost is that \
+                                              GLPI attaches no stability promise to v1 and \
+                                              says it may change without warning - which is \
+                                              why it is confined to those few, and why the \
+                                              v1 rows are the first place to look if this \
+                                              app breaks after a GLPI upgrade. Same \
+                                              permissions: Worth being explicit, because \
+                                              reaching for an older interface often is a way \
+                                              around something. This is not. Both sign in as \
+                                              the same account and are filtered by the same \
+                                              profile rights and the same entity scope - the \
+                                              rights listed against a v1 request are real \
+                                              and enforced, and it reads nothing the account \
+                                              could not see in GLPI's own screens. Reading \
+                                              GLPI's database directly would bypass all of \
+                                              that; this does not, which is why it was the \
+                                              acceptable option. The two do accept different \
+                                              credentials, so a sign-in failure usually hits \
+                                              the v2.3 rows or the v1 rows rather than both \
+                                              - which group fails tells you where to look."
                                             .to_string(),
-                                        sections: vec![
-                                            InfoSection::new(
-                                                "v2.3 and v1",
-                                                "GLPI serves two generations of interface side \
-                                                 by side, and every request in this table is \
-                                                 tagged with the one it uses. v2.3 is the \
-                                                 current one; v1 is the older, lower-level one. \
-                                                 GLPI lists five in all - v1, then v2.0, v2.1 \
-                                                 and v2.2 all marked deprecated, then v2.3 - so \
-                                                 these two are the only ones worth using: the \
-                                                 newest, and the one that predates the series.",
-                                            ),
-                                            InfoSection::new(
-                                                "Why both",
-                                                "Not preference. The current interface cannot \
-                                                 answer some questions at all: it has no way to \
-                                                 report the rights of any profile except the one \
-                                                 it is signed in as, and no way to report who \
-                                                 may use which profile. GLPI says as much \
-                                                 itself, describing the older interface as more \
-                                                 powerful and able to do things the newer one \
-                                                 cannot. So everything this app can get from \
-                                                 v2.3 it does, and v1 covers only the requests \
-                                                 with no newer equivalent. The cost is that GLPI \
-                                                 attaches no stability promise to v1 and says it \
-                                                 may change without warning - which is why it is \
-                                                 confined to those few, and why the v1 rows are \
-                                                 the first place to look if this app breaks \
-                                                 after a GLPI upgrade.",
-                                            ),
-                                            InfoSection::new(
-                                                "Same permissions",
-                                                "Worth being explicit, because reaching for an \
-                                                 older interface often is a way around \
-                                                 something. This is not. Both sign in as the \
-                                                 same account and are filtered by the same \
-                                                 profile rights and the same entity scope - the \
-                                                 rights listed against a v1 request are real and \
-                                                 enforced, and it reads nothing the account \
-                                                 could not see in GLPI's own screens. Reading \
-                                                 GLPI's database directly would bypass all of \
-                                                 that; this does not, which is why it was the \
-                                                 acceptable option. The two do accept different \
-                                                 credentials, so a sign-in failure usually hits \
-                                                 the v2.3 rows or the v1 rows rather than both - \
-                                                 which group fails tells you where to look.",
-                                            ),
-                                        ],
                                         links: vec![],
                                     }
                                 }
@@ -1175,51 +1102,34 @@ fn DbRightsPanel() -> Element {
             title: "Database access".to_string(),
             subtitle: "One query, against an account that could do anything".to_string(),
             info: "This app reads GLPI's database directly for one thing. Everything else on \
-                   every other page comes through GLPI's API - and since the account's grant \
-                   was widened, that is a choice the code makes rather than one the database \
-                   enforces."
+                  every other page comes through GLPI's API - and since the account's grant \
+                  was widened, that is a choice the code makes rather than one the database \
+                  enforces. Why it exists: Two things GLPI records are exposed by neither of \
+                  its APIs: the submissions it refused, and its own change history. Refused \
+                  submissions are the failure this dashboard most wants to show - the agent \
+                  reports success and exits clean, GLPI throws the submission away, and no \
+                  asset appears. The table is the only place that is written down. What it \
+                  reaches: Everything on the server, read and write. The account used to \
+                  hold SELECT on two tables; the grant was widened to all privileges, so the \
+                  old limit is gone and the only remaining one is this app's own code - a \
+                  single query against glpi_refusedequipments. The reasoning that kept it \
+                  narrow still decides what gets read: every table used is another piece of \
+                  GLPI's internal layout to depend on, which is why the rule behind a \
+                  refusal is shown by its id and linked into GLPI rather than joined to by \
+                  name. What it costs: Two things. A renamed column breaks this silently, \
+                  where the API would have named the missing field - so every column is \
+                  treated as optional and renders blank rather than failing. And SQL has no \
+                  notion of GLPI's entities, so the account could read every row regardless \
+                  of scope: the rows shown are restricted afterwards, to the entities the \
+                  API says this account may see, so that \u{201c}everything\u{201d} means \
+                  the same here as on every other page. A third thing now: the account can \
+                  also write, and writing behind GLPI corrupts an install in ways its own UI \
+                  will not show, so nothing here may ever issue anything but a SELECT. No \
+                  password: The account is expected to authenticate through the unix socket, \
+                  which means there is no secret in this app's configuration to leak and \
+                  nothing to rotate. Reading the config file tells an attacker the account \
+                  name and nothing they could use from another machine."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "Why it exists",
-                    "Two things GLPI records are exposed by neither of its APIs: the \
-                     submissions it refused, and its own change history. Refused submissions \
-                     are the failure this dashboard most wants to show - the agent reports \
-                     success and exits clean, GLPI throws the submission away, and no asset \
-                     appears. The table is the only place that is written down.",
-                ),
-                InfoSection::new(
-                    "What it reaches",
-                    "Everything on the server, read and write. The account used to hold \
-                     SELECT on two tables; the grant was widened to all privileges, so the \
-                     old limit is gone and the only remaining one is this app's own code - \
-                     a single query against glpi_refusedequipments. The reasoning that kept \
-                     it narrow still decides what gets read: every table used is another \
-                     piece of GLPI's internal layout to depend on, which is why the rule \
-                     behind a refusal is shown by its id and linked into GLPI rather than \
-                     joined to by name.",
-                ),
-                InfoSection::new(
-                    "What it costs",
-                    "Two things. A renamed column breaks this silently, where the API would \
-                     have named the missing field - so every column is treated as optional \
-                     and renders blank rather than failing. And SQL has no notion of GLPI's \
-                     entities, so the account could read every row regardless of scope: the \
-                     rows shown are restricted afterwards, to the entities the API says this \
-                     account may see, so that \u{201c}everything\u{201d} means the same here \
-                     as on every other page. A third thing now: the account can also write, \
-                     and writing behind GLPI corrupts an install in ways its own UI will not \
-                     show, so nothing here may ever issue anything but a SELECT.",
-                ),
-                InfoSection::new(
-                    "No password",
-                    "The account is expected to authenticate through the unix socket, which \
-                     means there is no secret in this app's configuration to leak and nothing \
-                     to rotate. Reading the config file tells an attacker the account name and \
-                     nothing they could use from another machine.",
-                ),
-            ],
-
             match state {
                 None => rsx! {
                     div { class: "flex items-center gap-2 text-base-content/60",
@@ -1337,56 +1247,37 @@ fn DbDefinedRights() -> Element {
             subtitle: "Why the right names on the Profiles tab are not a fixed list"
                 .to_string(),
             info: "Almost every GLPI right is named in its code. Custom asset and dropdown \
-                   types are the exception: defining one creates a right named after it."
+                  types are the exception: defining one creates a right named after it. How \
+                  it works: A custom type is a row describing it. GLPI builds the class for \
+                  that type as it starts and takes the right's name from the row, so a type \
+                  whose internal name is kiosk gets a right called asset_kiosk. It then \
+                  keeps the rights entries in step as the definition's profiles are edited. \
+                  No code is changed anywhere in GLPI to make that happen. Why it matters on \
+                  this page: Because it means the Profiles tab is listing a set that can \
+                  grow without anything being upgraded. That tab counts its right names from \
+                  what GLPI reports rather than from a list held in this app, so a new type \
+                  appears there by itself - but the grouping into tabs comes from a copy \
+                  taken from GLPI, so a right GLPI invented today starts out under \
+                  \u{201c}Not on the profile form\u{201d}. For an active custom asset type \
+                  that is temporary and refreshing the copy places it. For two cases it is \
+                  permanent, explained next. Two kinds never get grouped: An INACTIVE custom \
+                  asset type, and every custom DROPDOWN type. GLPI builds the profile form \
+                  from its active asset definitions only, and does not add dropdown \
+                  definitions to that form at all - while creating the rights for both \
+                  regardless. So those rights exist, are granted per profile and are \
+                  enforced, but GLPI never lists them on the form this page groups by. \
+                  Refreshing the copy will not move them, however often it is run. They stay \
+                  where they are, which remains the honest place: this app genuinely has no \
+                  heading for them. Not the same as the grant above: Two different \
+                  permission systems. The grant above is MariaDB deciding what this app may \
+                  read. This is GLPI deciding what a profile may do, with the definition of \
+                  the right stored as data instead of written in code. Neither has anything \
+                  to do with the other; they share only the word database. Not observed \
+                  here: This installation defines no custom types, so nothing on this page \
+                  has ever come from one. The behaviour above was read in GLPI's source and \
+                  confirmed only as far as the empty result - the addresses for custom types \
+                  exist as templates with nothing behind them."
                 .to_string(),
-            info_sections: vec![
-                InfoSection::new(
-                    "How it works",
-                    "A custom type is a row describing it. GLPI builds the class for that type \
-                     as it starts and takes the right's name from the row, so a type whose \
-                     internal name is kiosk gets a right called asset_kiosk. It then keeps the \
-                     rights entries in step as the definition's profiles are edited. No code \
-                     is changed anywhere in GLPI to make that happen.",
-                ),
-                InfoSection::new(
-                    "Why it matters on this page",
-                    "Because it means the Profiles tab is listing a set that can grow without \
-                     anything being upgraded. That tab counts its right names from what GLPI \
-                     reports rather than from a list held in this app, so a new type appears \
-                     there by itself - but the grouping into tabs comes from a copy taken \
-                     from GLPI, so a right GLPI invented today starts out under \
-                     \u{201c}Not on the profile form\u{201d}. For an active custom asset type \
-                     that is temporary and refreshing the copy places it. For two cases it is \
-                     permanent, explained next.",
-                ),
-                InfoSection::new(
-                    "Two kinds never get grouped",
-                    "An INACTIVE custom asset type, and every custom DROPDOWN type. GLPI \
-                     builds the profile form from its active asset definitions only, and does \
-                     not add dropdown definitions to that form at all - while creating the \
-                     rights for both regardless. So those rights exist, are granted per \
-                     profile and are enforced, but GLPI never lists them on the form this \
-                     page groups by. Refreshing the copy will not move them, however often it \
-                     is run. They stay where they are, which remains the honest place: this \
-                     app genuinely has no heading for them.",
-                ),
-                InfoSection::new(
-                    "Not the same as the grant above",
-                    "Two different permission systems. The grant above is MariaDB deciding \
-                     what this app may read. This is GLPI deciding what a profile may do, with \
-                     the definition of the right stored as data instead of written in code. \
-                     Neither has anything to do with the other; they share only the word \
-                     database.",
-                ),
-                InfoSection::new(
-                    "Not observed here",
-                    "This installation defines no custom types, so nothing on this page has \
-                     ever come from one. The behaviour above was read in GLPI's source and \
-                     confirmed only as far as the empty result - the addresses for custom \
-                     types exist as templates with nothing behind them.",
-                ),
-            ],
-
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     thead {

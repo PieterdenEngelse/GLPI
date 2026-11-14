@@ -1,6 +1,6 @@
 //! The one page that answers the question: which agents have gone quiet?
 use crate::api::{self, AgentStatus};
-use crate::components::{InfoLink, InfoSection, Panel, RefreshControl, ScopeNote, StatRow};
+use crate::components::{InfoLink, Panel, RefreshControl, ScopeNote, StatRow};
 use dioxus::prelude::*;
 
 /// How often the table re-reads the backend.
@@ -49,34 +49,22 @@ pub fn Agents() -> Element {
                     title: "Registered agents".to_string(),
                     subtitle: "Most overdue first".to_string(),
                     info: "Every inventory agent registered in GLPI, with the one judgement \
-                           this app adds: whether it is still reporting."
+                          this app adds: whether it is still reporting. The columns: Status \
+                          is the summary. Agent shows the name GLPI holds and, beneath it, \
+                          the identifier the agent reports itself under - GLPI matches on \
+                          that identifier between runs, not on the hostname - it is only \
+                          shown when it differs from the name. Age is how long since the \
+                          last check-in; hover it for the exact timestamp. Version is the \
+                          agent's own version, useful for spotting a fleet drifting apart. \
+                          From is the address the last submission arrived from. The order: \
+                          Most overdue first, always. The reason to open this page is to \
+                          find what has stopped reporting, so the answer is on the first row \
+                          rather than somewhere down an alphabetical list. How often it \
+                          updates: The table re-reads every five minutes, and Refresh now \
+                          does it immediately. Five minutes rather than five seconds because \
+                          the underlying agents report once a day - a faster poll could not \
+                          show anything new and would only add load to GLPI."
                         .to_string(),
-                    info_sections: vec![
-                        InfoSection::new(
-                            "The columns",
-                            "Status is the summary. Agent shows the name GLPI holds and, beneath \
-                             it, the identifier the agent reports itself under - GLPI matches on \
-                             that identifier between runs, not on the hostname - it is only shown when it \
-                             differs from the name. Age is how long since \
-                             the last check-in; hover it for the exact timestamp. Version is \
-                             the agent's own version, useful for \
-                             spotting a fleet drifting apart. From is the address the last \
-                             submission arrived from.",
-                        ),
-                        InfoSection::new(
-                            "The order",
-                            "Most overdue first, always. The reason to open this page is to find \
-                             what has stopped reporting, so the answer is on the first row rather \
-                             than somewhere down an alphabetical list.",
-                        ),
-                        InfoSection::new(
-                            "How often it updates",
-                            "The table re-reads every five minutes, and Refresh now does it \
-                             immediately. Five minutes rather than five seconds because the \
-                             underlying agents report once a day - a faster poll could not show \
-                             anything new and would only add load to GLPI.",
-                        ),
-                    ],
                     info_links: vec![InfoLink::new("Agents", "front/agent.php")],
                     actions: rsx! {
                         RefreshControl {
