@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
-"""Fail when an info panel's tab strip is wider than the modal that holds it.
+"""Fail when an info panel hides text behind a tab strip.
 
-`InfoButton`'s tab strip is `flex-nowrap overflow-x-auto`: too many tabs, or
-headings written as sentences, and it scrolls sideways. The component keeps
-its own scroller so the tabs stay reachable, but a strip that needs scrolling
-is a panel the reader has to work to see all of, and the headings are the
-cheap thing to change.
+THE RULE: no sections. A tab strip that hides text the reader could already
+see is a click that buys nothing, so the sections belong in the body where
+they show unclicked.
 
-THE BUDGET IS DERIVED FROM THE MODAL'S GEOMETRY, not from the worst panel
-that happens to exist. From the generated stylesheet: `.tab` is
+This replaces a width budget plus two floors, which between them asked
+whether a strip was too wide or too thin but never whether it should exist.
+Measuring the corpus settled that: the largest panel held 2009 characters
+across its tabs - about eighteen lines at the modal's width - so every one of
+the 53 fitted a window unscrolled and none of them needed a strip. There was
+no threshold to find, which is why there is no threshold here.
+
+THE ONE EXEMPTION is a panel whose section bodies are not string literals -
+sec.rs builds its sections per tile from `&tile.cannot_check`. Those cannot
+be folded into a static body, so they keep their strip and are the only
+thing the width budget below still governs.
+
+THE WIDTH BUDGET, kept for that case. `InfoButton`'s strip is
+`flex-nowrap overflow-x-auto`: too many tabs, or headings written as
+sentences, and it scrolls sideways. From the generated stylesheet, `.tab` is
 `--tab-p: .75rem` (24px of padding per tab) at `font-size: .875rem`, and the
 modal is `max-w-lg sm:max-w-2xl lg:max-w-3xl` with `p-5`, so its content box
 is 472 / 632 / 728px. Taking the middle one - below `sm` the window is
@@ -18,79 +29,21 @@ character at 14px:
     width ~= 7 * cost - 11 * tabs      where cost = chars + 5 per tab
 
 632px lands at cost ~95 for three to five tabs, which is the cap below. The
-corpus median is 62, so this is a ceiling and not a target - see the note on
-calibrating to the median rather than the cap.
+7px figure is an ESTIMATE from the font size, not a measurement; to check it,
+paste scripts/measure-info-tabs.js into the console on a page with an info
+panel.
 
-The 7px figure is an ESTIMATE from the font size, not a measurement; the
-docstring says so rather than pretending otherwise. To check it, paste
-scripts/measure-info-tabs.js into the console on a page with an info panel.
-
-GRANDFATHERED holds panels that predate this check and exceed the budget.
-They are keyed on their exact set of headings, so editing any heading in one
-drops it out of the exemption and it must then meet the budget. That is the
-point: the debt is named rather than hidden behind a cap set high enough to
-swallow it, and it shrinks as those panels are touched.
-
-TWO FLOORS, BECAUSE A WIDTH BUDGET CANNOT SEE AN UNDERWEIGHT PANEL. The check
-above only asks whether the strip fits. A panel with one short tab costs ~30
-against a budget of 95 and passes forever, which is how seventeen of them
-accumulated before anyone looked: every one was a click that revealed less
-than a paragraph.
-
-  MIN_TABS   One tab is not a tab strip. It offers no choice - the reader
-             clicks to see the only thing there is - so the section belongs
-             in the body, where it is already visible. Categorical, with no
-             threshold to argue about.
-
-  FLOOR      Tabs holding less than 400 characters between them are a choice
-             between fragments. 400 is derived from the corpus median
-             section, ~296 characters: a strip whose tabs together hold less
-             than one and a half typical sections is not dividing anything.
-             The thinnest panel that survives it holds 559, so this is a
-             floor with room above it and not a line drawn under the status
-             quo.
-
-A section whose body is not a string literal - `&tile.cannot_check`, built
-per tile - cannot be measured, so its panel is skipped by FLOOR rather than
-guessed at. It is still subject to MIN_TABS and to the width budget.
+GRANDFATHERING IS GONE. It held eleven panels that predated the width budget;
+all eleven lost their strips when the rule above was applied, so the list
+emptied itself and the mechanism went with it.
 """
 
 import re
 import sys
 from pathlib import Path
 
-# Panels that predate this check and exceed the budget. Keyed on the exact
-# set of headings: edit any one of them and the exemption lapses, which is
-# how this list is meant to shrink.
-GRANDFATHERED = {
-    # db.rs:387 - cost 144
-    frozenset({'Why this is not visible anywhere else', 'Where the comparison comes from', 'Write-only fields are not counted', 'What it cannot tell you'}),
-    # rights.rs:1347 - cost 139
-    frozenset({'How it works', 'Why it matters on this page', 'Two kinds never get grouped', 'Not the same as the grant above', 'Not observed here'}),
-    # db.rs:564 - cost 136
-    frozenset({'Why the whole list is here', 'Why there is no Received column', 'Declared, readable, write-only', 'Not the same thing as db-read'}),
-    # db.rs:760 - cost 135
-    frozenset({'Where this list comes from', 'Two of them need 12.0.1', 'Case, and what empty means', 'All eighteen are reachable from this app'}),
-    # inv.rs:118 - cost 119
-    frozenset({'Why this is separate from Agents and Computers', 'Where these four read from', 'Refused is still the odd one out'}),
-    # inv.rs:741 - cost 117
-    frozenset({'The columns', 'This page could not be built on the current API', 'Addresses are matched to the right interface'}),
-    # inv.rs:872 - cost 115
-    frozenset({'Why this is the failure worth catching', 'Where this comes from', "Does that step around GLPI's permissions?"}),
-    # sec.rs:170 - cost 111
-    frozenset({'Why a stuck task matters here', 'Why the headline figure is not shown', 'Unknown is most of this install'}),
-    # db.rs:156 - cost 110
-    frozenset({'Why the columns are listed at all', 'The name is plural, and that cost a GRANT', 'Where this comes from'}),
-    # rights.rs:455 - cost 105
-    frozenset({'The columns', 'Why the raw value is shown', 'The interface matters', 'Where to change any of this'}),
-    # sec.rs:349 - cost 105
-    frozenset({'Read the scope before the list', "Why this app's own sessions dominate", 'It starts at the upgrade'}),
-}
-
 BUDGET = 95
 PER_TAB = 5
-MIN_TABS = 2
-FLOOR = 400
 ROOT = Path(__file__).resolve().parent.parent / "frontend" / "fro" / "src"
 
 
@@ -142,38 +95,41 @@ def panels():
 
 
 def main() -> int:
+    tabbed = []
     over = []
-    thin = []
+    runtime = 0
     worst = 0
-    thinnest = None
-    exempt = 0
     for path, line, sections in panels():
         headings = [h for h, _ in sections]
         bodies = [b for _, b in sections]
 
-        if len(sections) < MIN_TABS:
-            thin.append((path, line, headings, None))
-        elif all(b is not None for b in bodies):
-            held = sum(len(b) for b in bodies)
-            if held < FLOOR:
-                thin.append((path, line, headings, held))
+        # A section built at runtime cannot be folded into a static body.
+        # That panel keeps its strip, and is the only one still measured.
+        if any(b is None for b in bodies):
+            runtime += 1
+            cost = sum(len(h) for h in headings) + PER_TAB * len(headings)
+            if cost <= BUDGET:
+                worst = max(worst, cost)
             else:
-                thinnest = held if thinnest is None else min(thinnest, held)
+                over.append((cost, path, line, headings))
+            continue
 
-        cost = sum(len(h) for h in headings) + PER_TAB * len(headings)
-        if cost <= BUDGET:
-            worst = max(worst, cost)
-        elif frozenset(headings) in GRANDFATHERED:
-            exempt += 1
-        else:
-            over.append((cost, path, line, headings))
+        tabbed.append((path, line, headings))
 
-    if not over and not thin:
+    if not tabbed and not over:
         print(
-            f"info tabs: ok - worst current panel {worst}, budget {BUDGET}"
-            f", {exempt} grandfathered; thinnest holds {thinnest}, floor {FLOOR}"
+            f"info tabs: ok - no tabbed panels except {runtime} built at "
+            f"runtime, worst {worst} against budget {BUDGET}"
         )
         return 0
+
+    for path, line, headings in tabbed:
+        rel = path.relative_to(ROOT.parent.parent.parent)
+        held = "sections"
+        print(f"{rel}:{line}: {len(headings)} {held} behind a tab strip")
+        for h in headings:
+            print(f"        {h}")
+        print("    fold them into the body - it already shows unclicked")
 
     for cost, path, line, headings in sorted(over, reverse=True):
         rel = path.relative_to(ROOT.parent.parent.parent)
@@ -181,16 +137,6 @@ def main() -> int:
         for h in sorted(headings, key=len, reverse=True):
             print(f"    {len(h):3}  {h}")
         print("    shorten the headings - the explanation belongs in the body")
-
-    for path, line, headings, held in thin:
-        rel = path.relative_to(ROOT.parent.parent.parent)
-        if held is None:
-            print(f"{rel}:{line}: one tab is not a tab strip")
-        else:
-            print(f"{rel}:{line}: tabs hold {held} characters, floor {FLOOR}")
-        for h in headings:
-            print(f"        {h}")
-        print("    fold the sections into the body - it already shows unclicked")
 
     return 1
 
