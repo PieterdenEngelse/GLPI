@@ -37,52 +37,56 @@ pub fn Db(tab: String, sub: String) -> Element {
     let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
-        // What this page covers is the same question whichever tab is open, so
-        // it sits above the content rather than inside a tab. A named link
-        // rather than the usual icon because the mistake it heads off -
-        // reading this as a map of GLPI's database, or as the API's schemas -
-        // is made before a reader has anything to hover.
+        // Overview only. It describes the page as a whole, which is what a
+        // reader who has just arrived at the top of it needs; further in, it
+        // answers a question that reader has already moved past, and the
+        // sidebar keeps the structure in view regardless. A named link rather
+        // than the usual icon because the mistake it heads off - reading this
+        // as a map of GLPI's database, or as the API's schemas - is made
+        // before a reader has anything to hover.
         //
         // Every tab strip this page used to carry is in the sidebar now,
         // including the sub-tabs under Maria and api-read, which is why this
         // row holds one link and nothing else.
-        div { class: "mb-3 flex flex-wrap items-center gap-x-4 gap-y-2",
-            InfoButton {
-                label: "What is this".to_string(),
-                title: "What this page is".to_string(),
-                // One body, no tabs. Merged from four sections holding 1719
-                // characters between them - about fifteen lines at this
-                // modal's width, which fits unscrolled, and a tab strip that
-                // hides text the reader could already see is a click that
-                // buys nothing. Single paragraph because InfoButton renders
-                // body inside a <p>, so blank lines would collapse to spaces.
-                body: "Two tables of GLPI's database, column by column, with each column \
-                       marked according to whether anything in this app actually reads it; \
-                       the rest of the page is the reasoning around them - what GLPI keeps \
-                       as data, what it keeps as program, and what a database account \
-                       therefore cannot answer however wide you make it. Only two, but not \
-                       because the rest is forbidden: the account was granted SELECT on \
-                       glpi_refusedequipments and glpi_logs and nothing else, and since \
-                       2026-11-13 it holds every privilege on the server, so all 447 tables \
-                       of a GLPI 12.0.1 install are reachable. These two are still the only \
-                       ones this app reads, for an unchanged reason - everything else comes \
-                       through GLPI's API, which applies the entity and profile rules that \
-                       direct database access steps around - so what was once the shape of a \
-                       grant is now the shape of a decision. Nothing here describes GLPI's \
-                       database as a whole, and it is not meant to grow into that: a table \
-                       this app cannot read is a table it cannot be broken by, which is why \
-                       it is left out, and the list is the app's own coupling to GLPI's \
-                       schema, written down so it can be compared against a GLPI release \
-                       rather than documentation of GLPI. One word to disentangle before you \
-                       go looking: GLPI's API publishes a description of itself declaring \
-                       around 330 schemas - Computer, User, Agent and so on - but those are \
-                       shapes of API responses, not tables, and none of them appear here. \
-                       The app compares five of them against what it is really sent, which \
-                       is how it catches a field GLPI's permissions quietly drop instead of \
-                       refusing, and that comparison is a diagnostic run on demand with no \
-                       page of its own. If you came here expecting 330 of anything, that is \
-                       the list you were thinking of."
-                    .to_string(),
+        if at == 0 {
+            div { class: "mb-3 flex flex-wrap items-center gap-x-4 gap-y-2",
+                InfoButton {
+                    label: "What is this".to_string(),
+                    title: "What this page is".to_string(),
+                    // One body, no tabs. Merged from four sections holding 1719
+                    // characters between them - about fifteen lines at this
+                    // modal's width, which fits unscrolled, and a tab strip that
+                    // hides text the reader could already see is a click that
+                    // buys nothing. Single paragraph because InfoButton renders
+                    // body inside a <p>, so blank lines would collapse to spaces.
+                    body: "Two tables of GLPI's database, column by column, with each column \
+                           marked according to whether anything in this app actually reads it; \
+                           the rest of the page is the reasoning around them - what GLPI keeps \
+                           as data, what it keeps as program, and what a database account \
+                           therefore cannot answer however wide you make it. Only two, but not \
+                           because the rest is forbidden: the account was granted SELECT on \
+                           glpi_refusedequipments and glpi_logs and nothing else, and since \
+                           2026-11-13 it holds every privilege on the server, so all 447 tables \
+                           of a GLPI 12.0.1 install are reachable. These two are still the only \
+                           ones this app reads, for an unchanged reason - everything else comes \
+                           through GLPI's API, which applies the entity and profile rules that \
+                           direct database access steps around - so what was once the shape of a \
+                           grant is now the shape of a decision. Nothing here describes GLPI's \
+                           database as a whole, and it is not meant to grow into that: a table \
+                           this app cannot read is a table it cannot be broken by, which is why \
+                           it is left out, and the list is the app's own coupling to GLPI's \
+                           schema, written down so it can be compared against a GLPI release \
+                           rather than documentation of GLPI. One word to disentangle before you \
+                           go looking: GLPI's API publishes a description of itself declaring \
+                           around 330 schemas - Computer, User, Agent and so on - but those are \
+                           shapes of API responses, not tables, and none of them appear here. \
+                           The app compares five of them against what it is really sent, which \
+                           is how it catches a field GLPI's permissions quietly drop instead of \
+                           refusing, and that comparison is a diagnostic run on demand with no \
+                           page of its own. If you came here expecting 330 of anything, that is \
+                           the list you were thinking of."
+                        .to_string(),
+                }
             }
         }
 
@@ -398,7 +402,9 @@ fn EngineFacts(facts: api::ServerFacts) -> Element {
     let gib = facts.glpi_bytes as f64 / 1_073_741_824.0;
 
     rsx! {
-        div { class: "grid gap-4 items-start lg:grid-cols-2",
+        Engines { facts: facts.clone() }
+
+        div { class: "mt-4 grid gap-4 items-start lg:grid-cols-2",
             Panel {
                 title: "The server answering".to_string(),
                 subtitle: facts.flavour.clone(),
@@ -430,52 +436,6 @@ fn EngineFacts(facts: api::ServerFacts) -> Element {
             }
 
             Panel {
-                title: "Engines".to_string(),
-                subtitle: "What is compiled in, and what GLPI's tables use".to_string(),
-                info: "SUPPORT = DEFAULT marks the engine a CREATE TABLE gets when it names \
-                       none. The second list is the check worth having: GLPI's installer \
-                       writes ENGINE=InnoDB into all 447 statements, so anything here is a \
-                       table that was altered afterwards."
-                    .to_string(),
-                div { class: "overflow-x-auto",
-                    table { class: "table table-sm",
-                        tbody {
-                            for (name , support) in facts.engines.iter() {
-                                tr { key: "{name}",
-                                    td { class: "font-mono text-xs", "{name}" }
-                                    td {
-                                        if support == "DEFAULT" {
-                                            span { class: "badge badge-primary badge-sm", "default" }
-                                        } else {
-                                            span { class: "text-base-content/60", "available" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if facts.glpi_other_engines.is_empty() {
-                    p { class: "mt-3 text-sm text-base-content/70",
-                        "Every table in GLPI's database is InnoDB, which is what its installer \
-                         writes and what its foreign keys need."
-                    }
-                } else {
-                    div { class: "mt-3 alert alert-warning",
-                        div {
-                            div { class: "font-semibold",
-                                "{facts.glpi_other_engines.len()} table(s) are not InnoDB"
-                            }
-                            p { class: "mt-1 text-xs",
-                                "Transactions and foreign keys do not work the same on another \
-                                 engine, and nothing in GLPI's own screens reports this."
-                            }
-                        }
-                    }
-                }
-            }
-
-            Panel {
                 title: "Settings that change what GLPI sees".to_string(),
                 subtitle: "Ten of roughly six hundred".to_string(),
                 info: "Named one by one rather than dumped: SHOW VARIABLES returns about six \
@@ -498,6 +458,260 @@ fn EngineFacts(facts: api::ServerFacts) -> Element {
         }
     }
 }
+
+/// What each engine the server has compiled in would mean for GLPI's schema.
+///
+/// A tab per engine, where this used to be a two-column table. The table
+/// answered one question - which engine a CREATE TABLE gets when it names none
+/// - and had no room for the one worth asking, which is what it would mean to
+/// find a GLPI table on any of the other seven.
+///
+/// The strip is built from what the server reports and not from the notes
+/// below it: an engine this app has never heard of still gets a tab carrying
+/// the one fact the server gave about it, and an engine the server does not
+/// compile in has no tab at all. Which tab is open is local view state, like
+/// the RSQL strip, so the sidebar deliberately does not take this level.
+#[component]
+fn Engines(facts: api::ServerFacts) -> Element {
+    // Open on the default rather than on whatever sorts first: the default is
+    // the engine GLPI's 447 tables are actually on, and Aria is a poor thing
+    // to land on when the question is what the schema is stored by.
+    let default_at = facts
+        .engines
+        .iter()
+        .position(|(_, support)| support == "DEFAULT")
+        .unwrap_or(0);
+    let mut t = use_signal(|| default_at);
+    let at = t().min(facts.engines.len().saturating_sub(1));
+    let current = facts.engines.get(at).cloned();
+
+    rsx! {
+        // The head of the page, above both readings. Which engine is being
+        // asked about is the page's subject, and a strip placed under the
+        // answer is a strip that is read after it is needed - this page had
+        // its tab row at the top before the sidebar took that level, and an
+        // engine is not a destination the sidebar can hold.
+        div {
+            role: "tablist",
+            class: "tabs tabs-sm tabs-lift mb-3 flex-nowrap overflow-x-auto",
+            for (i , (name , support)) in facts.engines.iter().enumerate() {
+                button {
+                    key: "{name}",
+                    role: "tab",
+                    class: if i == at { "tab tab-active" } else { "tab" },
+                    onclick: move |_| t.set(i),
+                    "{name}"
+                    if support == "DEFAULT" {
+                        span { class: "badge badge-primary badge-xs ml-2", "default" }
+                    }
+                }
+            }
+        }
+
+        match current {
+            Some((name, support)) => rsx! {
+                Panel {
+                    // The engine's own name, because the strip above has
+                    // already said what the subject is and a panel titled
+                    // "Engines" under eight tabs named after engines says it
+                    // a second time.
+                    title: name.clone(),
+                    subtitle: engine_note(&name)
+                        .map(|(what, _)| what.to_string())
+                        .unwrap_or_else(|| "Compiled into this server".to_string()),
+                    info: "The strip above is read from information_schema.ENGINES on the \
+                           live server, so it is what this install has, not a list of what \
+                           MariaDB ships. SUPPORT = DEFAULT marks the engine a CREATE TABLE \
+                           gets when it names none. What each tab then says about GLPI is \
+                           not read from anywhere - it is what finding a GLPI table on that \
+                           engine would mean - and the line at the foot of this panel is the \
+                           check for it: GLPI's installer writes ENGINE=InnoDB into all 447 \
+                           statements, so anything else is a table that was altered \
+                           afterwards."
+                        .to_string(),
+
+                    Engine {
+                        name,
+                        support,
+                        glpi_tables: facts.glpi_tables,
+                        others: facts.glpi_other_engines.clone(),
+                    }
+
+                    // At the foot rather than inside the body: it is a
+                    // finding about the whole database, not about whichever
+                    // engine is open, and it is the reason the strip exists.
+                    if facts.glpi_other_engines.is_empty() {
+                        p { class: "mt-4 border-t border-base-300 pt-3 text-sm text-base-content/70",
+                            "Every table in GLPI's database is InnoDB, which is what its \
+                             installer writes and what its foreign keys need."
+                        }
+                    } else {
+                        div { class: "mt-4 alert alert-warning",
+                            div {
+                                div { class: "font-semibold",
+                                    "{facts.glpi_other_engines.len()} table(s) are not InnoDB"
+                                }
+                                p { class: "mt-1 text-xs",
+                                    "Transactions and foreign keys do not work the same on \
+                                     another engine, and nothing in GLPI's own screens \
+                                     reports this."
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            // Only reachable if the server reported no engines at all, which
+            // would itself be the finding.
+            None => rsx! {
+                p { class: "text-sm text-base-content/70",
+                    "The server reported no engines, which it cannot do while answering \
+                     queries. Treat this as the backend having read something it did not \
+                     understand rather than as a server without storage."
+                }
+            },
+        }
+    }
+}
+
+/// One engine: what the server says it is, and what it would mean here.
+#[component]
+fn Engine(
+    name: String,
+    support: String,
+    glpi_tables: u64,
+    /// GLPI's tables whose engine is neither NULL nor InnoDB, as the backend
+    /// reports them. Passed whole rather than pre-filtered because InnoDB's
+    /// own count is derived from the length of it.
+    others: Vec<(String, String)>,
+) -> Element {
+    let note = engine_note(&name);
+    let here: Vec<&(String, String)> = others.iter().filter(|(_, e)| *e == name).collect();
+    // The backend lists only the tables that are neither InnoDB nor a view, so
+    // InnoDB's count is the rest. A view has a NULL engine and would be
+    // counted as InnoDB here; GLPI's installer creates none.
+    let in_glpi = if name == "InnoDB" {
+        glpi_tables.saturating_sub(others.len() as u64)
+    } else {
+        here.len() as u64
+    };
+
+    rsx! {
+        // Capped rather than left to the panel's width: the panel is as wide
+        // as the page, and a paragraph set 1300px wide is a paragraph nobody
+        // finishes.
+        div { class: "max-w-4xl text-sm",
+            // The name and the one-line description are the panel's title and
+            // subtitle, so the body starts at what it means here.
+            if let Some((_, means)) = note {
+                p { class: "mb-2", "{means}" }
+            } else {
+                p { class: "mb-2",
+                    "This app carries no note about it, which means only that it was not one \
+                     of the eight the page was written against."
+                }
+            }
+
+            p { class: "text-base-content/70",
+                if support == "DEFAULT" {
+                    "It is the default, so a CREATE TABLE naming no engine gets this one. "
+                } else {
+                    "Available, but not the default: a table is only on it if something said so. "
+                }
+                if in_glpi == 0 {
+                    "No table in GLPI's database uses it."
+                } else {
+                    "{in_glpi} of GLPI's {glpi_tables} tables are on it."
+                }
+            }
+
+            if !here.is_empty() {
+                ul { class: "mt-2 ml-5 list-disc space-y-1",
+                    for (table , _) in here.iter() {
+                        li { key: "{table}", class: "font-mono text-xs", "{table}" }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// -> what this engine is, and what a GLPI table on it would mean.
+fn engine_note(name: &str) -> Option<(&'static str, &'static str)> {
+    ENGINE_NOTES
+        .iter()
+        .find(|(n, _, _)| *n == name)
+        .map(|(_, what, means)| (*what, *means))
+}
+
+/// Engine, what it is, and what a GLPI table on it would mean.
+///
+/// The middle column is the engine's own description, checked against
+/// information_schema.ENGINES.COMMENT on this server rather than taken from
+/// documentation - on a MariaDB server that text is a column. The third is the
+/// part no engine says about itself and the reason the tabs exist: InnoDB is a
+/// choice GLPI's installer made, and every other row is what it would mean to
+/// find that choice undone.
+///
+/// Eight because that is what this server compiles in. The strip is driven by
+/// the server's list, not by this one, so an engine missing here costs a
+/// sentence rather than a tab.
+const ENGINE_NOTES: [(&str, &str, &str); 8] = [
+    (
+        "InnoDB",
+        "Transactions, row-level locking, foreign keys and encryption.",
+        "What GLPI's installer writes into every one of its 447 CREATE TABLE statements, and \
+         what its foreign keys and its transactional writes need. Every other engine on this \
+         strip is therefore a finding rather than a choice.",
+    ),
+    (
+        "Aria",
+        "Crash-safe, with MyISAM's heritage and not its fragility.",
+        "MariaDB's own: the privilege tables are Aria, and so are the internal temporary \
+         tables a large sort or GROUP BY spills to disk, so it is busy on every server \
+         whether or not anything you wrote names it. It is not transactional, so a GLPI \
+         table on it would lose rollback.",
+    ),
+    (
+        "CSV",
+        "Stores a table as a plain CSV file, with no indexes and no NULLs.",
+        "Nothing GLPI creates. It is on the strip because the server compiles it in, and it \
+         turns up in a database because a human made a table for an export.",
+    ),
+    (
+        "MEMORY",
+        "Hash-indexed and held entirely in RAM.",
+        "The rows are lost on restart while the table definition survives, so a GLPI table \
+         here would come back empty rather than missing - which reads as data that was never \
+         collected rather than as a failure.",
+    ),
+    (
+        "MRG_MyISAM",
+        "One table that reads a set of identical MyISAM tables as though they were one.",
+        "It needs MyISAM tables beneath it, and GLPI has none. Nothing in GLPI creates or \
+         expects one.",
+    ),
+    (
+        "MyISAM",
+        "Non-transactional, table-level locking, no foreign keys.",
+        "What older GLPI installs were built on. An install upgraded in place rather than \
+         reinstalled can still have tables on it, and that is precisely what the line below \
+         this strip looks for.",
+    ),
+    (
+        "PERFORMANCE_SCHEMA",
+        "Not storage: the instrumentation tables in the performance_schema database.",
+        "Its rows are the server's own counters, generated on read and held in memory. \
+         Nothing of GLPI's can be created on it.",
+    ),
+    (
+        "SEQUENCE",
+        "Generates a table of sequential values on demand - seq_1_to_100 exists the moment \
+         it is named.",
+        "Nothing is stored and no table is created, so it can never appear as a GLPI table's \
+         engine. It is on the strip because the server compiles it in.",
+    ),
+];
 
 /// MariaDB's storage choices, as GLPI's installer makes them.
 ///
