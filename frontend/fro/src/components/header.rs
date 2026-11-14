@@ -1,5 +1,5 @@
 use crate::app::Route;
-use crate::components::{HealthDot, NavTabs, ThemeToggle};
+use crate::components::{HealthDot, NavTabs, SidebarOpen, ThemeToggle};
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
@@ -22,10 +22,39 @@ use dioxus_router::{use_route, Link};
 #[component]
 pub fn Header() -> Element {
     let current = use_route::<Route>();
+    let SidebarOpen(mut open) = use_context::<SidebarOpen>();
 
     rsx! {
         header {
             class: "sticky top-0 z-50 flex items-center gap-3 border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur",
+
+            // Opens and closes the sidebar. First in the row, and shrink-0:
+            // the header is one non-wrapping flex line, so anything after the
+            // tab strip gets crushed to nothing once the strip is wide - which
+            // is exactly what happened to this button when the tabs came back.
+            // A button, not a Link: it changes a view state, not the route, and
+            // a reader who uses Back expects the page to change.
+            button {
+                class: "btn btn-ghost btn-sm shrink-0 px-2",
+                aria_label: if open() { "Hide the menu" } else { "Show the menu" },
+                aria_expanded: "{open()}",
+                onclick: move |_| {
+                    let now = !open();
+                    open.set(now);
+                    crate::components::sidebar::remember(now);
+                },
+                svg {
+                    xmlns: "http://www.w3.org/2000/svg",
+                    view_box: "0 0 24 24",
+                    fill: "none",
+                    stroke: "currentColor",
+                    stroke_width: "2",
+                    class: "h-5 w-5",
+                    line { x1: "4", y1: "7", x2: "20", y2: "7" }
+                    line { x1: "4", y1: "12", x2: "20", y2: "12" }
+                    line { x1: "4", y1: "17", x2: "20", y2: "17" }
+                }
+            }
 
             // Mark. An inline SVG rather than an asset: one file fewer to
             // hash, bundle and cache-bust for a 20px square.
@@ -42,6 +71,11 @@ pub fn Header() -> Element {
                 }
             }
 
+            // The destinations live in two places on purpose: here for one-click
+            // reach while the header has room, and in the sidebar, which is the
+            // only one that also shows the active page's own tabs. Adding a page
+            // means editing both - nav_tabs.rs and sidebar.rs - and that pairing
+            // is noted in each.
             NavTabs {}
 
             // Title and live status after the navigation. Allowed to truncate,

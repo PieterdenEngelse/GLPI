@@ -14,36 +14,7 @@
 use crate::app::Route;
 use crate::components::{InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
-use dioxus_router::{use_route, Link};
-
-/// The sub-header. Four kinds, the active one lit.
-#[component]
-fn TemplatesNav() -> Element {
-    let current = use_route::<Route>();
-    let is = |r: &Route| std::mem::discriminant(&current) == std::mem::discriminant(r);
-
-    let links = [
-        (Route::TemplateRow {}, "flagged row"),
-        (Route::TemplateValues {}, "values"),
-        (Route::TemplateForm {}, "form"),
-        (Route::TemplateMessage {}, "message"),
-    ];
-
-    rsx! {
-        nav {
-            role: "tablist",
-            class: "tabs tabs-box tabs-sm mb-5 w-full justify-start",
-            for (route, label) in links {
-                Link {
-                    key: "{label}",
-                    class: if is(&route) { "tab tab-active" } else { "tab" },
-                    to: route,
-                    "{label}"
-                }
-            }
-        }
-    }
-}
+use dioxus_router::Link;
 
 /// An inline link into GLPI.
 #[component]
@@ -64,7 +35,6 @@ fn GlpiRef(label: String, path: String) -> Element {
 #[component]
 pub fn TemplateRow() -> Element {
     rsx! {
-        TemplatesNav {}
         Panel {
             title: "A flagged row".to_string(),
             info: "Read in install/mysql/glpi-12.0.0-empty.sql and CommonDBTM. The \
@@ -210,7 +180,6 @@ pub fn TemplateRow() -> Element {
 #[component]
 pub fn TemplateValues() -> Element {
     rsx! {
-        TemplatesNav {}
         Panel {
             title: "A carrier of values".to_string(),
             subtitle: "A row whose columns mirror the item's fields".to_string(),
@@ -270,7 +239,6 @@ pub fn TemplateValues() -> Element {
 #[component]
 pub fn TemplateForm() -> Element {
     rsx! {
-        TemplatesNav {}
         Panel {
             title: "A form definition".to_string(),
             subtitle: "The only template kind that decides what a screen looks like".to_string(),
@@ -355,7 +323,7 @@ pub fn TemplateForm() -> Element {
                      field order is its own, and each field can be marked hidden or readonly \
                      per profile. It is reached from the definition rather than from a template \
                      list, which is why it sits on the "
-                    Link { class: "link link-primary", to: Route::Screens { tab: String::new() }, "Screens page" }
+                    Link { class: "link link-primary", to: Route::Screens { tab: String::new(), sub: String::new() }, "Screens page" }
                     " - but for a custom asset it is the thing to reach for, and no ITILTemplate \
                      covers it."
                 }
@@ -367,7 +335,6 @@ pub fn TemplateForm() -> Element {
 #[component]
 pub fn TemplateMessage() -> Element {
     rsx! {
-        TemplatesNav {}
         Panel {
             title: "A message".to_string(),
             subtitle: "Neither an instance, nor values, nor a form".to_string(),

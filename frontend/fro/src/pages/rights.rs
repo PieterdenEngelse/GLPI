@@ -13,10 +13,8 @@
 //! backend/src/glpi/rights.rs for why v2.3 cannot answer this, and why the
 //! obvious v2.3 workaround silently answers it wrongly.
 use crate::api::{self, CallStatus, ProfileRights, RightEntry, RightsReport};
-use crate::app::Route;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
-use dioxus_router::use_navigator;
 
 #[component]
 pub fn Rights(tab: String) -> Element {
@@ -61,8 +59,6 @@ fn Report(report: RightsReport, tab: String) -> Element {
     // different moments: Profiles answers "what may this account do", Api
     // answers "did the asking itself work". Profiles opens first - a reader
     // reaches this page because of a permission, not because of a request.
-    let nav = use_navigator();
-
     // Names, not indices, so a reordered strip cannot change what an existing
     // link points at. Unknown or absent is the first tab, never an error.
     const TABS: [&str; 3] = ["profiles", "api", "db"];
@@ -81,32 +77,6 @@ fn Report(report: RightsReport, tab: String) -> Element {
         .or_else(|| profiles.first().cloned());
 
     rsx! {
-        div { role: "tablist", class: "tabs tabs-border mb-5",
-            button {
-                role: "tab",
-                class: if at == 0 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Rights { tab: TABS[0].to_string() });
-                },
-                "Profiles"
-            }
-            button {
-                role: "tab",
-                class: if at == 1 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Rights { tab: TABS[1].to_string() });
-                },
-                "Api"
-            }
-            button {
-                role: "tab",
-                class: if at == 2 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Rights { tab: TABS[2].to_string() });
-                },
-                "Db"
-            }
-        }
 
         if at == 2 {
             // Fetches on its own, inside the tab, so opening Profiles or Api

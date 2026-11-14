@@ -143,3 +143,118 @@ impl Db {
             .collect())
     }
 }
+
+/// What the server this app talks to actually is.
+///
+/// Every value here is read from the live instance rather than from GLPI's
+/// source, which is the point: the rest of the DB page describes what GLPI
+/// *expects* of a server, and this is the one place that says what is
+/// actually running. The two disagreeing is a finding.
+#[derive(Debug, serde::Serialize)]
+pub struct ServerFacts {
+    /// `@@version` and `@@version_comment`, as the server reports them.
+    pub version: String,
+    pub flavour: String,
+    /// Seconds since start, from SHOW GLOBAL STATUS.
+    pub uptime_seconds: u64,
+    /// Settings worth seeing, as (name, value). Chosen rather than dumped:
+    /// a full SHOW VARIABLES is 600 rows and answers nothing.
+    pub variables: Vec<(String, String)>,
+    /// Storage engines the server has compiled in, with the default marked.
+    pub engines: Vec<(String, String)>,
+    /// GLPI's own database: how many tables, and what it occupies on disk.
+    pub glpi_tables: u64,
+    pub glpi_bytes: u64,
+    /// Tables in GLPI's database whose engine is not the default. Empty is
+    /// the expected answer and the interesting case is a non-empty one.
+    pub glpi_other_engines: Vec<(String, String)>,
+}
+
+impl Db {
+    /// Facts about the running server.
+    ///
+    /// Read as six small queries rather than one join: they come from three
+    /// different places (system variables, global status, information_schema)
+    /// and a failure in one should not cost the others.
+    pub async fn server_facts(&self) -> Result<ServerFacts> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        let (version, flavour): (String, String) = "SELECT @@version, @@version_comment"
+            .first(&mut conn)
+            .await
+            .context("reading @@version")?
+            .unwrap_or_else(|| ("unknown".into(), String::new()));
+
+        let uptime: Option<(String, String)> = "SHOW GLOBAL STATUS LIKE 'Uptime'"
+            .first(&mut conn)
+            .await
+            .context("reading Uptime")?;
+        let uptime_seconds = uptime.and_then(|(_, v)| v.parse().ok()).unwrap_or_default();
+
+        // Named one by one, so the list is a decision rather than whatever the
+        // server happened to expose. These are the ones that change what GLPI
+        // does or how its data is stored.
+        const WANTED: [&str; 10] = [
+            "character_set_server",
+            "collation_server",
+            "innodb_default_row_format",
+            "innodb_file_per_table",
+            "innodb_buffer_pool_size",
+            "max_connections",
+            "max_allowed_packet",
+            "sql_mode",
+            "lower_case_table_names",
+            "log_bin",
+        ];
+        let mut variables = Vec::new();
+        for name in WANTED {
+            let row: Option<(String, String)> = format!("SHOW GLOBAL VARIABLES LIKE '{name}'")
+                .first(&mut conn)
+                .await
+                .with_context(|| format!("reading {name}"))?;
+            if let Some((n, v)) = row {
+                variables.push((n, v));
+            }
+        }
+
+        let engines: Vec<(String, String)> =
+            "SELECT ENGINE, SUPPORT FROM information_schema.ENGINES \
+             WHERE SUPPORT IN ('YES', 'DEFAULT') ORDER BY ENGINE"
+                .fetch(&mut conn)
+                .await
+                .context("reading engines")?;
+
+        let (glpi_tables, glpi_bytes): (u64, u64) =
+            "SELECT COUNT(*), COALESCE(SUM(data_length + index_length), 0) \
+             FROM information_schema.tables WHERE table_schema = 'glpi'"
+                .first(&mut conn)
+                .await
+                .context("measuring the glpi database")?
+                .unwrap_or((0, 0));
+
+        // The expected answer is none. A table on a different engine than the
+        // rest is the kind of thing nothing else in this app would notice.
+        let glpi_other_engines: Vec<(String, String)> =
+            "SELECT table_name, engine FROM information_schema.tables \
+             WHERE table_schema = 'glpi' AND engine IS NOT NULL AND engine <> 'InnoDB' \
+             ORDER BY table_name"
+                .fetch(&mut conn)
+                .await
+                .context("checking engines in use")?;
+
+        Ok(ServerFacts {
+            version,
+            flavour,
+            uptime_seconds,
+            variables,
+            engines,
+            glpi_tables,
+            glpi_bytes,
+            glpi_other_engines,
+        })
+    }
+}

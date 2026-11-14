@@ -31,15 +31,13 @@
 use crate::app::Route;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel};
 use dioxus::prelude::*;
-use dioxus_router::{use_navigator, Link};
+use dioxus_router::Link;
 
 #[component]
-pub fn Screens(tab: String) -> Element {
+pub fn Screens(tab: String, sub: String) -> Element {
     // Four tabs. The machinery is db.rs's - one button each and one branch -
     // which is the whole reason the panels are behind components rather than
     // rendered directly here.
-    let nav = use_navigator();
-
     // Names, not indices: a reordered strip must not silently change what an
     // existing link points at.
     const TABS: [&str; 4] = ["cf", "def", "rights", "instruct"];
@@ -51,7 +49,14 @@ pub fn Screens(tab: String) -> Element {
     let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
-        div { class: "mb-3",
+        // The page-level explanation and the tab strip share one row, the
+        // link first: it is about the page as a whole, so it reads before
+        // the choice of tab rather than trailing it. Stacked, these spent a
+        // whole line of height on a five-word link while the space beside
+        // the tabs sat empty. flex-wrap so a narrow window stacks them again
+        // rather than squeezing either, and nothing here shrinks a tap
+        // target - this box is touchpad-only.
+        div { class: "mb-3 flex flex-wrap items-center gap-x-4 gap-y-2",
             InfoButton {
                 label: "What is this".to_string(),
                 title: "What this page is".to_string(),
@@ -69,43 +74,8 @@ pub fn Screens(tab: String) -> Element {
             }
         }
 
-        div { role: "tablist", class: "tabs tabs-border mb-5",
-            button {
-                role: "tab",
-                class: if at == 0 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Screens { tab: TABS[0].to_string() });
-                },
-                "CF"
-            }
-            button {
-                role: "tab",
-                class: if at == 1 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Screens { tab: TABS[1].to_string() });
-                },
-                "Def"
-            }
-            button {
-                role: "tab",
-                class: if at == 2 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Screens { tab: TABS[2].to_string() });
-                },
-                "Rights"
-            }
-            button {
-                role: "tab",
-                class: if at == 3 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Screens { tab: TABS[3].to_string() });
-                },
-                "Instruct"
-            }
-        }
-
         if at == 3 {
-            Instruct {}
+            Instruct { sub: sub.clone() }
         } else if at == 2 {
             Rights {}
         } else if at == 1 {
@@ -906,22 +876,17 @@ fn VaryByProfile() -> Element {
     }
 }
 
-/// The Instruct tab's sub-tab index, shared through context.
-#[derive(Clone, Copy)]
-struct InstructTab(Signal<usize>);
-
 /// A "step N" reference that takes the reader to the steps themselves.
 ///
-/// Rendered as a button rather than a Link: General is a sub-tab, not a
-/// route, so there is no URL to point at. It reads as a link and behaves as
-/// one within the page.
+/// A Link now, not a button: the sub-tab it points at is in the URL since the
+/// sidebar had to be able to name it, so this can be an ordinary link that
+/// survives a reload and works with the Back button.
 #[component]
 fn StepRef(n: usize) -> Element {
-    let InstructTab(mut sub) = use_context::<InstructTab>();
     rsx! {
-        button {
+        Link {
             class: "link link-primary",
-            onclick: move |_| sub.set(0),
+            to: Route::Screens { tab: "instruct".to_string(), sub: "general".to_string() },
             "step {n}"
         }
     }
@@ -935,32 +900,18 @@ fn StepRef(n: usize) -> Element {
 /// and each carries its own warning rather than relying on a reader having
 /// met it in the Def tab.
 #[component]
-fn Instruct() -> Element {
-    // A second strip inside a tab. Deliberately styled smaller than the page
-    // tabs above it - no text-base - so the hierarchy reads at a glance
-    // rather than looking like two peer rows of tabs.
-    // Shared so a panel on the Template tab can send the reader to the steps.
-    // A newtype rather than a bare Signal<usize>: context is keyed by type,
-    // and a second usize signal anywhere above would silently bind instead.
-    let InstructTab(mut sub) = use_context_provider(|| InstructTab(Signal::new(0usize)));
+fn Instruct(sub: String) -> Element {
+    // Names, not indices, and from the URL rather than a signal - the sidebar
+    // links straight at these, so they have to survive a reload.
+    let at = crate::components::nav::INSTRUCT_SUBS
+        .iter()
+        .position(|(n, _)| *n == sub)
+        .unwrap_or(0);
 
     rsx! {
-        div { role: "tablist", class: "tabs tabs-border mb-3",
-            button {
-                role: "tab",
-                class: if sub() == 0 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(0),
-                "General"
-            }
-            button {
-                role: "tab",
-                class: if sub() == 1 { "tab tab-active" } else { "tab" },
-                onclick: move |_| sub.set(1),
-                "Template"
-            }
-        }
-
-        if sub() == 1 {
+        // No strip here: both halves are in the sidebar, under Screens > How
+        // to, which is why they are in the URL at all.
+        if at == 1 {
             InstructTemplate {}
         } else {
             InstructGeneral {}

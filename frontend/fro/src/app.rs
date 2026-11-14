@@ -8,7 +8,7 @@
 //! index.html, so a client-side route survives a page reload or a pasted
 //! link - without that fallback every path but / would 404 from the server
 //! before the router ever ran.
-use crate::components::{GlobalErrorBar, Header};
+use crate::components::{GlobalErrorBar, Header, Sidebar, SidebarOpen};
 use crate::pages::{
     About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
     Netw, PageNotFound, Rights, Screens, Sec, Status, TemplateForm, TemplateMessage, TemplateRow,
@@ -27,9 +27,11 @@ pub enum Route {
         Computers {},
         #[route("/status")]
         Status {},
-        // Tab in the URL, same reasoning as /logs below.
-        #[route("/screens?:tab")]
-        Screens { tab: String },
+        // Tab and sub-tab in the URL, same reasoning as /db: the sidebar can
+        // only link to a view the URL names, and the How-to tab's two halves
+        // are worth linking to - a panel on one sends the reader to the other.
+        #[route("/screens?:tab&:sub")]
+        Screens { tab: String, sub: String },
         // The four things GLPI calls a template, one page each. Flat routes
         // and no top-nav entry: they are reached from the Screens page, which
         // is where the question arises. Same shape as the /inv children.
@@ -165,6 +167,10 @@ pub fn App() -> Element {
 
 #[component]
 fn Layout() -> Element {
+    // Provided here so the header's toggle and the sidebar itself share one
+    // piece of state, restored from the last visit.
+    use_context_provider(|| SidebarOpen(Signal::new(crate::components::sidebar::remembered())));
+
     rsx! {
         PageTitle {}
         // A full-bleed application surface, not a centred document. The
@@ -174,7 +180,15 @@ fn Layout() -> Element {
         div { class: "flex min-h-screen flex-col bg-base-200 text-base-content",
             GlobalErrorBar {}
             Header {}
-            main { class: "w-full flex-1 px-4 py-4", Outlet::<Route> {} }
+            // Sidebar and page side by side, under the sticky header. The
+            // sidebar is a sibling of the content rather than an overlay, so
+            // opening it reflows the page instead of covering it - on a
+            // 1080-tall screen the vertical room matters more than the width
+            // this costs.
+            div { class: "flex flex-1 items-start",
+                Sidebar {}
+                main { class: "min-w-0 flex-1 px-4 py-4", Outlet::<Route> {} }
+            }
         }
     }
 }

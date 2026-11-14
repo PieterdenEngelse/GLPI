@@ -14,10 +14,9 @@
 //! re-checks rots into a lie, and this app has already shipped one wrong
 //! denominator for exactly that reason.
 use crate::api::{self, RightsReport};
-use crate::app::Route;
+use crate::components::nav;
 use crate::components::{InfoButton, InfoLink, InfoSection, Panel, StatTile};
 use dioxus::prelude::*;
-use dioxus_router::use_navigator;
 
 #[component]
 pub fn Db(tab: String, sub: String) -> Element {
@@ -32,102 +31,58 @@ pub fn Db(tab: String, sub: String) -> Element {
         _ => None,
     };
 
-    let nav = use_navigator();
-
     // Names, not indices, so a reordered strip cannot change what an existing
     // link points at. Unknown or absent is Overview, never an error.
     const TABS: [&str; 4] = ["overview", "db-read", "api-read", "maria"];
     let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
-        // Above the tabs, not inside either one: what this page covers is the
-        // same question whichever tab is open. It is a named link rather than
-        // the usual icon because the mistake it heads off - reading this as a
-        // map of GLPI's database, or as the API's schemas - is made before a
-        // reader has anything to hover.
-        div { class: "mb-3",
+        // What this page covers is the same question whichever tab is open, so
+        // it sits above the content rather than inside a tab. A named link
+        // rather than the usual icon because the mistake it heads off -
+        // reading this as a map of GLPI's database, or as the API's schemas -
+        // is made before a reader has anything to hover.
+        //
+        // Every tab strip this page used to carry is in the sidebar now,
+        // including the sub-tabs under Maria and api-read, which is why this
+        // row holds one link and nothing else.
+        div { class: "mb-3 flex flex-wrap items-center gap-x-4 gap-y-2",
             InfoButton {
                 label: "What is this".to_string(),
                 title: "What this page is".to_string(),
-                body: "The part of GLPI's database this app is allowed to read - and the two \
-                       much larger things this page is not."
+                // One body, no tabs. Merged from four sections holding 1719
+                // characters between them - about fifteen lines at this
+                // modal's width, which fits unscrolled, and a tab strip that
+                // hides text the reader could already see is a click that
+                // buys nothing. Single paragraph because InfoButton renders
+                // body inside a <p>, so blank lines would collapse to spaces.
+                body: "Two tables of GLPI's database, column by column, with each column \
+                       marked according to whether anything in this app actually reads it; \
+                       the rest of the page is the reasoning around them - what GLPI keeps \
+                       as data, what it keeps as program, and what a database account \
+                       therefore cannot answer however wide you make it. Only two, but not \
+                       because the rest is forbidden: the account was granted SELECT on \
+                       glpi_refusedequipments and glpi_logs and nothing else, and since \
+                       2026-11-13 it holds every privilege on the server, so all 447 tables \
+                       of a GLPI 12.0.1 install are reachable. These two are still the only \
+                       ones this app reads, for an unchanged reason - everything else comes \
+                       through GLPI's API, which applies the entity and profile rules that \
+                       direct database access steps around - so what was once the shape of a \
+                       grant is now the shape of a decision. Nothing here describes GLPI's \
+                       database as a whole, and it is not meant to grow into that: a table \
+                       this app cannot read is a table it cannot be broken by, which is why \
+                       it is left out, and the list is the app's own coupling to GLPI's \
+                       schema, written down so it can be compared against a GLPI release \
+                       rather than documentation of GLPI. One word to disentangle before you \
+                       go looking: GLPI's API publishes a description of itself declaring \
+                       around 330 schemas - Computer, User, Agent and so on - but those are \
+                       shapes of API responses, not tables, and none of them appear here. \
+                       The app compares five of them against what it is really sent, which \
+                       is how it catches a field GLPI's permissions quietly drop instead of \
+                       refusing, and that comparison is a diagnostic run on demand with no \
+                       page of its own. If you came here expecting 330 of anything, that is \
+                       the list you were thinking of."
                     .to_string(),
-                sections: vec![
-                    InfoSection::new(
-                        "What is on it",
-                        "Two tables of GLPI's database, column by column, with each column \
-                         marked according to whether anything in this app actually reads it. \
-                         The rest of the page is the reasoning around them: what GLPI keeps \
-                         as data, what it keeps as program, and what a database account \
-                         therefore cannot answer however wide you make it.",
-                    ),
-                    InfoSection::new(
-                        "Why these two",
-                        "Not because the rest is forbidden - it is not, any more. The \
-                         account was granted SELECT on glpi_refusedequipments and glpi_logs \
-                         and nothing else; since 2026-11-13 it holds every privilege on the \
-                         server, so all 447 tables of a GLPI 12.0.1 install are reachable. \
-                         These two are still the only ones this app reads, and the reason is \
-                         unchanged: everything else comes through GLPI's API, which applies \
-                         the entity and profile rules that direct database access steps \
-                         around. What was once the shape of the grant is now the shape of a \
-                         decision.",
-                    ),
-                    InfoSection::new(
-                        "Not a map of GLPI",
-                        "Nothing here describes GLPI's database as a whole, and it is not \
-                         meant to grow into that. A table this app cannot read is a table it \
-                         cannot be broken by, which is exactly why it is left out: the list is \
-                         the app's own coupling to GLPI's schema, written down so it can be \
-                         compared against a GLPI release, not documentation of GLPI.",
-                    ),
-                    InfoSection::new(
-                        "\u{201c}Schema\u{201d} means two things",
-                        "GLPI's API publishes a description of itself, and that description \
-                         declares around 330 schemas - Computer, User, Agent, and so on. \
-                         Those are shapes of API responses, not tables, and none of them \
-                         appear on this page. The app compares five of them against what it \
-                         is really sent, which is how it catches a field GLPI's permissions \
-                         quietly drop instead of refusing; that comparison is a diagnostic \
-                         run on demand and has no page of its own. If you came here expecting \
-                         330 of anything, that is the list you were thinking of.",
-                    ),
-                ],
-            }
-        }
-
-        div { role: "tablist", class: "tabs tabs-border mb-5",
-            button {
-                role: "tab",
-                class: if at == 0 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Db { tab: TABS[0].to_string(), sub: String::new() });
-                },
-                "Overview"
-            }
-            button {
-                role: "tab",
-                class: if at == 1 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Db { tab: TABS[1].to_string(), sub: String::new() });
-                },
-                "db-read"
-            }
-            button {
-                role: "tab",
-                class: if at == 2 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Db { tab: TABS[2].to_string(), sub: String::new() });
-                },
-                "api-read"
-            }
-            button {
-                role: "tab",
-                class: if at == 3 { "tab text-base tab-active" } else { "tab text-base" },
-                onclick: move |_| {
-                    nav.push(Route::Db { tab: TABS[3].to_string(), sub: String::new() });
-                },
-                "Maria"
             }
         }
 
@@ -328,48 +283,23 @@ not arrive.";
 /// makes, db's for what else is on the server.
 #[component]
 fn Maria(sub: String) -> Element {
-    let nav = use_navigator();
-
     // general first, so it is what a bare ?tab=maria lands on - the strip
     // reads as orientation, then detail. Adding it changed that default from
-    // storage, which is deliberate.
-    const NAMES: [&str; 3] = ["general", "storage", "databases"];
-    let at = NAMES.iter().position(|s| *s == sub).unwrap_or(0);
+    // storage, which is deliberate. The strip itself is drawn by the page, in
+    // SubTabs, so it can share the page tabs' line.
+    let at = nav::MARIA_SUBS
+        .iter()
+        .position(|(n, _)| *n == sub)
+        .unwrap_or(0);
 
     rsx! {
-        // A second row of tabs, inside the tab - the same boxed style api-read
-        // uses, so nesting reads the same way in both places.
-        div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
-            button {
-                role: "tab",
-                class: if at == 0 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[0].to_string() });
-                },
-                "general"
-            }
-            button {
-                role: "tab",
-                class: if at == 1 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[1].to_string() });
-                },
-                "storage"
-            }
-            button {
-                role: "tab",
-                class: if at == 2 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[2].to_string() });
-                },
-                "db\u{2019}s"
-            }
-        }
 
-        if at == 2 {
+        if at == 3 {
             Databases {}
-        } else if at == 1 {
+        } else if at == 2 {
             MariaStorage {}
+        } else if at == 1 {
+            MariaEngine {}
         } else {
             MariaGeneral {}
         }
@@ -433,6 +363,167 @@ fn MariaGeneral() -> Element {
     }
 }
 
+/// What the server actually is, read from the running instance.
+///
+/// The only page on this tab that queries the server rather than GLPI's
+/// source, and that is the point of it: everything else here describes what
+/// GLPI expects of a database, and this says what is answering. The two
+/// disagreeing - a different engine, a different collation, a row format GLPI
+/// did not ask for - is a finding no other page would surface.
+#[component]
+fn MariaEngine() -> Element {
+    let report = use_resource(|| async move { api::fetch_mariadb().await });
+
+    rsx! {
+        match &*report.read_unchecked() {
+            None => rsx! {
+                div { class: "flex items-center gap-2 text-base-content/60",
+                    span { class: "loading loading-spinner loading-sm" }
+                    "Asking the server\u{2026}"
+                }
+            },
+            Some(Err(e)) => rsx! {
+                div { class: "alert alert-error",
+                    div {
+                        div { class: "font-semibold", "Could not reach the backend." }
+                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
+                    }
+                }
+            },
+            // Not an error, and deliberately not an empty table: the app runs
+            // without a database URL and only this page and Refused go dark.
+            Some(Ok(r)) if !r.configured => rsx! {
+                div { class: "alert alert-info",
+                    "No database connection is configured, so there is no server to ask. "
+                    "Everything else on this tab is read from GLPI's source and is unaffected."
+                }
+            },
+            Some(Ok(r)) => {
+                let facts = r.facts.clone().unwrap_or_else(|| api::ServerFacts {
+                    version: String::new(),
+                    flavour: String::new(),
+                    uptime_seconds: 0,
+                    variables: Vec::new(),
+                    engines: Vec::new(),
+                    glpi_tables: 0,
+                    glpi_bytes: 0,
+                    glpi_other_engines: Vec::new(),
+                });
+                rsx! { EngineFacts { facts } }
+            }
+        }
+    }
+}
+
+/// The facts themselves, once there are some.
+#[component]
+fn EngineFacts(facts: api::ServerFacts) -> Element {
+    let days = facts.uptime_seconds / 86_400;
+    let hours = (facts.uptime_seconds % 86_400) / 3_600;
+    let gib = facts.glpi_bytes as f64 / 1_073_741_824.0;
+
+    rsx! {
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            Panel {
+                title: "The server answering".to_string(),
+                subtitle: facts.flavour.clone(),
+                info: "Read from the live instance: @@version, @@version_comment and the \
+                       Uptime status variable. Everything else on this tab comes from GLPI's \
+                       source, so this is the one page that can disagree with the others - \
+                       and a disagreement here is the finding."
+                    .to_string(),
+                ul { class: "ml-5 list-disc space-y-2 text-sm",
+                    li {
+                        span { class: "font-medium", "Version. " }
+                        code { class: "text-xs", "{facts.version}" }
+                        " - the schema this app quotes was read from GLPI 12.0.1's installer, \
+                         which is a different thing from the server running it."
+                    }
+                    li {
+                        span { class: "font-medium", "Up for " }
+                        "{days} days, {hours} hours. A restart since the last GLPI upgrade is \
+                         worth knowing: migrations run once, and a server that came back \
+                         afterwards has not re-run them."
+                    }
+                    li {
+                        span { class: "font-medium", "GLPI's database holds " }
+                        "{facts.glpi_tables} tables, {gib:.2} GiB including indexes. The \
+                         installer creates 447; a count below that is an incomplete install, \
+                         above it a plugin."
+                    }
+                }
+            }
+
+            Panel {
+                title: "Engines".to_string(),
+                subtitle: "What is compiled in, and what GLPI's tables use".to_string(),
+                info: "SUPPORT = DEFAULT marks the engine a CREATE TABLE gets when it names \
+                       none. The second list is the check worth having: GLPI's installer \
+                       writes ENGINE=InnoDB into all 447 statements, so anything here is a \
+                       table that was altered afterwards."
+                    .to_string(),
+                div { class: "overflow-x-auto",
+                    table { class: "table table-sm",
+                        tbody {
+                            for (name , support) in facts.engines.iter() {
+                                tr { key: "{name}",
+                                    td { class: "font-mono text-xs", "{name}" }
+                                    td {
+                                        if support == "DEFAULT" {
+                                            span { class: "badge badge-primary badge-sm", "default" }
+                                        } else {
+                                            span { class: "text-base-content/60", "available" }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if facts.glpi_other_engines.is_empty() {
+                    p { class: "mt-3 text-sm text-base-content/70",
+                        "Every table in GLPI's database is InnoDB, which is what its installer \
+                         writes and what its foreign keys need."
+                    }
+                } else {
+                    div { class: "mt-3 alert alert-warning",
+                        div {
+                            div { class: "font-semibold",
+                                "{facts.glpi_other_engines.len()} table(s) are not InnoDB"
+                            }
+                            p { class: "mt-1 text-xs",
+                                "Transactions and foreign keys do not work the same on another \
+                                 engine, and nothing in GLPI's own screens reports this."
+                            }
+                        }
+                    }
+                }
+            }
+
+            Panel {
+                title: "Settings that change what GLPI sees".to_string(),
+                subtitle: "Ten of roughly six hundred".to_string(),
+                info: "Named one by one rather than dumped: SHOW VARIABLES returns about six \
+                       hundred rows and answers nothing. These are the ones that decide how \
+                       GLPI's data is stored, compared or truncated."
+                    .to_string(),
+                div { class: "overflow-x-auto",
+                    table { class: "table table-sm",
+                        tbody {
+                            for (name , value) in facts.variables.iter() {
+                                tr { key: "{name}",
+                                    td { class: "font-mono text-xs whitespace-nowrap", "{name}" }
+                                    td { class: "font-mono text-xs break-all", "{value}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// MariaDB's storage choices, as GLPI's installer makes them.
 ///
 /// Both panels are read out of install/mysql/glpi-12.0.0-empty.sql rather than
@@ -447,7 +538,7 @@ fn MariaStorage() -> Element {
         // does not know that has nothing to hover yet. Body only, no sections -
         // two short tabs here would be a click that reveals less than a
         // paragraph.
-        div { class: "mb-3",
+        div { class: "mb-2",
             InfoButton {
                 label: "What is this".to_string(),
                 title: "What the storage tab is".to_string(),
@@ -570,7 +661,7 @@ fn Databases() -> Element {
         // entry: what it heads off - reading seven databases as seven things
         // GLPI uses - is a conclusion a reader reaches from the list itself,
         // before there is anything to hover.
-        div { class: "mb-3",
+        div { class: "mb-2",
             InfoButton {
                 label: "What is this".to_string(),
                 title: "What these seven are".to_string(),
@@ -869,41 +960,14 @@ fn ApiRead(sub: String) -> Element {
         _ => api::FilterReach::default(),
     };
 
-    let nav = use_navigator();
-
-    const NAMES: [&str; 3] = ["fields", "schema", "rsql"];
-    let at = NAMES.iter().position(|s| *s == sub).unwrap_or(0);
+    // The strip is drawn by the page, in SubTabs, so it shares the page tabs'
+    // line instead of owning one.
+    let at = nav::API_SUBS
+        .iter()
+        .position(|(n, _)| *n == sub)
+        .unwrap_or(0);
 
     rsx! {
-        // A second row of tabs, inside the tab. Boxed rather than bordered so
-        // it reads as nested under api-read instead of competing with the page
-        // tabs above it.
-        div { role: "tablist", class: "tabs tabs-box mb-4 w-fit",
-            button {
-                role: "tab",
-                class: if at == 0 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[0].to_string() });
-                },
-                "fields"
-            }
-            button {
-                role: "tab",
-                class: if at == 1 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[1].to_string() });
-                },
-                "schema"
-            }
-            button {
-                role: "tab",
-                class: if at == 2 { "tab tab-active" } else { "tab" },
-                onclick: move |_| {
-                    nav.replace(Route::Db { tab: "api-read".to_string(), sub: NAMES[2].to_string() });
-                },
-                "rsql"
-            }
-        }
 
         if at == 1 {
             match catalogue {
@@ -1254,11 +1318,13 @@ fn Rsql(reach: api::FilterReach) -> Element {
     let mut t = use_signal(|| 0usize);
 
     rsx! {
-        // The third row of tabs on this page, and each level is deliberately
-        // styled differently: bordered for the page, boxed under api-read,
-        // lifted here. Three identical rows would leave a reader unable to
-        // tell which level a click just moved.
-        div { role: "tablist", class: "tabs tabs-sm tabs-lift mb-4 w-fit",
+        // The only tab strip left on this page, and the one level the sidebar
+        // deliberately does not take: these four are local view state, not
+        // part of the URL, so there is nothing for a menu entry to link to.
+        // Lifted rather than bordered or boxed, which is what it has always
+        // been - it used to be the third of three rows and the styling was
+        // what told a reader which level a click had moved.
+        div { role: "tablist", class: "tabs tabs-sm tabs-lift mb-2 w-fit",
             button {
                 role: "tab",
                 class: if t() == 0 { "tab tab-active" } else { "tab" },

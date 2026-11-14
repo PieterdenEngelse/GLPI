@@ -66,6 +66,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/authorizations", get(authorizations))
         .route("/api/posture", get(security_posture))
         .route("/api/refused", get(refused))
+        .route("/api/mariadb", get(mariadb))
         .route("/api/field-gaps", get(field_gaps))
         .route("/api/system-status", get(system_status))
         .route("/api/login-sessions", get(login_sessions))
@@ -850,6 +851,14 @@ async fn security_posture(
 /// What this app can say about refused submissions, including "nothing,
 /// because no database access is configured".
 #[derive(Serialize)]
+struct MariadbReport {
+    /// False when GLPI_DB_URL is unset, exactly as the refused report uses
+    /// it: "not configured" and "nothing to report" must not render alike.
+    configured: bool,
+    facts: Option<crate::glpi::refused::ServerFacts>,
+}
+
+#[derive(serde::Serialize)]
 struct RefusedReport {
     /// False when GLPI_DB_URL is unset. The page says so rather than showing
     /// an empty table: "no refusals" and "cannot look" are opposite answers
@@ -1071,6 +1080,24 @@ async fn log_tail(
         configured: true,
         tail: Some(dir.tail(&file)),
         allowed,
+    }))
+}
+
+/// What the MariaDB instance behind GLPI actually is.
+///
+/// No entity scoping here, unlike `refused`: nothing in this answer is a
+/// row of GLPI's data. It is the server's own description of itself, which
+/// has no owner and no entity.
+async fn mariadb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let Some(db) = state.db.as_ref() else {
+        return Ok(Json(MariadbReport {
+            configured: false,
+            facts: None,
+        }));
+    };
+    Ok(Json(MariadbReport {
+        configured: true,
+        facts: Some(db.server_facts().await?),
     }))
 }
 

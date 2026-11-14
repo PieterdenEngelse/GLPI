@@ -16,10 +16,8 @@
 //! processors - converted for display here and nowhere else, so what the
 //! backend serves still matches what GLPI stores.
 use crate::api::{self, HardwareRow, NetworkRow, SoftwareRow};
-use crate::app::Route;
 use crate::components::{InfoLink, InfoSection, Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
-use dioxus_router::{use_route, Link};
 
 /// How often the three fleet views refetch, matching the other pages.
 const REFRESH_MS: u32 = 5 * 60 * 1000;
@@ -73,43 +71,9 @@ fn Unreachable(what: String, error: String) -> Element {
     }
 }
 
-/// The sub-header. Four links, the active one lit.
-///
-/// Active state comes from `use_route`, not a signal the links write to: a
-/// signal only knows about clicks, so a pasted URL or the back button would
-/// leave the wrong link lit - the same reasoning as the main NavTabs.
-#[component]
-fn InvNav() -> Element {
-    let current = use_route::<Route>();
-    let is = |r: &Route| std::mem::discriminant(&current) == std::mem::discriminant(r);
-
-    let links = [
-        (Route::InvHardware {}, "hardware"),
-        (Route::InvSoftware {}, "software"),
-        (Route::InvNetwork {}, "network"),
-        (Route::InvRefused {}, "refused"),
-    ];
-
-    rsx! {
-        nav {
-            role: "tablist",
-            class: "tabs tabs-box tabs-sm mb-5 w-full justify-start",
-            for (route, label) in links {
-                Link {
-                    key: "{label}",
-                    class: if is(&route) { "tab tab-active" } else { "tab" },
-                    to: route,
-                    "{label}"
-                }
-            }
-        }
-    }
-}
-
 #[component]
 pub fn Inv() -> Element {
     rsx! {
-        InvNav {}
         Panel {
             title: "Inventory".to_string(),
             subtitle: "Four fleet-wide views of what the agents collected".to_string(),
@@ -161,7 +125,6 @@ pub fn InvHardware() -> Element {
     });
 
     rsx! {
-        InvNav {}
         match &*rows.read_unchecked() {
             Some(Err(e)) => rsx! {
                 Unreachable { what: "hardware".to_string(), error: e.clone() }
@@ -471,7 +434,6 @@ pub fn InvSoftware() -> Element {
     });
 
     rsx! {
-        InvNav {}
         match &*report.read_unchecked() {
             Some(Err(e)) => rsx! {
                 Unreachable { what: "software".to_string(), error: e.clone() }
@@ -644,7 +606,6 @@ pub fn InvNetwork() -> Element {
     });
 
     rsx! {
-        InvNav {}
         match &*rows.read_unchecked() {
             Some(Err(e)) => rsx! {
                 Unreachable { what: "the network inventory".to_string(), error: e.clone() }
@@ -823,7 +784,6 @@ pub fn InvRefused() -> Element {
     let report = use_resource(|| async move { crate::api::fetch_refused().await });
 
     rsx! {
-        InvNav {}
         Panel {
             title: "Refused".to_string(),
             subtitle: "Submissions GLPI threw away".to_string(),

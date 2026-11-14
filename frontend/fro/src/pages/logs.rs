@@ -29,7 +29,6 @@
 //!
 //! See backend/src/logs.rs and gl-adapter.md section 4.
 use crate::api;
-use crate::app::Route;
 use crate::components::Panel;
 use dioxus::prelude::*;
 use dioxus_router::use_navigator;
@@ -96,7 +95,7 @@ fn describe(file: &str) -> Option<&'static str> {
 #[component]
 pub fn Logs(log: String) -> Element {
     let listing = use_resource(|| async move { api::fetch_logs().await });
-    let nav = use_navigator();
+    let _nav = use_navigator();
 
     match &*listing.read_unchecked() {
         None => rsx! {
@@ -137,56 +136,31 @@ pub fn Logs(log: String) -> Element {
             let e = &list.entries[i];
 
             rsx! {
-                // flex-wrap, not a scrolling strip. Fifteen tabs do not fit a
-                // laptop width, and this machine has no mouse - a horizontal
-                // drag to reach a tab is the expensive gesture here.
-                div { role: "tablist", class: "tabs tabs-border mb-5 flex-wrap",
-                    for (n , entry) in list.entries.iter().enumerate() {
-                        button {
-                            key: "{entry.file}",
-                            role: "tab",
-                            class: if i == n { "tab text-base tab-active" } else { "tab text-base" },
-                            // push, not replace: a log worth its own URL is
-                            // worth a history entry, so Back returns to the
-                            // log you were reading rather than leaving /logs.
-                            onclick: {
-                                let stem = entry.file.trim_end_matches(".log").to_string();
-                                move |_| {
-                                    nav.push(Route::Logs { log: stem.clone() });
+            // No strip here: every log is an entry in the sidebar, under
+                            // Logs, with a bullet on the two this app will serve. That
+                            // list is fetched rather than declared - it is whatever the
+                            // backend finds in the directory.
+                                            Panel {
+                                title: e.file.clone(),
+                                subtitle: format!("/var/lib/glpi/files/_log/ \u{00b7} {} bytes", e.bytes),
+
+                                if let Some(d) = describe(&e.file) {
+                                    p { class: "mb-4 text-sm", "{d}" }
+                                } else {
+                                    p { class: "mb-4 text-sm text-base-content/60",
+                                        "Nothing in the GLPI 12.0.1 source identified what writes this file, \
+                                         so this page has nothing true to say about it beyond its name and \
+                                         size."
+                                    }
                                 }
-                            },
-                            "{entry.file.trim_end_matches(\".log\")}"
-                            // Marks the two whose contents this app serves, so
-                            // the other thirteen are not mistaken for tabs
-                            // that failed to load.
-                            if entry.readable {
-                                span { class: "ml-1 text-primary", "\u{2022}" }
+
+                                if e.readable {
+                                    LogTail { file: e.file.clone() }
+                                } else {
+                                    NotRead { file: e.file.clone() }
+                                }
                             }
                         }
-                    }
-                }
-
-                Panel {
-                    title: e.file.clone(),
-                    subtitle: format!("/var/lib/glpi/files/_log/ \u{00b7} {} bytes", e.bytes),
-
-                    if let Some(d) = describe(&e.file) {
-                        p { class: "mb-4 text-sm", "{d}" }
-                    } else {
-                        p { class: "mb-4 text-sm text-base-content/60",
-                            "Nothing in the GLPI 12.0.1 source identified what writes this file, \
-                             so this page has nothing true to say about it beyond its name and \
-                             size."
-                        }
-                    }
-
-                    if e.readable {
-                        LogTail { file: e.file.clone() }
-                    } else {
-                        NotRead { file: e.file.clone() }
-                    }
-                }
-            }
         }
     }
 }

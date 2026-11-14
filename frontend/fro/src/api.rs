@@ -868,3 +868,47 @@ pub async fn fetch_logs() -> Result<LogListResponse, String> {
         .await
         .map_err(|e| e.to_string())
 }
+
+/// What the MariaDB instance behind GLPI reports about itself.
+///
+/// Every field is `Option` or defaulted for the reason the whole file is: a
+/// backend one version ahead must degrade to a blank cell, not a parse
+/// failure that blanks the page.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct ServerFacts {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub flavour: String,
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    #[serde(default)]
+    pub variables: Vec<(String, String)>,
+    #[serde(default)]
+    pub engines: Vec<(String, String)>,
+    #[serde(default)]
+    pub glpi_tables: u64,
+    #[serde(default)]
+    pub glpi_bytes: u64,
+    #[serde(default)]
+    pub glpi_other_engines: Vec<(String, String)>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct MariadbReport {
+    /// False when the app has no database URL. The page says so rather than
+    /// rendering an empty table - "not configured" and "nothing found" are
+    /// opposite answers.
+    #[serde(default)]
+    pub configured: bool,
+    pub facts: Option<ServerFacts>,
+}
+
+pub async fn fetch_mariadb() -> Result<MariadbReport, String> {
+    reqwest::get(api_url("/api/mariadb"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<MariadbReport>()
+        .await
+        .map_err(|e| e.to_string())
+}

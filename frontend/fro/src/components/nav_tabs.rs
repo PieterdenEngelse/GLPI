@@ -1,15 +1,15 @@
 use crate::app::Route;
+use crate::components::nav;
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Link};
 
-/// The pages, as tabs. About is deliberately not among them - it describes
-/// the app rather than showing data, so it sits apart on the right of the bar
-/// and does not compete with the tabs a reader actually switches between.
+/// The pages, as tabs across the header.
 ///
-/// One list in one place, so adding a page is a single line rather than an
-/// edit in the header plus a matching edit wherever else tabs were pasted.
-/// RERAG keeps its routes in a `Route` enum but rebuilds the markup per
-/// dropdown; with a handful of pages a single list is clearer.
+/// The destinations themselves are not declared here - they come from
+/// components/nav.rs, which the sidebar reads too, so adding a page is one
+/// edit rather than two that can disagree. What is local to this strip is how
+/// it renders them: every destination marked `in_header`, as a flat row, with
+/// no sub-tabs. The sidebar is the one that nests those.
 ///
 /// Active state comes from `use_route`, not a signal the links write to: a
 /// signal only knows about clicks, so a pasted URL or the back button would
@@ -18,41 +18,14 @@ use dioxus_router::{use_route, Link};
 pub fn NavTabs() -> Element {
     let current = use_route::<Route>();
 
-    // Discriminant comparison, not equality: Route derives PartialEq, but a
-    // variant carrying fields (the 404 carries its segments) would not match
-    // a freshly constructed one.
-    let is = |r: &Route| std::mem::discriminant(&current) == std::mem::discriminant(r);
-
-    let tabs = [
-        (Route::Agents {}, "Agents"),
-        (Route::Computers {}, "Computers"),
-        (Route::Status {}, "Status"),
-        (Route::Screens { tab: String::new() }, "Screens"),
-        (Route::Inv {}, "Inv"),
-        (Route::Rights { tab: String::new() }, "Rights"),
-        (
-            Route::Db {
-                tab: String::new(),
-                sub: String::new(),
-            },
-            "DB",
-        ),
-        // Empty so far - see pages/netw.rs. Distinct from the fleet network
-        // view at /inv/network, which stays where it is under Inv.
-        (Route::Netw {}, "Netw"),
-        (Route::Sec {}, "Security"),
-        // Empty log: the bare page, which falls back to the first file.
-        (Route::Logs { log: String::new() }, "Logs"),
-    ];
-
     rsx! {
         nav { role: "tablist", class: "tabs tabs-box tabs-sm shrink-0",
-            for (route, label) in tabs {
+            for dest in nav::destinations().into_iter().filter(|d| d.in_header) {
                 Link {
-                    key: "{label}",
-                    class: if is(&route) { "tab text-lg tab-active" } else { "tab text-lg" },
-                    to: route,
-                    "{label}"
+                    key: "{dest.label}",
+                    class: if nav::is_active(&dest.route, &current) { "tab text-lg tab-active" } else { "tab text-lg" },
+                    to: dest.route,
+                    "{dest.label}"
                 }
             }
         }
