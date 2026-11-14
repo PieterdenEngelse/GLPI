@@ -1203,13 +1203,15 @@ fn DbRightsPanel() -> Element {
     rsx! {
         Panel {
             title: "Database access".to_string(),
-            subtitle: "Two tables, SELECT only".to_string(),
-            info: "This app reads GLPI's database directly for two things, and only two. \
-                   Everything else on every other page comes through GLPI's API."
+            subtitle: "One query, against an account that could do anything".to_string(),
+            info: "This app reads GLPI's database directly for one thing. Everything else on \
+                   every other page comes through GLPI's API - and since the account's grant \
+                   was widened, that is a choice the code makes rather than one the database \
+                   enforces."
                 .to_string(),
             info_sections: vec![
                 InfoSection::new(
-                    "Why there is a database account at all",
+                    "Why it exists",
                     "Two things GLPI records are exposed by neither of its APIs: the \
                      submissions it refused, and its own change history. Refused submissions \
                      are the failure this dashboard most wants to show - the agent reports \
@@ -1217,12 +1219,15 @@ fn DbRightsPanel() -> Element {
                      appears. The table is the only place that is written down.",
                 ),
                 InfoSection::new(
-                    "Why it is only two tables",
-                    "Because a grant is easier to widen than to narrow, and because every \
-                     table added is another piece of GLPI's internal layout this app depends \
-                     on. The rule that refused a submission is shown by its id and linked \
-                     into GLPI rather than by name, specifically so a third table does not \
-                     have to be granted to print one string.",
+                    "What it reaches",
+                    "Everything on the server, read and write. The account used to hold \
+                     SELECT on two tables; the grant was widened to all privileges, so the \
+                     old limit is gone and the only remaining one is this app's own code - \
+                     a single query against glpi_refusedequipments. The reasoning that kept \
+                     it narrow still decides what gets read: every table used is another \
+                     piece of GLPI's internal layout to depend on, which is why the rule \
+                     behind a refusal is shown by its id and linked into GLPI rather than \
+                     joined to by name.",
                 ),
                 InfoSection::new(
                     "What it costs",
@@ -1232,10 +1237,12 @@ fn DbRightsPanel() -> Element {
                      entities, so the account could read every row regardless of scope: the \
                      rows shown are restricted afterwards, to the entities the API says this \
                      account may see, so that \u{201c}everything\u{201d} means the same here \
-                     as on every other page.",
+                     as on every other page. A third thing now: the account can also write, \
+                     and writing behind GLPI corrupts an install in ways its own UI will not \
+                     show, so nothing here may ever issue anything but a SELECT.",
                 ),
                 InfoSection::new(
-                    "No password is stored",
+                    "No password",
                     "The account is expected to authenticate through the unix socket, which \
                      means there is no secret in this app's configuration to leak and nothing \
                      to rotate. Reading the config file tells an attacker the account name and \

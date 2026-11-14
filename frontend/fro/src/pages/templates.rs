@@ -130,8 +130,9 @@ pub fn TemplateRow() -> Element {
                      first - 0 for the normal list, 1 for the bin - then is_template = 0 \
                      always. What that second one narrows is another matter, since nearly \
                      every row holds 0 for both, and whether the database uses the index or \
-                     reads the table is its own decision - not something this app can check, \
-                     as its database account reaches two tables and neither is this one."
+                     reads the table is its own decision - not checked here, though it now \
+                     could be: the app's account reaches every table since the grant was \
+                     widened, so an EXPLAIN would answer it."
                 }
                 li {
                     span { class: "font-medium", "Nothing to enable. " }

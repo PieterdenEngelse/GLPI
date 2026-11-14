@@ -176,10 +176,16 @@ the precise difference from adapter 3.
 
 ---
 
-## 3. Direct MariaDB — one grant, two tables
+## 3. Direct MariaDB — one query, an unlimited grant
 
-`backend/src/glpi/refused.rs`. `SELECT` on `glpi_refusedequipments` and
-`glpi_logs`.
+`backend/src/glpi/refused.rs`. One `SELECT` against
+`glpi_refusedequipments`.
+
+**Superseded as to scope on 2026-11-13.** This section was written when the
+account held `SELECT` on `glpi_refusedequipments` and `glpi_logs` and nothing
+else. The grant to `pde@localhost` is now all privileges server-wide, so the
+narrowness described below is a property of this app's code, not of the
+database. What the adapter reads has not changed.
 
 Exists because refused submissions are exposed by **neither** API, and they
 are the failure this dashboard most wants to show: the agent exits 0, GLPI
@@ -307,8 +313,8 @@ credentials **and** the encryption key.
 
 - **The only adapter that steps around an access control GLPI added
   deliberately.** Adapter 3 bypasses entity *scoping* - which GLPI never
-  applied to those two tables anyway, and which `refused.rs` rebuilds by
-  hand. This one bypasses `system_logs` and a re-authentication prompt, a
+  applied to the refused-equipment table anyway, and which `refused.rs`
+  rebuilds by hand. This one bypasses `system_logs` and a re-authentication prompt, a
   barrier GLPI put in front of its own UI. And because the grant lives in the
   filesystem rather than in GLPI, **GLPI cannot revoke it**: nothing in its
   profile screens will ever show that this app reads those files.
@@ -628,8 +634,9 @@ unstable one.
 
 A PHP component, a second toolchain in a Rust project, a deployment artifact
 in a Nix-managed system, and an untested version-boundary disable - to remove
-a `SELECT` grant on a socket-authenticated account that stores no password
-and is scoped to two tables.
+a `SELECT` grant on a socket-authenticated account that stores no password.
+(Since 2026-11-13 that account holds all privileges; the socket
+authentication, and so the no-password property, is unchanged.)
 
 ### 5. A retained SQL adapter removes most of the plugin's point
 

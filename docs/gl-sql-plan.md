@@ -17,6 +17,10 @@ reach those two, and what it costs. Columns below were read from the GLPI
 
 ## What the two tables hold
 
+(The *grant* is no longer two tables — it is everything, as of 2026-11-13.
+These two are still the only ones this app has any use for, which is what the
+section is about.)
+
 ### `glpi_refusedequipments` — the one that matters
 
 An agent submits an inventory, a rule rejects it, the agent exits 0, and no
@@ -77,8 +81,10 @@ the acceptable form of this.
 
 Needs deciding: `rules_id` is a number. Showing the rule's *name* means either
 `GRANT SELECT ON glpi.glpi_rules` — a third table — or displaying the id and
-linking into GLPI. **Prefer the link.** The grant stays at two tables and the
-page stays honest about where the answer lives.
+linking into GLPI. **Prefer the link**, and note that the reason changed: the
+grant no longer stops anyone, since the account holds everything as of
+2026-11-13. What the link buys now is less coupling to GLPI's internal layout,
+and a page that stays honest about where the answer lives.
 
 Entity names are already available from the API (`/api/entities`), so
 `glpi_entities` is not needed.
@@ -97,13 +103,16 @@ results by the entity ids the API already reports as visible, so both halves
 of the page mean the same thing, and say so in the scope line.
 
 **A second access path.** More to go wrong, more to explain. It is justified
-only because the alternative for these two tables is nothing at all.
+only because the alternative for this data is nothing at all.
 
 ## Not a cost, despite appearances
 
-**Privilege.** SELECT on two tables is narrower than what the `inv` API account
-already holds — that account can read every computer, agent, profile and user
-in the install.
+**Privilege.** This no longer holds and is kept to mark the change. SELECT on
+two tables *was* narrower than what the `inv` API account already holds — that
+account can read every computer, agent, profile and user in the install. As of
+2026-11-13 the database account holds all privileges server-wide, which is
+wider than the API account in both reach and kind: it can write, and it can
+read accounts. See CLAUDE.md for what that traded away.
 
 **Trap: the table is `glpi_refusedequipments`, plural.** GLPI pluralises table
 names, so a grep for the singular matches every occurrence of the plural as a

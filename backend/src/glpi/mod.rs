@@ -19,9 +19,12 @@
 //!     this install's one computer. Fleet-wide in a single query is what it
 //!     cannot do, which is what the database grant is for.
 //!
-//! Both live in the database. Options are a read-only MariaDB user scoped to
-//! those two tables, or doing without; that choice is not made here. See
-//! CLAUDE.md.
+//! Both live in the database, and since 2026-11-13 the account can read all
+//! of it: the grant to pde@localhost is server-wide, so the question is no
+//! longer which tables are reachable but which this app chooses to read. It
+//! reads one, glpi_refusedequipments. The rest is deliberate restraint rather
+//! than enforcement - see CLAUDE.md, which records what the grant stopped
+//! protecting.
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 

@@ -851,9 +851,12 @@ pub fn InvRefused() -> Element {
                     "Does that step around GLPI's permissions?",
                     "It would, left alone, which is why it is not left alone. The rows shown \
                      are restricted to the same entities the API reports as visible, so this \
-                     page means the same thing by \"everything\" as every other page. The \
-                     account used holds read access to two tables and nothing else - less \
-                     than the account the rest of the app already signs in with.",
+                     page means the same thing by \"everything\" as every other page. That \
+                     restriction is now the whole of it: the database account used to be \
+                     narrower than the one the rest of the app signs in with, and is not any \
+                     more - it holds every privilege on this server. What keeps this page \
+                     honest is the entity filter above and the single query behind it, not \
+                     the grant.",
                 ),
             ],
             info_links: vec![

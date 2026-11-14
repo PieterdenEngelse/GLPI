@@ -73,13 +73,8 @@ GRANDFATHERED = {
     frozenset({'Where this list comes from', 'Two of them need 12.0.1', 'Case, and what empty means', 'All eighteen are reachable from this app'}),
     # inv.rs:118 - cost 119
     frozenset({'Why this is separate from Agents and Computers', 'Where these four read from', 'Refused is still the odd one out'}),
-    # db.rs:48 - cost 103. Keyed on the RENDERED heading: the script now
-    # decodes \u{...} escapes, so the escaped spelling no longer matches.
-    frozenset({'What is on it', 'Why only two tables', 'Not a map of GLPI', '“Schema” also means something else'}),
     # inv.rs:741 - cost 117
     frozenset({'The columns', 'This page could not be built on the current API', 'Addresses are matched to the right interface'}),
-    # rights.rs:1192 - cost 117
-    frozenset({'Why there is a database account at all', 'Why it is only two tables', 'What it costs', 'No password is stored'}),
     # inv.rs:872 - cost 115
     frozenset({'Why this is the failure worth catching', 'Where this comes from', "Does that step around GLPI's permissions?"}),
     # sec.rs:170 - cost 111

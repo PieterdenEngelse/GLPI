@@ -126,8 +126,10 @@ and all custom dropdown types, which `getRightsForForm` never adds. See
 
 ## 6. The database schema — the only quiet failure
 
-The grant is SELECT on two tables. The app reads **12 of the 14** columns of
-`glpi_refusedequipments`:
+The app reads **12 of the 14** columns of `glpi_refusedequipments`:
+(The grant was SELECT on two tables when this was written and is now
+server-wide, which widens nothing here: the coupling below is to the columns
+this code names, and that list is unchanged.)
 
 ```
 read:     id  name  itemtype  entities_id  ip  mac  rules_id  method
@@ -1122,8 +1124,9 @@ behaviour-preserving grant rather than a regression, though it does widen who
 can see documents newly markable as private - which concerns GLPI's own
 document feature, which this app does not read.
 
-The new `is_private` column is on `glpi_documents_items`, not on either of the
-two tables the SQL grant covers, so section 6's coupling is unaffected.
+The new `is_private` column is on `glpi_documents_items`, which this app never
+reads - the grant now covers it, but no query names it - so section 6's
+coupling is unaffected.
 
 ### Wired into the UI
 

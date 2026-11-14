@@ -29,8 +29,13 @@ pub struct Config {
     pub username: String,
     pub password: String,
 
-    /// Optional direct read of GLPI's database, for the two tables neither
-    /// API exposes: refused submissions and field-level history.
+    /// Optional direct read of GLPI's database, for what neither API
+    /// exposes: refused submissions and field-level history.
+    ///
+    /// The account's grant stopped being the limit on 2026-11-13 - it now
+    /// holds all privileges server-wide - so what this app reads is decided
+    /// by the code below and nothing else. One query, one table. See
+    /// CLAUDE.md for what that widening cost and what it did not.
     ///
     /// Absent by default and the app is fully functional without it - the
     /// Refused page then says it is not configured rather than showing an

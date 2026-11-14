@@ -62,15 +62,16 @@ pub fn Db(tab: String, sub: String) -> Element {
                          therefore cannot answer however wide you make it.",
                     ),
                     InfoSection::new(
-                        "Why only two tables",
-                        "Because two is all that is granted. This app may run SELECT on \
-                         glpi_refusedequipments and on glpi_logs, and on nothing else. A \
-                         GLPI 12.0.1 install creates 447 tables; the other 445 are reached \
-                         through GLPI's API, which applies the entity and profile rules that \
-                         direct database access would step around, or they are not reached at \
-                         all. So this is the whole of the granted surface rather than a \
-                         sample of a larger one, and it is complete when both tables are here \
-                         with every column listed.",
+                        "Why these two",
+                        "Not because the rest is forbidden - it is not, any more. The \
+                         account was granted SELECT on glpi_refusedequipments and glpi_logs \
+                         and nothing else; since 2026-11-13 it holds every privilege on the \
+                         server, so all 447 tables of a GLPI 12.0.1 install are reachable. \
+                         These two are still the only ones this app reads, and the reason is \
+                         unchanged: everything else comes through GLPI's API, which applies \
+                         the entity and profile rules that direct database access steps \
+                         around. What was once the shape of the grant is now the shape of a \
+                         decision.",
                     ),
                     InfoSection::new(
                         "Not a map of GLPI",
@@ -81,7 +82,7 @@ pub fn Db(tab: String, sub: String) -> Element {
                          compared against a GLPI release, not documentation of GLPI.",
                     ),
                     InfoSection::new(
-                        "\u{201c}Schema\u{201d} also means something else",
+                        "\u{201c}Schema\u{201d} means two things",
                         "GLPI's API publishes a description of itself, and that description \
                          declares around 330 schemas - Computer, User, Agent, and so on. \
                          Those are shapes of API responses, not tables, and none of them \
@@ -165,8 +166,10 @@ pub fn Db(tab: String, sub: String) -> Element {
 /// depended on are written down where someone can compare them against a GLPI
 /// release, rather than left to be discovered from an empty table.
 ///
-/// Read from GLPI's own install SQL, not queried from the live database. The
-/// grant is two tables of SELECT and gives no way to ask what the columns are.
+/// Read from GLPI's own install SQL, not queried from the live database. That
+/// was forced when the account reached two tables; since the grant was widened
+/// it is a choice, and the better one - a release's schema file is the same
+/// for every install and can be diffed across versions.
 #[component]
 fn DbRead() -> Element {
     rsx! {
@@ -196,10 +199,12 @@ fn DbRead() -> Element {
                 ),
                 InfoSection::new(
                     "Where this comes from",
-                    "GLPI's own install SQL for 12.0.1, not the live database. The grant is \
-                     SELECT on two tables and carries no way to ask what columns they have, so \
-                     this list is as current as the GLPI release it was read from - which is \
-                     the honest limit of it.",
+                    "GLPI's own install SQL for 12.0.1, not the live database - which the \
+                     account could now be asked, since the grant was widened, and is \
+                     deliberately not. A release's file is identical on every install and \
+                     diffable between versions, where a live query describes this one server \
+                     only. The limit is the honest one: this list is as current as the GLPI \
+                     release it was read from.",
                 ),
             ],
 
@@ -325,7 +330,10 @@ not arrive.";
 fn Maria(sub: String) -> Element {
     let nav = use_navigator();
 
-    const NAMES: [&str; 2] = ["storage", "databases"];
+    // general first, so it is what a bare ?tab=maria lands on - the strip
+    // reads as orientation, then detail. Adding it changed that default from
+    // storage, which is deliberate.
+    const NAMES: [&str; 3] = ["general", "storage", "databases"];
     let at = NAMES.iter().position(|s| *s == sub).unwrap_or(0);
 
     rsx! {
@@ -338,7 +346,7 @@ fn Maria(sub: String) -> Element {
                 onclick: move |_| {
                     nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[0].to_string() });
                 },
-                "storage"
+                "general"
             }
             button {
                 role: "tab",
@@ -346,14 +354,81 @@ fn Maria(sub: String) -> Element {
                 onclick: move |_| {
                     nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[1].to_string() });
                 },
+                "storage"
+            }
+            button {
+                role: "tab",
+                class: if at == 2 { "tab tab-active" } else { "tab" },
+                onclick: move |_| {
+                    nav.replace(Route::Db { tab: "maria".to_string(), sub: NAMES[2].to_string() });
+                },
                 "db\u{2019}s"
             }
         }
 
-        if at == 1 {
+        if at == 2 {
             Databases {}
-        } else {
+        } else if at == 1 {
             MariaStorage {}
+        } else {
+            MariaGeneral {}
+        }
+    }
+}
+
+/// What GLPI requires of the server, as opposed to what it puts in it.
+///
+/// Requirements rather than readings: GLPI's own checks are quoted from
+/// source, and the query to test each is given, because a value pasted in
+/// here would rot the first time the server was upgraded. This page already
+/// learned that lesson for its counts.
+#[component]
+fn MariaGeneral() -> Element {
+    rsx! {
+        Panel {
+            title: "What GLPI requires of the server".to_string(),
+            subtitle: "Three checks, all run at install time".to_string(),
+            info: "Read in src/Glpi/System/Requirement/: DbEngine.php line 72 for the \
+                   MariaDB minimum and line 76 for MySQL's, DbConfiguration.php lines 63 \
+                   to 71 for the page size, DbTimezones.php lines 64 to 68 for the \
+                   timezone tables. GLPI runs all three itself and shows them on its own \
+                   status page, so this panel is here to say what they are and how to \
+                   check them by hand - not to duplicate a verdict GLPI already gives."
+                .to_string(),
+
+            p { class: "mb-3 text-sm",
+                "These are conditions on the server, not on the schema. GLPI checks each \
+                 one during installation and refuses or warns rather than failing later."
+            }
+
+            ul { class: "ml-5 list-disc space-y-2 text-sm",
+                li {
+                    span { class: "font-medium", "MariaDB 10.11, or MySQL 8.0. " }
+                    "The engine is told apart by looking for "
+                    code { class: "text-xs", "-MariaDB" }
+                    " in the version string, then the numeric part is compared. "
+                    code { class: "text-xs", "select version()" }
+                }
+                li {
+                    span { class: "font-medium", "innodb_page_size at least 8 KB. " }
+                    "Smaller pages cannot hold GLPI's wider indexes. The default is 16 KB, \
+                     so this only bites on a server someone tuned down. "
+                    code { class: "text-xs", "select @@global.innodb_page_size" }
+                }
+                li {
+                    span { class: "font-medium", "The timezone tables must be loaded. " }
+                    "GLPI counts the rows and treats zero as timezone support being \
+                     unavailable rather than as an error, so the symptom is a missing \
+                     feature, not a failure. "
+                    code { class: "text-xs", "select count(*) from mysql.time_zone_name" }
+                }
+            }
+
+            p { class: "mt-3 text-sm text-base-content/70",
+                "Nothing here is read live. The figures on this page that are live come \
+                 from this app's own backend; the server's own settings are not among \
+                 them, so the queries above are the way to answer these three."
+            }
         }
     }
 }
@@ -390,8 +465,9 @@ fn MariaStorage() -> Element {
                        capitalisation collide on a UNIQUE key, which is how a custom asset \
                        definition can refuse a system name that looks unused. Everything here \
                        was read in install/mysql/glpi-12.0.0-empty.sql and in GLPI's source, \
-                       so it can be re-checked without a database account - this app's \
-                       account reaches two tables and could verify none of it."
+                       so it can be re-checked without a database account at all, by \
+                       anyone, on any install - which is why it stays the source even now \
+                       that this app's account could query the live server instead."
                     .to_string(),
             }
         }
@@ -554,19 +630,22 @@ fn Databases() -> Element {
                     }
                     ul { class: "ml-5 list-disc space-y-2 text-sm",
                         li {
-                            span { class: "font-medium", "This app reaches two tables of it. " }
-                            "Its account holds SELECT on "
+                            span { class: "font-medium", "This app reads one table of it. " }
                             code { class: "text-xs", "glpi_refusedequipments" }
-                            " and "
+                            ", in a single query. Its account was once limited to that table \
+                             and "
                             code { class: "text-xs", "glpi_logs" }
-                            " and nothing else, which is why a schema browser pointed at that \
-                             account shows two tables rather than 447."
+                            ", and since 2026-11-13 holds every privilege on the server - so \
+                             a schema browser pointed at it now shows all 447 tables, and \
+                             what this app reads is decided by its code rather than by the \
+                             database."
                         }
                         li {
                             span { class: "font-medium", "What is actually in those two. " }
-                            "Measured today: glpi_logs holds 1424 rows, glpi_refusedequipments \
-                             holds none - no inventory submission has ever been refused on \
-                             this install, which is a finding rather than a gap."
+                            "Measured 2026-11-14: glpi_logs holds 1451 rows, and \
+                             glpi_refusedequipments holds none - no inventory submission has \
+                             ever been refused on this install, which is a finding rather \
+                             than a gap."
                         }
                     }
                 }
@@ -643,9 +722,10 @@ fn Databases() -> Element {
                         .to_string(),
                     p { class: "mb-3 text-sm",
                         "Accounts, their authentication plugins, every grant, stored \
-                         routines, time zones and the event scheduler's state. The two-table \
-                         scope described above is not a setting in GLPI or in this app - it \
-                         is rows in here."
+                         routines, time zones and the event scheduler's state. What any \
+                         account may reach - the two-table scope this app used to have, and \
+                         the server-wide one it has now - is not a setting in GLPI or in \
+                         this app, but rows in here."
                     }
                     ul { class: "ml-5 list-disc space-y-2 text-sm",
                         li {
@@ -1022,7 +1102,7 @@ fn Catalogue(rows: Vec<api::SchemaSummary>) -> Element {
             subtitle: format!("{total} declared, {audited} of them audited"),
             info: "GLPI's API publishes a description of itself, and this is the whole of what \
                    it describes. Every name here is the shape of an API response - not a \
-                   database table, and not one of the two tables under db-read."
+                   database table, and not one of the tables under db-read."
                 .to_string(),
             info_sections: vec![
                 InfoSection::new(
@@ -1050,8 +1130,8 @@ fn Catalogue(rows: Vec<api::SchemaSummary>) -> Element {
                 ),
                 InfoSection::new(
                     "Not the same thing as db-read",
-                    "db-read lists two tables of GLPI's database, by column, because this app \
-                     holds SELECT on them. This lists response shapes from GLPI's API. \
+                    "db-read lists the two tables of GLPI's database this app reads, by \
+                     column. This lists response shapes from GLPI's API. \
                      Nothing here is a table, nothing there is an endpoint, and both are \
                      called a schema by somebody - which is why they are two tabs on one page \
                      rather than one list.",
