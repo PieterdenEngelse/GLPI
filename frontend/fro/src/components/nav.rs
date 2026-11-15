@@ -139,6 +139,14 @@ pub fn destinations() -> Vec<Dest> {
             label: "Security",
             in_header: true,
         },
+        // Before Logs, and about GLPI rather than about this app: the
+        // pages either side of it report on the install, and a dashboard
+        // reporting its own latency invites tuning the instrument.
+        Dest {
+            route: Route::Perf {},
+            label: "Perf",
+            in_header: true,
+        },
         // Empty log: the bare page, which falls back to the first file.
         Dest {
             route: Route::Logs { log: String::new() },

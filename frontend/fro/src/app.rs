@@ -11,8 +11,8 @@
 use crate::components::{GlobalErrorBar, Header, Sidebar, SidebarOpen};
 use crate::pages::{
     About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
-    Netw, PageNotFound, Rights, Screens, Sec, Status, TemplateForm, TemplateMessage, TemplateRow,
-    TemplateValues,
+    Netw, PageNotFound, Perf, Rights, Screens, Sec, Status, TemplateForm, TemplateMessage,
+    TemplateRow, TemplateValues,
 };
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Outlet, Routable, Router};
@@ -73,6 +73,10 @@ pub enum Route {
         // linkable and survives a reload. Query rather than a path segment:
         // the strip is built from whatever files exist, so a path would turn
         // a missing file into a 404 instead of a fallback to the first tab.
+        // GLPI's own speed, not this dashboard's. No arguments: there is
+        // one reading and it is taken when the page is opened.
+        #[route("/perf")]
+        Perf {},
         #[route("/logs?:log")]
         Logs { log: String },
         #[route("/about")]
@@ -109,6 +113,7 @@ impl Route {
             Route::Db { .. } => "DB",
             Route::Netw {} => "Netw",
             Route::Sec {} => "Security",
+            Route::Perf {} => "Perf",
             Route::Logs { .. } => "Logs",
             Route::About {} => "About",
             Route::PageNotFound { .. } => "Not found",

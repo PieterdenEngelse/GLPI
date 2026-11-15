@@ -157,9 +157,9 @@ pub struct ServerFacts {
     pub flavour: String,
     /// Seconds since start, from SHOW GLOBAL STATUS.
     pub uptime_seconds: u64,
-    /// Settings worth seeing, as (name, value). Chosen rather than dumped:
-    /// a full SHOW VARIABLES is 600 rows and answers nothing.
-    pub variables: Vec<(String, String)>,
+    /// Settings worth seeing. Chosen rather than dumped: a full SHOW
+    /// VARIABLES is 600 rows and answers nothing.
+    pub variables: Vec<ServerSetting>,
     /// Storage engines the server has compiled in, with the default marked.
     pub engines: Vec<(String, String)>,
     /// GLPI's own database: how many tables, and what it occupies on disk.
@@ -168,6 +168,27 @@ pub struct ServerFacts {
     /// Tables in GLPI's database whose engine is not the default. Empty is
     /// the expected answer and the interesting case is a non-empty one.
     pub glpi_other_engines: Vec<(String, String)>,
+}
+
+/// One of the ten settings the server panel names, with where its value
+/// came from.
+///
+/// `value` alone cannot answer the question the panel is for - whether this
+/// server has been tuned away from what GLPI assumes - because the common
+/// case is a value that equals the default and tells you nothing about
+/// whether anyone chose it. `origin` does answer it, in the server's own
+/// vocabulary, and catches the case no comparison can: a SET GLOBAL back to
+/// the default, which leaves the value identical and the origin SQL.
+#[derive(Debug, Clone, Serialize)]
+pub struct ServerSetting {
+    pub name: String,
+    pub value: String,
+    /// None where the server has no default to compare against - log_bin is
+    /// one, and a naive value-vs-default test reports it as a divergence
+    /// when there is simply nothing on the other side.
+    pub default: Option<String>,
+    pub origin: String,
+    pub read_only: bool,
 }
 
 impl Db {
@@ -210,14 +231,39 @@ impl Db {
             "lower_case_table_names",
             "log_bin",
         ];
-        let mut variables = Vec::new();
+        // One query where this was ten, and a richer answer: SHOW GLOBAL
+        // VARIABLES gives the value and nothing else, while SYSTEM_VARIABLES
+        // carries the default, whether SQL may change it, and where the
+        // running value came from. The IN list is built from WANTED above -
+        // compile-time strings, never anything from a request.
+        let list = WANTED
+            .iter()
+            .map(|n| format!("'{}'", n.to_uppercase()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rows: Vec<(String, String, Option<String>, String, bool)> = format!(
+            "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), DEFAULT_VALUE, \
+             COALESCE(GLOBAL_VALUE_ORIGIN, ''), READ_ONLY = 'YES' \
+             FROM information_schema.SYSTEM_VARIABLES WHERE VARIABLE_NAME IN ({list})"
+        )
+        .fetch(&mut conn)
+        .await
+        .context("reading the server's settings")?;
+
+        // Back into WANTED's order, which is a reading order rather than an
+        // alphabetical one, so the list stays the decision it was written as.
+        let mut variables: Vec<ServerSetting> = Vec::with_capacity(rows.len());
         for name in WANTED {
-            let row: Option<(String, String)> = format!("SHOW GLOBAL VARIABLES LIKE '{name}'")
-                .first(&mut conn)
-                .await
-                .with_context(|| format!("reading {name}"))?;
-            if let Some((n, v)) = row {
-                variables.push((n, v));
+            if let Some((n, value, default, origin, read_only)) =
+                rows.iter().find(|(n, ..)| n == name).cloned()
+            {
+                variables.push(ServerSetting {
+                    name: n,
+                    value,
+                    default,
+                    origin,
+                    read_only,
+                });
             }
         }
 
@@ -256,5 +302,822 @@ impl Db {
             glpi_bytes,
             glpi_other_engines,
         })
+    }
+}
+
+/// The groups the InnoDB panel shows, in the order it shows them.
+///
+/// MariaDB publishes no taxonomy of its own - `SHOW VARIABLES LIKE 'innodb%'`
+/// is 137 rows in alphabetical order and nothing more - so this grouping is
+/// this app's reading, not the server's. Named here rather than in the UI
+/// because the rules below decide it and the two belong together.
+pub const INNODB_GROUPS: [&str; 7] = [
+    "Memory & Buffer Pool",
+    "I/O & Flushing",
+    "Transactions & Locks",
+    "Statistics & Optimizer",
+    "Compression & Encryption",
+    "Tablespace & Row Format",
+    "Others",
+];
+
+/// Needle -> group, matched against the name with `innodb_` stripped, first
+/// match winning. The order IS the decision, and three entries exist only
+/// because of it:
+///
+/// - `flush_log_at_trx_commit` carries "trx" and is a durability knob, so it
+///   is pinned to I/O ahead of the "trx" rule.
+/// - `old_blocks_pct` and `old_blocks_time` contain the substring "lock".
+///   They are buffer-pool LRU settings and nothing to do with locking, so
+///   they are pinned ahead of the "lock" rule - the one accident in this
+///   list that produced a wrong answer rather than an arguable one.
+/// - the full-text family is pinned to Others ahead of "optimize_", so
+///   `optimize_fulltext_only` sits with the other `ft_*` settings instead of
+///   alone under the optimizer.
+///
+/// Anything unmatched is Others, which is also where a variable added by a
+/// future MariaDB lands: a new name shows up in the panel uncategorised
+/// rather than being silently dropped.
+const INNODB_RULES: [(&str, &str); 53] = [
+    ("flush_log_at_trx_commit", "I/O & Flushing"),
+    ("old_blocks", "Memory & Buffer Pool"),
+    ("ft_", "Others"),
+    ("fulltext", "Others"),
+    ("undo_directory", "Tablespace & Row Format"),
+    ("undo_tablespaces", "Tablespace & Row Format"),
+    ("compress", "Compression & Encryption"),
+    ("encrypt", "Compression & Encryption"),
+    ("scrub", "Compression & Encryption"),
+    ("cmp_per_index", "Compression & Encryption"),
+    ("lock", "Transactions & Locks"),
+    ("trx", "Transactions & Locks"),
+    ("purge", "Transactions & Locks"),
+    ("undo", "Transactions & Locks"),
+    ("snapshot_isolation", "Transactions & Locks"),
+    ("rollback_on_timeout", "Transactions & Locks"),
+    ("stats_", "Statistics & Optimizer"),
+    ("optimize_", "Statistics & Optimizer"),
+    ("force_primary_key", "Statistics & Optimizer"),
+    (
+        "prefix_index_cluster_optimization",
+        "Statistics & Optimizer",
+    ),
+    ("flush", "I/O & Flushing"),
+    ("io_capacity", "I/O & Flushing"),
+    ("io_threads", "I/O & Flushing"),
+    ("doublewrite", "I/O & Flushing"),
+    ("aio", "I/O & Flushing"),
+    ("atomic_writes", "I/O & Flushing"),
+    ("read_ahead", "I/O & Flushing"),
+    ("lru_", "I/O & Flushing"),
+    ("max_dirty_pages", "I/O & Flushing"),
+    ("log_file_", "I/O & Flushing"),
+    ("log_write_ahead", "I/O & Flushing"),
+    ("log_checkpoint_now", "I/O & Flushing"),
+    ("data_file_buffering", "I/O & Flushing"),
+    ("data_file_write_through", "I/O & Flushing"),
+    ("open_files", "I/O & Flushing"),
+    ("fast_shutdown", "I/O & Flushing"),
+    ("sort_file_cache", "I/O & Flushing"),
+    ("buffer_pool", "Memory & Buffer Pool"),
+    ("buf_dump", "Memory & Buffer Pool"),
+    ("adaptive_hash", "Memory & Buffer Pool"),
+    ("sort_buffer_size", "Memory & Buffer Pool"),
+    ("log_buffer_size", "Memory & Buffer Pool"),
+    ("data_file_path", "Tablespace & Row Format"),
+    ("data_home_dir", "Tablespace & Row Format"),
+    ("log_group_home_dir", "Tablespace & Row Format"),
+    ("tmpdir", "Tablespace & Row Format"),
+    ("default_row_format", "Tablespace & Row Format"),
+    ("file_per_table", "Tablespace & Row Format"),
+    ("page_size", "Tablespace & Row Format"),
+    ("autoextend_increment", "Tablespace & Row Format"),
+    ("fill_factor", "Tablespace & Row Format"),
+    ("tablespace", "Tablespace & Row Format"),
+    ("instant_alter_column", "Tablespace & Row Format"),
+];
+
+/// Which group a variable belongs to. Pure, so the grouping is testable
+/// without a server.
+pub fn innodb_group(name: &str) -> &'static str {
+    let stem = name.strip_prefix("innodb_").unwrap_or(name);
+    INNODB_RULES
+        .iter()
+        .find(|(needle, _)| stem.contains(needle))
+        .map(|(_, group)| *group)
+        .unwrap_or("Others")
+}
+
+/// One InnoDB setting: what it is called, what it is set to, and what the
+/// server's own binary says it does.
+///
+/// `help` is None only where the server documents nothing - two of this
+/// server's 137 - and the panel distinguishes that from a setting it simply
+/// has no button for. See glpi::innodb_help for where the text comes from.
+#[derive(Debug, Clone, Serialize)]
+pub struct InnodbSetting {
+    pub name: String,
+    pub value: String,
+    pub help: Option<&'static str>,
+    /// True when the server refuses a runtime change outright - 31 of this
+    /// server's 137. The panel shows those as text rather than as a control
+    /// that cannot work.
+    pub read_only: bool,
+    /// The server's own word for the type: BOOLEAN, ENUM, BIGINT UNSIGNED,
+    /// INT UNSIGNED, DOUBLE, VARCHAR. Passed through rather than mapped onto
+    /// a taxonomy of this app's, so a type a later MariaDB adds still
+    /// arrives intact and the panel can fall back on a text box.
+    pub options: Vec<String>,
+    pub kind: String,
+    pub min: Option<String>,
+    pub max: Option<String>,
+    /// What the server rounds a numeric value to. 1 MiB for the buffer pool,
+    /// so 100000000 is accepted and stored as 100663296 - which is why a
+    /// write reads the value back instead of echoing what was sent.
+    pub block: Option<String>,
+    pub default: Option<String>,
+    /// Where the RUNNING value came from, in the server's own words:
+    /// COMPILE-TIME (nobody set it), CONFIG (a line in my.cnf, which on this
+    /// deployment means /etc/nixos and a rebuild), COMMAND-LINE (the unit's
+    /// ExecStart), SQL (someone ran SET GLOBAL - so it reverts at the next
+    /// restart), AUTO (the server sized it).
+    ///
+    /// Worth more than comparing the value against `default`, and this is
+    /// the case that proves it: a SET GLOBAL that put a setting back to its
+    /// default leaves the value identical and the origin SQL. By eye the row
+    /// is untouched; the origin is the only thing that says the running
+    /// server no longer matches what a restart would give you.
+    pub origin: String,
+    /// What the startup file asks for, when it names this setting. None
+    /// means a restart returns it to my.cnf and the compiled default - and
+    /// a value here that differs from `value` is the mismatch the panel
+    /// exists to show.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub persisted: Option<String>,
+}
+
+/// One group of InnoDB settings, as the panel renders it.
+#[derive(Debug, Clone, Serialize)]
+pub struct InnodbGroup {
+    pub category: String,
+    pub variables: Vec<InnodbSetting>,
+}
+
+impl Db {
+    /// Every InnoDB setting the server has, grouped.
+    ///
+    /// All of them, unlike the ten in `server_facts`. The ten are a decision
+    /// about what changes GLPI's behaviour; this is the whole surface of the
+    /// engine GLPI's 447 tables are on, which is a reference rather than a
+    /// finding - so it is a separate request, made only when the panel is on
+    /// screen.
+    ///
+    /// Empty groups are kept. A category with nothing in it is a fact about
+    /// this server - no encryption settings compiled in, say - and dropping
+    /// it would make the panel's shape depend on the server in a way the
+    /// reader cannot see.
+    pub async fn innodb_variables(&self) -> Result<Vec<InnodbGroup>> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+        let rows = innodb_settings(&mut conn).await?;
+
+        Ok(INNODB_GROUPS
+            .iter()
+            .map(|group| InnodbGroup {
+                category: (*group).to_string(),
+                variables: rows
+                    .iter()
+                    .filter(|v| innodb_group(&v.name) == *group)
+                    .cloned()
+                    .collect(),
+            })
+            .collect())
+    }
+
+    /// Set one InnoDB setting on the running server, and report what it
+    /// became.
+    ///
+    /// Four things this refuses to take from the caller, because the caller
+    /// is a web page and this ends in SET GLOBAL:
+    ///
+    /// - **The name.** It must match a row the server itself reports under
+    ///   `innodb%`, and that row's own spelling is what goes into the
+    ///   statement. A name the server does not report never reaches SQL.
+    /// - **Whether it may be written at all.** `read_only` is re-read here
+    ///   rather than trusted from whatever the page was rendered with, which
+    ///   may be minutes stale or forged outright.
+    /// - **The shape of the value.** A boolean or enum must match one of the
+    ///   server's own ENUM_VALUE_LIST entries, and that entry - not the
+    ///   submitted text - is what gets quoted. A number must parse and sit
+    ///   inside the server's own range.
+    /// - **What it became.** Read back from the server afterwards instead of
+    ///   echoed: values are rounded to NUMERIC_BLOCK_SIZE, case is
+    ///   normalised, and a buffer pool resize is asynchronous, so what was
+    ///   asked for and what is now set are routinely different.
+    ///
+    /// Not persisted, and the panel says so. MariaDB has no SET PERSIST -
+    /// that is MySQL 8 - so a restart hands the value back to my.cnf.
+    pub async fn set_innodb_setting(&self, name: &str, value: &str) -> Result<String> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        let (canonical, literal) = self.innodb_literal(name, value).await?;
+        let var_name = canonical;
+        // The name is the server's own spelling of a variable it reported a
+        // line ago, and the literal was built here out of a parsed number or
+        // a matched enum entry. Neither is the submitted text.
+        conn.query_drop(format!("SET GLOBAL {var_name} = {literal}"))
+            .await
+            .with_context(|| format!("setting {var_name}"))?;
+
+        let after: Option<String> =
+            "SELECT COALESCE(GLOBAL_VALUE, '') FROM information_schema.SYSTEM_VARIABLES \
+             WHERE VARIABLE_NAME = :name"
+                .with(params! { "name" => var_name.to_uppercase() })
+                .first(&mut conn)
+                .await
+                .with_context(|| format!("reading {var_name} back"))?;
+
+        Ok(after.unwrap_or_default())
+    }
+
+    /// Everything the Perf page reads from the database in one go.
+    ///
+    /// Four queries, deliberately: the page is a reading of a live server
+    /// and a reader will reload it, so what it costs matters. Returned as a
+    /// tuple rather than a struct because every piece has a different shape
+    /// and the caller assembles the report anyway.
+    ///
+    /// THESE ARE BEHAVIOUR, NOT CONFIGURATION. The DB page already says what
+    /// the engine is set to; these say what came of it - how often a page was
+    /// found in memory, how often a sort spilled to disk, what GLPI's own
+    /// background work costs, and where the bytes are. A setting and its
+    /// consequence belong on different pages, because the consequence is the
+    /// only one of the two that can be wrong.
+    #[allow(clippy::type_complexity)]
+    pub async fn perf_readings(
+        &self,
+    ) -> Result<(
+        Vec<super::perf::Gauge>,
+        Vec<super::perf::CronTask>,
+        Vec<super::perf::TableSize>,
+        i64,
+        i64,
+    )> {
+        use super::perf::{CronTask, Gauge, TableSize};
+
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        // Status counters are cumulative since the server started, so every
+        // rate below is an average over that period and says so. An
+        // instantaneous rate would need two samples a second apart, which is
+        // a second this page is not worth.
+        let status: Vec<(String, String)> =
+            "SELECT VARIABLE_NAME, VARIABLE_VALUE FROM information_schema.GLOBAL_STATUS"
+                .fetch(&mut conn)
+                .await
+                .context("reading server status")?;
+        let get = |name: &str| -> f64 {
+            status
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                .and_then(|(_, v)| v.parse().ok())
+                .unwrap_or(0.0)
+        };
+        let max_connections: Option<(String, String)> =
+            "SHOW GLOBAL VARIABLES LIKE 'max_connections'"
+                .first(&mut conn)
+                .await
+                .context("reading max_connections")?;
+        let max_connections = max_connections
+            .and_then(|(_, v)| v.parse::<f64>().ok())
+            .unwrap_or(0.0);
+
+        let reads = get("Innodb_buffer_pool_reads");
+        let requests = get("Innodb_buffer_pool_read_requests");
+        let tmp = get("Created_tmp_tables");
+        let tmp_disk = get("Created_tmp_disk_tables");
+        let uptime = get("Uptime").max(1.0);
+        let pages_total = get("Innodb_buffer_pool_pages_total").max(1.0);
+
+        let engine = vec![
+            Gauge {
+                label: "Pages served from memory".to_string(),
+                value: format!("{:.2}%", 100.0 * (1.0 - reads / requests.max(1.0))),
+                detail: format!(
+                    "{requests:.0} page requests, {reads:.0} of which had to come from disk. \
+                     The whole point of the buffer pool, and the first number to move when \
+                     the data stops fitting in it"
+                ),
+            },
+            Gauge {
+                label: "Buffer pool in use".to_string(),
+                value: format!(
+                    "{:.0}% dirty",
+                    100.0 * get("Innodb_buffer_pool_pages_dirty") / pages_total
+                ),
+                detail: format!(
+                    "{:.0} of {pages_total:.0} pages hold changes not yet written to disk. \
+                     High is not a fault - it is work batched rather than work pending",
+                    get("Innodb_buffer_pool_pages_dirty")
+                ),
+            },
+            Gauge {
+                label: "Sorts that spilled to disk".to_string(),
+                value: format!("{:.1}%", 100.0 * tmp_disk / tmp.max(1.0)),
+                detail: format!(
+                    "{tmp_disk:.0} of {tmp:.0} temporary tables were written to disk rather \
+                     than held in memory. Decided by tmp_table_size and max_heap_table_size, \
+                     and by queries that ask for more than either"
+                ),
+            },
+            Gauge {
+                label: "Queries answered".to_string(),
+                value: format!("{:.2}/s", get("Questions") / uptime),
+                detail: format!(
+                    "{:.0} statements over {:.1} days of uptime - an average, not a rate \
+                     now",
+                    get("Questions"),
+                    uptime / 86_400.0
+                ),
+            },
+            Gauge {
+                label: "Slow queries".to_string(),
+                value: format!("{:.0}", get("Slow_queries")),
+                detail: "Statements that took longer than long_query_time. Counted whether \
+                         or not the slow log is being written"
+                    .to_string(),
+            },
+            Gauge {
+                label: "Connections in use".to_string(),
+                value: format!("{:.0} of {max_connections:.0}", get("Threads_connected")),
+                detail: format!(
+                    "Against max_connections. GLPI opens one per PHP worker, so the ceiling \
+                     that binds first is usually php-fpm's, not this one. {:.0} connections \
+                     have been aborted since startup",
+                    get("Aborted_connects")
+                ),
+            },
+            Gauge {
+                label: "Row lock waits".to_string(),
+                value: format!("{:.0}", get("Innodb_row_lock_waits")),
+                detail: "Times a statement waited for another transaction's lock. The \
+                         number that rises when agents report concurrently"
+                    .to_string(),
+            },
+        ];
+
+        // GLPI's own account of its background work. LEFT JOIN with a filter
+        // on elapsed so a task that has never run still appears - "scheduled
+        // and never run" is a finding, and an INNER JOIN would hide it.
+        let cron: Vec<(
+            String,
+            i64,
+            i64,
+            Option<String>,
+            Option<f64>,
+            Option<f64>,
+            i64,
+        )> = "SELECT c.name, c.frequency, c.state, CAST(c.lastrun AS CHAR), \
+                    AVG(l.elapsed), MAX(l.elapsed), COUNT(l.id) \
+             FROM glpi_crontasks c \
+             LEFT JOIN glpi_crontasklogs l ON l.crontasks_id = c.id AND l.elapsed > 0 \
+             GROUP BY c.id, c.name, c.frequency, c.state, c.lastrun \
+             ORDER BY AVG(l.elapsed) DESC, c.name LIMIT 12"
+            .fetch(&mut conn)
+            .await
+            .context("reading GLPI's scheduled tasks")?;
+        let cron = cron
+            .into_iter()
+            .map(
+                |(name, frequency, state, last_run, avg, max, runs)| CronTask {
+                    name,
+                    frequency,
+                    state,
+                    last_run,
+                    avg_seconds: avg.unwrap_or(0.0),
+                    max_seconds: max.unwrap_or(0.0),
+                    runs,
+                },
+            )
+            .collect();
+
+        let tables: Vec<(String, i64, i64)> = "SELECT table_name, COALESCE(table_rows, 0), \
+                    CAST(ROUND((data_length + index_length) / 1024) AS SIGNED) \
+             FROM information_schema.tables WHERE table_schema = 'glpi' \
+             ORDER BY (data_length + index_length) DESC LIMIT 10"
+            .fetch(&mut conn)
+            .await
+            .context("measuring GLPI's tables")?;
+        let tables = tables
+            .into_iter()
+            .map(|(name, rows, kib)| TableSize { name, rows, kib })
+            .collect();
+
+        let (total_kib, total_tables): (i64, i64) =
+            "SELECT CAST(ROUND(COALESCE(SUM(data_length + index_length), 0) / 1024) AS SIGNED), \
+                    COUNT(*) \
+             FROM information_schema.tables WHERE table_schema = 'glpi'"
+                .first(&mut conn)
+                .await
+                .context("measuring GLPI's database")?
+                .unwrap_or((0, 0));
+
+        Ok((engine, cron, tables, total_kib, total_tables))
+    }
+
+    /// Time a query of the shape GLPI's own pages run.
+    ///
+    /// A COUNT over the largest table GLPI's inventory fills, which is what
+    /// a list view does before it draws a page of rows.
+    ///
+    /// WHAT IS IN THE NUMBER, said plainly because an earlier version of
+    /// this tried to exclude it and quietly failed: the round trip from this
+    /// process over the unix socket, including the driver. There is no
+    /// server-side stopwatch in MariaDB a client can read back per
+    /// statement: no last_query_cost, and the performance schema answers
+    /// aggregates rather than "that one". So the honest choice is to measure
+    /// what can be measured and label it. The socket and driver are worth
+    /// tenths of a millisecond; where this figure matters is when it stops
+    /// being tenths, which this measures just as well.
+    ///
+    /// Run `samples` times and reported as best and median: the first run
+    /// fills the buffer pool and is not what the next thousand will cost.
+    pub async fn time_query(&self, samples: usize) -> Result<super::perf::Timing> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        let mut times = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            let started = std::time::Instant::now();
+            let _: Option<i64> = "SELECT COUNT(*) FROM glpi_items_softwareversions"
+                .first(&mut conn)
+                .await
+                .context("timing a GLPI-shaped query")?;
+            times.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(super::perf::Timing {
+            what: "COUNT over glpi_items_softwareversions".to_string(),
+            detail: "The largest table GLPI's inventory fills - what a list view counts \
+                     before it draws a page. Round trip over the unix socket, driver \
+                     included"
+                .to_string(),
+            best_ms: times.first().copied().unwrap_or_default(),
+            median_ms: times[times.len() / 2],
+            worst_ms: times.last().copied().unwrap_or_default(),
+            error: None,
+        })
+    }
+
+    /// -> the server's own spelling of this setting, and the SQL literal for
+    /// this value, or why there is neither.
+    ///
+    /// The whole of the check that stands between a web page and SET GLOBAL,
+    /// in one place because two callers need exactly the same answer: the
+    /// live write, and the startup file that will replay it unattended after
+    /// the next restart. A value good enough to apply now is the only kind
+    /// worth writing into a file nobody will be watching when it runs.
+    pub async fn innodb_literal(&self, name: &str, value: &str) -> Result<(String, String)> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+        let known = innodb_settings(&mut conn).await?;
+        let var = known
+            .iter()
+            .find(|v| v.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| anyhow::anyhow!("{name} is not an InnoDB setting on this server"))?;
+        if var.read_only {
+            anyhow::bail!(
+                "{} is read-only: the server takes it at startup, before any SQL runs, so \
+                 neither this panel nor the startup file can set it - only my.cnf can",
+                var.name
+            );
+        }
+        Ok((var.name.clone(), literal_for(var, value)?))
+    }
+}
+
+/// Every InnoDB setting with everything the server will say about it.
+///
+/// One query behind both the panel and the write, so the two can never
+/// disagree about what exists or about what may be set. SYSTEM_VARIABLES
+/// rather than SHOW GLOBAL VARIABLES, which answers the value and nothing
+/// else: the type decides which control a row gets, the enum list and the
+/// range decide what that control may offer, and READ_ONLY decides whether
+/// there is one at all. A table of that written here would be this app's
+/// claim about a server it does not ship - the same mistake as a quoted
+/// count, and it would rot at the next upgrade with nothing to notice.
+///
+/// Names come back uppercase from this table and lowercase from SHOW
+/// VARIABLES. Lowercase is what the rest of this app, the help text and
+/// MariaDB's own documentation use, so they are folded here.
+/// One SYSTEM_VARIABLES row as the driver hands it back.
+///
+/// Named for the same reason `Row` above it is: the column order is the
+/// contract between the SELECT and the mapping, and a ten-field tuple inline
+/// hides that. Clippy asks for this too, which is the lesser reason.
+type SettingRow = (
+    String,         // name, lowercased
+    String,         // global value
+    bool,           // read_only
+    String,         // variable type
+    String,         // enum values, comma separated
+    Option<String>, // numeric min
+    Option<String>, // numeric max
+    Option<String>, // numeric block size
+    Option<String>, // default value
+    String,         // where the running value came from
+);
+
+async fn innodb_settings(conn: &mut mysql_async::Conn) -> Result<Vec<InnodbSetting>> {
+    let rows: Vec<SettingRow> =
+        "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), READ_ONLY = 'YES', \
+          VARIABLE_TYPE, COALESCE(ENUM_VALUE_LIST, ''), NUMERIC_MIN_VALUE, \
+          NUMERIC_MAX_VALUE, NUMERIC_BLOCK_SIZE, DEFAULT_VALUE, \
+          COALESCE(GLOBAL_VALUE_ORIGIN, '') \
+          FROM information_schema.SYSTEM_VARIABLES \
+          WHERE VARIABLE_NAME LIKE 'INNODB%' ORDER BY VARIABLE_NAME"
+            .fetch(&mut *conn)
+            .await
+            .context("reading InnoDB settings")?;
+
+    Ok(rows
+        .into_iter()
+        .map(
+            |(name, value, read_only, kind, options, min, max, block, default, origin)| {
+                let help = crate::glpi::innodb_help::innodb_help(&name);
+                InnodbSetting {
+                    name,
+                    value,
+                    help,
+                    read_only,
+                    kind,
+                    options: options
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|o| !o.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                    min,
+                    max,
+                    block,
+                    default,
+                    origin,
+                    // Filled in by the handler, which is where the file is.
+                    persisted: None,
+                }
+            },
+        )
+        .collect())
+}
+
+/// -> the SQL literal for this value, or why it is not one.
+///
+/// Apart from the write so that the quoting rules can be tested without a
+/// server, which is where they are actually checked.
+fn literal_for(var: &InnodbSetting, value: &str) -> Result<String> {
+    let value = value.trim();
+
+    // Booleans arrive as an enum list of their own - OFF,ON - so one branch
+    // covers both, and neither can be set to anything the server did not
+    // name itself.
+    if !var.options.is_empty() {
+        let matched = var
+            .options
+            .iter()
+            .find(|o| o.eq_ignore_ascii_case(value))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} takes one of {}, not {value:?}",
+                    var.name,
+                    var.options.join(", ")
+                )
+            })?;
+        return Ok(format!("'{matched}'"));
+    }
+
+    match var.kind.as_str() {
+        "DOUBLE" => {
+            let n: f64 = value
+                .parse()
+                .with_context(|| format!("{} takes a number, not {value:?}", var.name))?;
+            check_range(var, n)?;
+            Ok(n.to_string())
+        }
+        k if k.contains("INT") => {
+            let n: i64 = value
+                .parse()
+                .with_context(|| format!("{} takes a whole number, not {value:?}", var.name))?;
+            check_range(var, n as f64)?;
+            Ok(n.to_string())
+        }
+        // VARCHAR, and whatever a later MariaDB adds that is neither an enum
+        // nor a number. Quoted and escaped rather than refused: these are
+        // file and table names, and refusing them would make the panel lie
+        // about which of its rows are writable.
+        _ => Ok(format!(
+            "'{}'",
+            value.replace('\\', "\\\\").replace('\'', "\\'")
+        )),
+    }
+}
+
+/// The server enforces its own range regardless - this is so the refusal
+/// names the bound, rather than arriving as a MySQL error number.
+fn check_range(var: &InnodbSetting, n: f64) -> Result<()> {
+    if let Some(min) = var.min.as_ref().and_then(|m| m.parse::<f64>().ok()) {
+        if n < min {
+            anyhow::bail!("{} does not go below {min}", var.name);
+        }
+    }
+    if let Some(max) = var.max.as_ref().and_then(|m| m.parse::<f64>().ok()) {
+        if n > max {
+            anyhow::bail!("{} does not go above {max}", var.name);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod innodb_write_tests {
+    use super::*;
+
+    fn var(kind: &str, options: &[&str], min: Option<&str>, max: Option<&str>) -> InnodbSetting {
+        InnodbSetting {
+            name: "innodb_test".into(),
+            value: String::new(),
+            help: None,
+            read_only: false,
+            kind: kind.into(),
+            options: options.iter().map(|o| (*o).to_string()).collect(),
+            min: min.map(str::to_string),
+            max: max.map(str::to_string),
+            block: None,
+            default: None,
+            // Irrelevant to validation, which is all this fixture feeds.
+            origin: "COMPILE-TIME".into(),
+            persisted: None,
+        }
+    }
+
+    /// The submitted text never reaches the statement: what is quoted is the
+    /// server's own spelling of the option that matched.
+    #[test]
+    fn an_enum_is_quoted_as_the_server_spells_it() {
+        let v = var("ENUM", &["redundant", "compact", "dynamic"], None, None);
+        assert_eq!(literal_for(&v, "DYNAMIC").unwrap(), "'dynamic'");
+        assert_eq!(literal_for(&v, " compact ").unwrap(), "'compact'");
+    }
+
+    #[test]
+    fn an_enum_refuses_anything_not_on_the_list() {
+        let v = var("ENUM", &["redundant", "compact", "dynamic"], None, None);
+        let e = literal_for(&v, "dynamic'; DROP DATABASE glpi; --").unwrap_err();
+        assert!(e.to_string().contains("takes one of"), "{e}");
+    }
+
+    /// A boolean is an enum of OFF,ON as far as the server is concerned, so
+    /// it goes down the same path and gets the same refusal.
+    #[test]
+    fn a_boolean_takes_only_off_or_on() {
+        let v = var("BOOLEAN", &["OFF", "ON"], None, None);
+        assert_eq!(literal_for(&v, "on").unwrap(), "'ON'");
+        assert!(literal_for(&v, "1; SELECT 1").is_err());
+    }
+
+    #[test]
+    fn a_number_must_parse_and_is_rendered_from_the_parse() {
+        let v = var(
+            "BIGINT UNSIGNED",
+            &[],
+            Some("2097152"),
+            Some("1099511627776"),
+        );
+        assert_eq!(literal_for(&v, " 134217728 ").unwrap(), "134217728");
+        assert!(literal_for(&v, "134217728 OR 1=1").is_err());
+    }
+
+    /// The server would refuse these too - the point of checking here is
+    /// that the refusal names the bound instead of arriving as an error
+    /// number.
+    #[test]
+    fn a_number_outside_the_servers_range_is_refused_by_name() {
+        let v = var(
+            "BIGINT UNSIGNED",
+            &[],
+            Some("2097152"),
+            Some("1099511627776"),
+        );
+        assert!(literal_for(&v, "1024")
+            .unwrap_err()
+            .to_string()
+            .contains("does not go below"));
+        assert!(literal_for(&v, "1099511627777")
+            .unwrap_err()
+            .to_string()
+            .contains("does not go above"));
+    }
+
+    /// The only values that arrive as free text. Escaped, because a file or
+    /// table name is a legitimate thing to set and refusing it would make
+    /// the panel lie about which rows are writable.
+    #[test]
+    fn free_text_is_escaped_rather_than_refused() {
+        let v = var("VARCHAR", &[], None, None);
+        assert_eq!(literal_for(&v, "O'Brien").unwrap(), r"'O\'Brien'");
+        assert_eq!(literal_for(&v, r"a\b").unwrap(), r"'a\\b'");
+    }
+}
+
+#[cfg(test)]
+mod innodb_tests {
+    use super::*;
+
+    /// Every rule's target has to be a group the panel actually renders, or
+    /// its variables vanish - the grouping drops anything whose name is not
+    /// in INNODB_GROUPS.
+    #[test]
+    fn every_rule_names_a_real_group() {
+        for (needle, group) in INNODB_RULES {
+            assert!(
+                INNODB_GROUPS.contains(&group),
+                "{needle} -> {group}, which is not a group"
+            );
+        }
+    }
+
+    /// The three orderings that exist because a substring lied. Written as
+    /// tests because reordering the list is the easy way to break them and
+    /// the symptom is a setting in the wrong tab, which nothing else notices.
+    #[test]
+    fn substring_accidents_stay_fixed() {
+        assert_eq!(
+            innodb_group("innodb_old_blocks_pct"),
+            "Memory & Buffer Pool"
+        );
+        assert_eq!(
+            innodb_group("innodb_old_blocks_time"),
+            "Memory & Buffer Pool"
+        );
+        assert_eq!(
+            innodb_group("innodb_flush_log_at_trx_commit"),
+            "I/O & Flushing"
+        );
+        assert_eq!(innodb_group("innodb_optimize_fulltext_only"), "Others");
+    }
+
+    /// undo_* splits across two groups on purpose: where the undo log lives
+    /// is a tablespace question, how big it grows is a transaction one.
+    #[test]
+    fn undo_splits_by_what_it_is_about() {
+        assert_eq!(
+            innodb_group("innodb_undo_directory"),
+            "Tablespace & Row Format"
+        );
+        assert_eq!(
+            innodb_group("innodb_undo_tablespaces"),
+            "Tablespace & Row Format"
+        );
+        assert_eq!(
+            innodb_group("innodb_max_undo_log_size"),
+            "Transactions & Locks"
+        );
+        assert_eq!(
+            innodb_group("innodb_undo_log_truncate"),
+            "Transactions & Locks"
+        );
+    }
+
+    #[test]
+    fn a_setting_a_future_mariadb_adds_is_not_dropped() {
+        assert_eq!(innodb_group("innodb_something_new_in_12_0"), "Others");
+    }
+
+    /// A name arriving without the prefix still classifies, because the
+    /// rules are written against the stem.
+    #[test]
+    fn the_prefix_is_optional() {
+        assert_eq!(innodb_group("buffer_pool_size"), "Memory & Buffer Pool");
+        assert_eq!(
+            innodb_group("innodb_buffer_pool_size"),
+            "Memory & Buffer Pool"
+        );
     }
 }

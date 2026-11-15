@@ -26,7 +26,33 @@ pub fn Header() -> Element {
 
     rsx! {
         header {
-            class: "sticky top-0 z-50 flex items-center gap-3 border-b border-base-300 bg-base-100/95 px-3 py-1 shadow-sm backdrop-blur",
+            // NO backdrop-blur, AND NO transform, filter, perspective or
+            // will-change EITHER. Any of them makes this element a containing
+            // block for `position: fixed` descendants, and the status light's
+            // info modal is one: InfoButton's overlay is `fixed inset-0`, so
+            // under a blurred header it resolved to the header's own 2rem box
+            // instead of the viewport and opened half above the top of the
+            // screen. It was `bg-base-100/95 backdrop-blur` until 2026-11-15,
+            // which was fine for as long as nothing inside the bar opened a
+            // dialog. Opaque instead: at 95% the blur was doing almost
+            // nothing anyway, and this way content scrolling underneath
+            // cannot show through at all.
+            class: "sticky top-0 z-50 flex items-center gap-3 border-b border-base-300 bg-base-100 px-3 py-1 shadow-sm",
+
+            // THREE COLUMNS, so the light lands on the true centre of the bar.
+            // Both flanks are flex-1, so they take equal shares of whatever is
+            // left and the middle child sits exactly between them - which an
+            // `ml-auto` right group and a `flex-1` middle do NOT achieve: the
+            // light would then centre in the space left over by a wide tab
+            // strip and a narrow right group, which is visibly off.
+            //
+            // Not done with `absolute left-1/2 -translate-x-1/2` either, and
+            // that is not a style preference: a transform on an ancestor makes
+            // it the containing block for `position: fixed` descendants, and
+            // the light's info modal is one. That is the bug removed from this
+            // header's own class list a few lines above; re-introducing it one
+            // element lower would be the same defect in a new place.
+            div { class: "flex min-w-0 flex-1 items-center gap-3",
 
             // Opens and closes the sidebar. First in the row, and shrink-0:
             // the header is one non-wrapping flex line, so anything after the
@@ -77,20 +103,24 @@ pub fn Header() -> Element {
             // means editing both - nav_tabs.rs and sidebar.rs - and that pairing
             // is noted in each.
             NavTabs {}
+            }
 
-            // Title and live status after the navigation. Allowed to truncate,
-            // so a long title shortens itself rather than pushing anything
-            // else out of the bar on a narrow window.
-            div { class: "flex min-w-0 items-center gap-2",
-                h1 { class: "truncate text-sm font-medium text-primary",
-                    "GLPI inventory — which agents have stopped reporting"
-                }
+            // The middle column: the light and its info button, and nothing
+            // else. The h1 that used to sit here said "GLPI inventory - which
+            // agents have stopped reporting", which the tab strip and the page
+            // under it both make redundant.
+            //
+            // shrink-0 so the flanks give way first. On a window narrow enough
+            // that the tab strip needs the room, the strip scrolls - it owns
+            // that behaviour - rather than the light being squeezed off centre.
+            div { class: "flex shrink-0 items-center justify-center",
                 HealthDot {}
             }
 
-            // ml-auto, not a spacer element: the toggle sits against the right
-            // edge and everything before it keeps its natural width.
-            div { class: "ml-auto flex shrink-0 items-center gap-1",
+            // The other flank. flex-1 to match the left, justify-end to keep
+            // its contents against the edge - ml-auto would make this column
+            // take all the slack and move the centre.
+            div { class: "flex flex-1 items-center justify-end gap-1",
                 // Styled as a quiet action rather than a fifth tab: it is not
                 // a view of the data, and giving it tab chrome over here would
                 // read as a stray member of the group on the left.

@@ -225,6 +225,12 @@ deploy: build-release build-frontend-release
     # process keeps its own inode until the restart below swaps it.
     cp target/release/glpi-inv-backend ~/.local/lib/glpi-inv/.backend.new
     mv -f ~/.local/lib/glpi-inv/.backend.new ~/.local/lib/glpi-inv/glpi-inv-backend
+    # Beside the binary, because that is the first place db_restart::script_path
+    # looks. Without it the restart links answer 500 - the installed service has
+    # no working directory the repo copy could be found from.
+    cp scripts/db-restart.sh ~/.local/lib/glpi-inv/.db-restart.sh.new
+    chmod 0755 ~/.local/lib/glpi-inv/.db-restart.sh.new
+    mv -f ~/.local/lib/glpi-inv/.db-restart.sh.new ~/.local/lib/glpi-inv/db-restart.sh
     # Same shape for the bundle, for a different reason: ServeDir opens files
     # per request, so deleting the directory first leaves a window in which
     # every page 404s while the service still reports healthy.

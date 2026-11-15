@@ -241,7 +241,55 @@ Do not reach for v1 for anything v2.3 already answers. The full reasoning, the
 endpoint-to-right mapping and fifteen traps are in `docs/gl-rights.md`.
 `just probe <path>` hits v2.3; `just probe-v1 <path>` hits v1.
 
-## There is no engine page, and this app writes nothing
+## What this app writes, and what it does not
+
+(The next section's title claimed the app writes nothing. That stopped being
+true on 2026-11-15, twice over: `POST /api/mariadb/innodb/{name}` sets InnoDB
+settings over SQL behind `GLPI_INV_INNODB_WRITES`, and `POST /api/db/restart`
+runs `scripts/db-restart.sh` behind `GLPI_INV_DB_RESTART`. Both are off by
+default. The findings below are what the deleted engine page established and
+are unaffected.)
+
+### Restarting the database: the OS decides, and the script asks
+
+`scripts/db-restart.sh` is the only thing that knows how. It detects the OS
+first because the answer differs completely - on NixOS the plain restart is a
+polkit prompt away while changing a startup-only setting cannot be done from
+the app at all (`/etc/my.cnf` is a read-only store path generated from
+`services.mysql`), on Debian/RHEL both work, on Windows the file is writable
+but there is no polkit to ask with.
+
+On NixOS that is a *write* it cannot do, not a restart it cannot do, and the
+distinction matters: `mysql.service` carries `X-Restart-Triggers` naming
+my.cnf's store path, so a changed setting gives a new path, a changed unit and
+a restart performed by `nixos-rebuild switch` itself. The rebuild IS the
+restart - nobody should click the restart link afterwards - and a restart
+without a rebuild can never apply one of the 31. The script says so; it said
+the opposite by omission until 2026-11-15.
+
+`backend/src/db_restart.rs` only finds the script and returns what it said,
+verbatim, with its exit code: 0 done, 2 refused, 3 not possible here, 4 tried
+and rolled back.
+
+Three things worth not undoing:
+
+- **Neither link restarts on the first click.** The first runs with `DRY_RUN`
+  and prints the commands; a second, separate click runs them. Previews are
+  allowed even when the flag is off, so a disabled control can still explain
+  itself.
+- **`innodb_page_size`, `innodb_data_file_path` and `innodb_undo_tablespaces`
+  are denied by name**, not by validation. They are valid values that leave
+  the server unable to start against its existing datadir, and a config file
+  keeps it that way across every later restart. `--validate-config` does not
+  catch them because the value is not what is wrong.
+- **106 of this server's 137 InnoDB settings never need any of this.** They
+  are dynamic (`SYSTEM_VARIABLES.READ_ONLY = 'NO'`), so SQL changes them and
+  the init-file keeps them. Only 31 need a file and a restart. A restart-
+  shaped control is the wrong instrument for the other 106.
+
+Full reasoning, per OS, with the measurements: `~/docs/gl-win-install.md`.
+
+## There is no engine page
 
 Both existed for part of 2026-11-14 and were removed the same day: a `maria`
 sub-tab with a strip of eight engine tabs, and a `POST /api/mariadb/engine`

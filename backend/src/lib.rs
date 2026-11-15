@@ -11,5 +11,6 @@
 
 pub mod api;
 pub mod config;
+pub mod db_restart;
 pub mod glpi;
 pub mod logs;

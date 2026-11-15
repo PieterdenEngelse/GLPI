@@ -301,8 +301,23 @@ fn Maria(sub: String) -> Element {
 #[component]
 fn MariaGeneral() -> Element {
     rsx! {
-        div { class: "mb-4", MariaFacts {} }
+        // Passed in rather than placed here: it belongs in the left column,
+        // directly under the reading it is a check on, and only the component
+        // that owns the fetch knows which column that is. It is reference
+        // text, so it renders whatever the fetch did.
+        MariaFacts { Requirements {} }
 
+        // Full width and below both columns, not a third cell: it is the
+        // longest thing on the page and it is reference, so it belongs
+        // after the two readings rather than beside them.
+        div { class: "mt-4", Innodb {} }
+    }
+}
+
+/// The three conditions GLPI puts on a server, as opposed to on its schema.
+#[component]
+fn Requirements() -> Element {
+    rsx! {
         Panel {
             title: "What GLPI requires of the server".to_string(),
             subtitle: "Three checks, all run at install time".to_string(),
@@ -360,18 +375,28 @@ fn MariaGeneral() -> Element {
 /// disagreeing - a different engine, a different collation, a row format GLPI
 /// did not ask for - is a finding no other page would surface.
 #[component]
-fn MariaFacts() -> Element {
+fn MariaFacts(
+    /// What to put below the reading, in the same column. The requirements
+    /// panel; nothing else passes anything.
+    children: Element,
+) -> Element {
     let report = use_resource(|| async move { api::fetch_mariadb().await });
 
-    rsx! {
-        match &*report.read_unchecked() {
-            None => rsx! {
+    // One match, two destinations: the reading heads the left column and the
+    // settings fill the right, and every state that has no facts leaves the
+    // right column empty rather than putting an error in both.
+    let (reading, settings) = match &*report.read_unchecked() {
+        None => (
+            rsx! {
                 div { class: "flex items-center gap-2 text-base-content/60",
                     span { class: "loading loading-spinner loading-sm" }
                     "Asking the server\u{2026}"
                 }
             },
-            Some(Err(e)) => rsx! {
+            rsx! {},
+        ),
+        Some(Err(e)) => (
+            rsx! {
                 div { class: "alert alert-error",
                     div {
                         div { class: "font-semibold", "Could not reach the backend." }
@@ -379,27 +404,49 @@ fn MariaFacts() -> Element {
                     }
                 }
             },
-            // Not an error, and deliberately not an empty table: the app runs
-            // without a database URL and only this page and Refused go dark.
-            Some(Ok(r)) if !r.configured => rsx! {
+            rsx! {},
+        ),
+        // Not an error, and deliberately not an empty table: the app runs
+        // without a database URL and only this page and Refused go dark.
+        Some(Ok(r)) if !r.configured => (
+            rsx! {
                 div { class: "alert alert-info",
                     "No database connection is configured, so there is no server to ask. "
                     "Everything else on this tab is read from GLPI's source and is unaffected."
                 }
             },
-            Some(Ok(r)) => {
-                let facts = r.facts.clone().unwrap_or_else(|| api::ServerFacts {
-                    version: String::new(),
-                    flavour: String::new(),
-                    uptime_seconds: 0,
-                    variables: Vec::new(),
-                    engines: Vec::new(),
-                    glpi_tables: 0,
-                    glpi_bytes: 0,
-                    glpi_other_engines: Vec::new(),
-                });
-                rsx! { GeneralFacts { facts } }
+            rsx! {},
+        ),
+        Some(Ok(r)) => {
+            let facts = r.facts.clone().unwrap_or_else(|| api::ServerFacts {
+                version: String::new(),
+                flavour: String::new(),
+                uptime_seconds: 0,
+                variables: Vec::new(),
+                engines: Vec::new(),
+                glpi_tables: 0,
+                glpi_bytes: 0,
+                glpi_other_engines: Vec::new(),
+            });
+            (
+                rsx! { ServerAnswering { facts: facts.clone() } },
+                rsx! { ServerSettings { facts } },
+            )
+        }
+    };
+
+    rsx! {
+        div { class: "grid gap-4 items-start lg:grid-cols-2",
+            // A column, not a grid cell. The two were cells of one row
+            // before, so the settings table - ten rows and a paragraph -
+            // set the row's height, and the requirements panel could not
+            // start until after it: a short reading left a column of empty
+            // card beside it and pushed the next panel below everything.
+            div { class: "flex flex-col gap-4",
+                {reading}
+                {children}
             }
+            {settings}
         }
     }
 }
@@ -426,6 +473,9 @@ fn ServerAnswering(facts: api::ServerFacts) -> Element {
                    only readings on the page - what GLPI requires of a server, below, is \
                    quoted from its source, and the two disagreeing is the finding."
                 .to_string(),
+            // Here because the uptime below is what a restart resets, so this
+            // is the panel the question arises on.
+            actions: rsx! { RestartLinks {} },
             ul { class: "ml-5 list-disc space-y-2 text-sm",
                 li {
                     span { class: "font-medium", "Version. " }
@@ -452,22 +502,6 @@ fn ServerAnswering(facts: api::ServerFacts) -> Element {
     }
 }
 
-/// Both of general's readings, side by side: what is answering, and how it is
-/// configured.
-///
-/// Two columns because they are read together - a version and a collation
-/// mean little apart - and the pair sits above what GLPI *requires* of a
-/// server, which is the comparison both are for.
-#[component]
-fn GeneralFacts(facts: api::ServerFacts) -> Element {
-    rsx! {
-        div { class: "grid gap-4 items-start lg:grid-cols-2",
-            ServerAnswering { facts: facts.clone() }
-            ServerSettings { facts }
-        }
-    }
-}
-
 /// The ten server settings this app reads, and what they are not.
 #[component]
 fn ServerSettings(facts: api::ServerFacts) -> Element {
@@ -479,34 +513,1048 @@ fn ServerSettings(facts: api::ServerFacts) -> Element {
                    hundred rows and answers nothing. These are the ones that decide how \
                    GLPI's data is stored, compared or truncated."
                 .to_string(),
+            // The headline, so the table is evidence rather than the
+            // message. Ten rows that all say "default" have told you one
+            // thing, once; this says that thing in a sentence and leaves the
+            // rows for when one of them stops saying it.
+            {
+                let chosen: Vec<&api::ServerSetting> = facts
+                    .variables
+                    .iter()
+                    .filter(|v| v.origin != "COMPILE-TIME")
+                    .collect();
+                let over_sql = chosen.iter().filter(|v| v.origin == "SQL").count();
+                rsx! {
+                    p { class: "mb-3 text-sm",
+                        if chosen.is_empty() {
+                            "Nothing here has been set by anyone: all ten are this build's \
+                             compiled-in defaults, so there is nothing on this server for \
+                             GLPI to disagree with."
+                        } else {
+                            "{chosen.len()} of the ten were set by someone rather than \
+                             compiled in"
+                            if over_sql > 0 {
+                                ", and {over_sql} over SQL - which means the running server \
+                                 differs from what the next restart will give you"
+                            }
+                            "."
+                        }
+                    }
+                }
+            }
+
             div { class: "overflow-x-auto",
                 table { class: "table table-sm",
                     tbody {
-                        for (name , value) in facts.variables.iter() {
-                            tr { key: "{name}",
-                                td { class: "font-mono text-xs whitespace-nowrap", "{name}" }
-                                td { class: "font-mono text-xs break-all", "{value}" }
+                        for v in facts.variables.iter() {
+                            tr { key: "{v.name}",
+                                td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+                                td { class: "font-mono text-xs break-all", "{v.value}" }
+                                // Third column, and the reason the other two
+                                // are worth printing: it says who chose the
+                                // value. Muted when the answer is nobody, so
+                                // the eye goes to the rows that were.
+                                td { class: "text-xs whitespace-nowrap",
+                                    SettingOrigin {
+                                        origin: v.origin.clone(),
+                                        read_only: v.read_only,
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Said here and not only in the info: three of the ten are
-            // scoped to one engine, and a table of name/value pairs
-            // gives a reader no way to tell which.
+            // Cut by what a reader can act on, which this was not until
+            // 2026-11-15. It used to divide the ten into the three that
+            // describe only InnoDB and the seven that are server-wide -
+            // true, and the answer to a question the engine strip above it
+            // posed. That strip was deleted, and the distinction had nothing
+            // left on screen to draw itself against.
+            //
+            // The two cuts below are the ones that survive it, and neither
+            // is the old one: "cannot affect GLPI" and "needs a restart"
+            // both cross the engine boundary. Of the three InnoDB settings
+            // only innodb_default_row_format is inert, and the two that need
+            // a restart are both from the server-wide seven.
             p { class: "mt-3 text-sm text-base-content/70",
-                "These are server-wide, with three exceptions that describe only InnoDB: "
-                code { class: "text-xs", "innodb_default_row_format" }
+                "Three of these ten cannot affect GLPI at all: "
+                code { class: "text-xs", "character_set_server" }
                 ", "
-                code { class: "text-xs", "innodb_file_per_table" }
+                code { class: "text-xs", "collation_server" }
                 " and "
-                code { class: "text-xs", "innodb_buffer_pool_size" }
-                ". That is the engine GLPI's installer names in all 447 of its CREATE \
-                 TABLE statements, so on an untouched install the three govern every table \
-                 there is; a table on any other engine would be outside all three, and \
-                 nothing in this app looks for that any more."
+                code { class: "text-xs", "innodb_default_row_format" }
+                " only decide what a CREATE TABLE gets when it names none, and GLPI names \
+                 all three in every one of its 447 statements - the live database agrees, \
+                 447 tables on one collation with no exceptions. They are here because a \
+                 disagreement would be the finding: a plugin's table created without them \
+                 would silently differ from the rest."
             }
+            p { class: "mt-2 text-sm text-base-content/70",
+                "Two need a restart to change - "
+                code { class: "text-xs", "log_bin" }
+                " and "
+                code { class: "text-xs", "lower_case_table_names" }
+                " are read-only to SQL - and the other eight take SET GLOBAL on a running \
+                 server. That cuts across the first three rather than along them: of the \
+                 settings that are InnoDB's rather than the server's, only \
+                 innodb_default_row_format is in the inert group, and neither of the two \
+                 needing a restart is."
+            }
+        }
+    }
+}
+
+/// The two restart links, and whatever the script said.
+///
+/// Both run the same script - scripts/db-restart.sh - which works out which
+/// operating system it is on before it does anything, because the answer
+/// differs completely: on this host the plain restart is a polkit prompt away
+/// and the settings one is impossible, since /etc/my.cnf is a read-only Nix
+/// store path. On Debian or RHEL both work. On Windows the file is writable
+/// and the consent is not. None of that is decided here; the script decides
+/// it and says what it found.
+///
+/// NEITHER LINK RESTARTS ANYTHING ON THE FIRST CLICK. The first click is a
+/// preview: the script runs with DRY_RUN set, printing the commands it would
+/// run. Restarting takes a second, separate click on what the preview
+/// produced - and for the settings link on this host there is nothing to
+/// confirm, because the preview is the whole answer.
+#[component]
+fn RestartLinks() -> Element {
+    let mut run = use_signal(|| None::<Result<api::RestartRun, String>>);
+    let mut busy = use_signal(|| false);
+    // What the preview was for, so the confirm button repeats the same thing
+    // rather than whichever link was clicked last.
+    let mut pending = use_signal(|| None::<(String, Vec<String>)>);
+
+    let mut start = move |mode: &str, settings: Vec<String>, preview: bool| {
+        let mode = mode.to_string();
+        busy.set(true);
+        run.set(None);
+        if preview {
+            pending.set(Some((mode.clone(), settings.clone())));
+        } else {
+            pending.set(None);
+        }
+        spawn(async move {
+            let r = api::db_restart(&mode, &settings, preview).await;
+            run.set(Some(r));
+            busy.set(false);
+        });
+    };
+
+    rsx! {
+        div { class: "flex flex-wrap items-center gap-3",
+            button {
+                class: "link link-primary text-xs",
+                disabled: busy(),
+                onclick: move |_| start("plain", Vec::new(), true),
+                "db restart"
+            }
+            button {
+                class: "link link-primary text-xs",
+                disabled: busy(),
+                onclick: move |_| start("settings", Vec::new(), true),
+                "db restart with non-default InnoDB settings"
+            }
+            // On this link and not the other one: a plain restart does what
+            // its two words say, while this one is named after an operation
+            // that, on this host, it cannot perform - and that needs saying
+            // before the click rather than only in the output.
+            InfoButton {
+                title: "db restart with non-default InnoDB settings".to_string(),
+                body: "Runs scripts/db-restart.sh, which works out which operating system it \
+                       is on before it does anything, because the answer is not the same \
+                       twice. The first click only previews: the script runs with DRY_RUN \
+                       set and prints what it would do, and a second button appears if there \
+                       is anything to confirm. ON THIS HOST THERE IS NOT. NixOS starts the \
+                       server with --defaults-file=/etc/my.cnf, a symlink into the Nix store \
+                       - mode r--r--r--, owned by root, on a read-only filesystem - so \
+                       appending to it fails as root, and the four lines in it are generated \
+                       from services.mysql in /etc/nixos/glpi.nix. What comes back is \
+                       therefore the instructions: the settings block to paste and the \
+                       rebuild to run. That rebuild is also the restart, so do not use the \
+                       link beside this one afterwards - mysql.service carries \
+                       X-Restart-Triggers naming my.cnf's store path, so a changed setting \
+                       means a changed unit and nixos-rebuild switch restarts the server \
+                       itself. Before any of it, check whether a restart is needed at all: \
+                       106 of this server's 137 InnoDB settings are dynamic and can be \
+                       changed over SQL, and only 31 are read at startup. Three of those 31 \
+                       are refused by name rather than by validation - innodb_page_size, \
+                       innodb_data_file_path and innodb_undo_tablespaces are valid values \
+                       that leave the server unable to start against its existing datadir, \
+                       which a config file then keeps true across every later restart. With \
+                       no setting named the script uses innodb_log_buffer_size=32M as a \
+                       stand-in, which is harmless and reversible. On a conventional Linux \
+                       host the same click does the work: validate with the server's own \
+                       --validate-config, back up, write one owned drop-in, restart, and put \
+                       the backup back if the server does not come up. Running it for real \
+                       needs the backend started with GLPI_INV_DB_RESTART=1; previews work \
+                       without it."
+                    .to_string(),
+            }
+            if busy() {
+                span { class: "loading loading-spinner loading-xs" }
+            }
+        }
+
+        match &*run.read() {
+            None => rsx! {},
+            Some(Err(e)) => rsx! {
+                div { class: "mt-3 alert alert-error text-sm",
+                    div {
+                        div { class: "font-semibold", "The script did not run." }
+                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
+                    }
+                }
+            },
+            Some(Ok(r)) => {
+                // The script's exit code, not the HTTP status: 3 means it
+                // looked, decided this OS cannot do it, and said what to do
+                // instead. That is an answer, not a failure, and colouring it
+                // red would be a lie about the commonest case on this host.
+                let tone = match r.code {
+                    0 => "alert-success",
+                    3 => "alert-info",
+                    _ => "alert-warning",
+                };
+                let heading = match (r.code, r.preview) {
+                    (0, true) => "This is what it would run. Nothing has run yet.",
+                    (0, false) => "Done.",
+                    (3, _) => "Not possible on this operating system.",
+                    (2, _) => "Refused before anything ran.",
+                    _ => "It tried and failed; anything it changed was put back.",
+                };
+                rsx! {
+                    div { class: "mt-3 {tone} alert items-start text-sm",
+                        div { class: "w-full",
+                            div { class: "font-semibold", "{heading}" }
+                            pre { class: "mt-2 max-h-80 overflow-auto text-xs whitespace-pre-wrap",
+                                "{r.output}"
+                            }
+                            div { class: "mt-2 flex flex-wrap items-center gap-3",
+                                code { class: "text-xs opacity-70", "{r.script}" }
+                                // Only ever offered on a preview that could
+                                // actually proceed. Code 3 has nothing to
+                                // confirm, and 2 was refused on purpose.
+                                if r.preview && r.code == 0 {
+                                    if let Some((mode, settings)) = pending() {
+                                        button {
+                                            class: "btn btn-warning btn-xs",
+                                            disabled: busy(),
+                                            onclick: move |_| {
+                                                let (m, s) = (mode.clone(), settings.clone());
+                                                start(&m, s, false)
+                                            },
+                                            "Run it for real"
+                                        }
+                                    }
+                                }
+                                button {
+                                    class: "btn btn-ghost btn-xs",
+                                    onclick: move |_| {
+                                        run.set(None);
+                                        pending.set(None);
+                                    },
+                                    "Dismiss"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Every InnoDB setting the server has, in seven groups.
+///
+/// Reference rather than telemetry, and the largest thing on the page: 137
+/// rows on this server. It is here because InnoDB is not one engine choice
+/// among several for GLPI - it is named in all 447 of the installer's CREATE
+/// TABLE statements, so its settings are the terms GLPI's storage is
+/// actually on.
+///
+/// A strip rather than seven stacked tables, which stacked are one page
+/// nobody reaches the end of. Which group is open is local view state, like
+/// the RSQL strip: the sidebar does not take this level, because a group of
+/// settings is not a destination.
+///
+/// The grouping is this app's and the panel says so. MariaDB publishes none -
+/// SHOW VARIABLES LIKE 'innodb%' is 137 alphabetical rows and nothing else -
+/// so every placement is a reading, and the rules are in glpi::refused where
+/// they are tested.
+#[component]
+fn Innodb() -> Element {
+    // Mutable because a write re-reads it: one setting can move another, so
+    // the panel refetches the lot rather than patching the row that changed.
+    let mut report = use_resource(|| async move { api::fetch_innodb().await });
+    let mut at = use_signal(|| 0usize);
+
+    rsx! {
+        match &*report.read_unchecked() {
+            None => rsx! {
+                div { class: "flex items-center gap-2 text-base-content/60",
+                    span { class: "loading loading-spinner loading-sm" }
+                    "Asking the server\u{2026}"
+                }
+            },
+            Some(Err(e)) => rsx! {
+                div { class: "alert alert-error",
+                    div {
+                        div { class: "font-semibold", "Could not reach the backend." }
+                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
+                    }
+                }
+            },
+            Some(Ok(r)) if !r.configured => rsx! {
+                div { class: "alert alert-info",
+                    "No database connection is configured, so the engine's own settings "
+                    "cannot be read. What this page takes from GLPI's source is unaffected."
+                }
+            },
+            Some(Ok(r)) => {
+                let groups = r.groups.clone();
+                let total: usize = groups.iter().map(|g| g.variables.len()).sum();
+                // One past Startup, which is one past the last group. Both
+                // live outside the group indices so that a strip whose tabs
+                // changed with the server could not silently select one of
+                // them.
+                let top_index = groups.len() + 1;
+                let on_top = at() == top_index;
+                let startup_count = groups
+                    .iter()
+                    .flat_map(|g| g.variables.iter())
+                    .filter(|v| v.read_only)
+                    .count();
+                // One past the last group is the Startup tab, so the clamp
+                // that keeps a stale index inside the strip has to allow it.
+                let on_startup = at() == groups.len();
+                let current = groups.get(at().min(groups.len().saturating_sub(1))).cloned();
+                rsx! {
+                    Panel {
+                        title: "InnoDB".to_string(),
+                        subtitle: match (&r.persist_path, r.writes_enabled) {
+                            (_, false) => format!("{total} settings, in {} groups - read-only", groups.len()),
+                            (Some(p), true) => format!("{total} settings, in {} groups - kept ones are replayed from {p}", groups.len()),
+                            (None, true) => format!(
+                                "{total} settings, in {} groups - changes last until the server restarts",
+                                groups.len(),
+                            ),
+                        },
+                        info: "Every innodb_% variable the server reports, read live from the \
+                               running instance - not the ten on the settings panel above, \
+                               which are a decision about what changes GLPI's behaviour. The \
+                               seven groups are this app's reading and not MariaDB's: the \
+                               server publishes no taxonomy of its own, SHOW VARIABLES LIKE \
+                               'innodb%' being alphabetical rows and nothing more. Others is \
+                               the honest remainder - instrumentation, recovery, the \
+                               full-text family, the internal spin tuning - and it is also \
+                               where a variable a future MariaDB adds will appear, \
+                               uncategorised rather than dropped. Nothing here is compared \
+                               against anything: this is what the engine is set to, and \
+                               which of it matters depends on the question being asked. \
+                               WHAT A CHANGE LASTS. Nothing in MariaDB persists SET GLOBAL - \
+                               there is no SET PERSIST, which is MySQL 8, and no \
+                               mysqld-auto.cnf - so on its own a change here holds until the \
+                               server restarts and my.cnf wins. Keep writes it instead into \
+                               a file MariaDB replays with --init-file before any client \
+                               connects, which is why it covers these settings and not the \
+                               31 taken at startup: that file is SQL, and SQL can only set \
+                               what SET GLOBAL can set. One thing to know about it, measured \
+                               on 11.4.12 rather than assumed: a line that fails does not \
+                               stop the server, but the rest of the file is skipped, so one \
+                               setting a later MariaDB no longer understands takes every \
+                               line below it with it. That is what the warning beside a row \
+                               means - the file asks for one thing and the server has \
+                               another."
+                            .to_string(),
+
+                        div { class: "mb-3 flex items-center gap-2",
+
+                        div {
+                            role: "tablist",
+                            class: "tabs tabs-sm tabs-lift flex-nowrap overflow-x-auto",
+
+                            // First, before the seven groups, because it is
+                            // where to start: a reader who does not already
+                            // know which of 137 settings decide anything is
+                            // otherwise left to read all seven groups to
+                            // find out. The groups answer "where is this
+                            // setting"; this one answers "which should I
+                            // look at".
+                            button {
+                                role: "tab",
+                                class: if on_top { "tab tab-active" } else { "tab" },
+                                onclick: move |_| at.set(top_index),
+                                "Top 8"
+                            }
+
+                            for (i , g) in groups.iter().enumerate() {
+                                button {
+                                    key: "{g.category}",
+                                    role: "tab",
+                                    class: if i == at() { "tab tab-active" } else { "tab" },
+                                    onclick: move |_| at.set(i),
+                                    "{g.category}"
+                                    span { class: "badge badge-ghost badge-xs ml-2",
+                                        "{g.variables.len()}"
+                                    }
+                                }
+                            }
+
+                            // Last, after the seven, because it is not an
+                            // eighth category - it is the same settings cut
+                            // the other way, by whether a running server
+                            // will take a new value at all. Each of these
+                            // also appears under its own group above, with
+                            // its value and no control; here they are
+                            // together, which is the question "why does
+                            // that row have no dropdown" answered in one
+                            // place.
+                            button {
+                                role: "tab",
+                                class: if at() == groups.len() { "tab tab-active" } else { "tab" },
+                                onclick: move |_| at.set(groups.len()),
+                                "Startup"
+                                span { class: "badge badge-ghost badge-xs ml-2", "{startup_count}" }
+                            }
+                        }
+
+                        // Beside the strip rather than in the tab: a button
+                        // inside a tab is a second thing to hit in the place
+                        // a reader is aiming to switch tabs, and nesting one
+                        // inside the other is not markup a browser will keep.
+                        // Out here it still reads as belonging to the tab it
+                        // follows, and it is reachable before the tab is
+                        // opened - which is when "what is this" gets asked.
+                        StartupInfo {}
+
+                        }
+
+                        if on_top {
+                            TopSettings {
+                                groups: groups.clone(),
+                                writes_enabled: r.writes_enabled,
+                                can_persist: r.persist_path.is_some(),
+                                on_set: move |_| report.restart(),
+                            }
+                        } else if on_startup {
+                            Startup { groups: groups.clone() }
+                        } else if let Some(g) = current {
+                            if g.variables.is_empty() {
+                                // Not an error, and not hidden: a group with
+                                // nothing in it is a fact about this server,
+                                // and a strip whose tabs came and went with
+                                // the server would be worse.
+                                p { class: "text-sm text-base-content/60",
+                                    "This server reports no settings in this group."
+                                }
+                            } else {
+                                div { class: "overflow-x-auto",
+                                    table { class: "table table-sm",
+                                        tbody {
+                                            for v in g.variables.iter() {
+                                                tr { key: "{v.name}",
+                                                    td { class: "font-mono text-xs whitespace-nowrap",
+                                                        "{v.name}"
+                                                    }
+                                                    td {
+                                                        SettingValue {
+                                                            setting: v.clone(),
+                                                            writes_enabled: r.writes_enabled,
+                                                            can_persist: r.persist_path.is_some(),
+                                                            on_set: move |_| report.restart(),
+                                                        }
+                                                    }
+                                                    // A column of its own, fixed width and
+                                                    // last, so 137 buttons line up down one
+                                                    // edge instead of tracking the name
+                                                    // beside them - innodb_ft_server_stopword_table
+                                                    // and innodb_doublewrite differ by 26
+                                                    // characters, and a button that moves with
+                                                    // the text is a button the eye has to hunt
+                                                    // for on every row.
+                                                    td { class: "w-8 text-right align-top",
+                                                        SettingInfo {
+                                                            name: v.name.clone(),
+                                                            help: v.help.clone(),
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The settings worth looking at first, and what each one decides.
+///
+/// THIS LIST IS THIS APP'S, not the server's, and it is the only thing on
+/// this panel that is a judgement rather than a reading. MariaDB ranks
+/// nothing: `SHOW VARIABLES` is 137 alphabetical rows and the help text says
+/// what each one does, never which matter. So the order below is argued for
+/// in the panel's own explanation rather than presented as fact, and every
+/// value beside it is still read live.
+///
+/// Why these eight. The first three are the classic throughput levers - how
+/// much stays in memory, how often a commit reaches disk, and how much redo
+/// can be outstanding before a checkpoint stalls writes. The next three are
+/// about the storage underneath: whether pages are cached twice, and the two
+/// that between them decide how fast the background flusher may go - a floor
+/// without its ceiling settles nothing, which is why they are a pair rather
+/// than one entry. The seventh trades a write for crash safety. The last
+/// cannot be changed at all after the data directory exists, which is why it
+/// is here: a setting nobody can fix later belongs where it is seen early.
+///
+/// IT WAS SEVEN UNTIL 2026-11-15, and the eighth was left off for a bad
+/// reason worth recording: `innodb_io_capacity_max` mattered, but including
+/// it would have made the count disagree with the label. That is the label
+/// deciding the content. The fix is the one that was available all along -
+/// rename the label - and the rule it leaves behind is that a name counting
+/// things follows the list, never the other way round.
+const TOP_SETTINGS: [(&str, &str); 8] = [
+    (
+        "innodb_buffer_pool_size",
+        "How much data and index stays in RAM. The single biggest lever on read          performance, and the one that starts to matter the moment the working set          outgrows it.",
+    ),
+    (
+        "innodb_flush_log_at_trx_commit",
+        "Whether a commit reaches disk before it is acknowledged. 1 is durable and          slowest; 2 and 0 trade a window of committed-but-lost writes for throughput.",
+    ),
+    (
+        "innodb_log_file_size",
+        "How much redo can be outstanding. Too small under write load means constant          checkpoint flushing. Resizable while the server runs, on this version.",
+    ),
+    (
+        "innodb_flush_method",
+        "Whether pages are cached twice - once by InnoDB, once by the operating system.          O_DIRECT skips the second copy.",
+    ),
+    (
+        "innodb_io_capacity",
+        "How fast the background flusher may go, in IOPS. The default assumes a spinning          disk and is far below what an SSD will take.",
+    ),
+    (
+        "innodb_io_capacity_max",
+        "The ceiling the flusher may reach when it has fallen behind. Raising io_capacity \
+         without it moves the floor and leaves the ceiling where it was, so the two are \
+         set together or not at all.",
+    ),
+    (
+        "innodb_doublewrite",
+        "Protection against half-written pages after a power loss. Turning it off is          faster and risks a corrupt page nothing will repair.",
+    ),
+    (
+        "innodb_page_size",
+        "Row and index density. Fixed when the data directory was created: changing it          later means dumping, re-initialising and restoring, which gets more expensive          with every machine that reports.",
+    ),
+];
+
+/// The eight, in that order, with the same controls the groups give them.
+///
+/// Rows, not prose: a reader who came here to see whether the buffer pool is
+/// big enough wants this server's number and a way to change it, not an
+/// article. The sentence beside each says why it is on the list, which is
+/// the only part this app is asserting.
+///
+/// A name the server does not report is skipped rather than shown empty -
+/// the list is written here and the settings come from the server, so the
+/// two can disagree after an upgrade, and a row with no value would be this
+/// app claiming a setting exists because it used to.
+#[component]
+fn TopSettings(
+    groups: Vec<api::InnodbGroup>,
+    writes_enabled: bool,
+    can_persist: bool,
+    on_set: EventHandler<()>,
+) -> Element {
+    let mut rows: Vec<(api::InnodbSetting, &'static str)> = Vec::new();
+    for (name, why) in TOP_SETTINGS {
+        if let Some(v) = groups
+            .iter()
+            .flat_map(|g| g.variables.iter())
+            .find(|v| v.name == name)
+        {
+            rows.push((v.clone(), why));
+        }
+    }
+
+    rsx! {
+        div { class: "mb-2 flex flex-wrap items-center gap-x-3",
+            div { class: "flex items-center gap-2",
+                h3 { class: "text-sm font-semibold tracking-tight", "Top 8" }
+                TopInfo {}
+            }
+            span { class: "text-xs text-base-content/60",
+                "This app's ranking, not the server's. Every value is read live."
+            }
+        }
+
+        div { class: "overflow-x-auto",
+            table { class: "table table-sm",
+                tbody {
+                    for (v , why) in rows.iter() {
+                        tr { key: "{v.name}",
+                            td { class: "font-mono text-xs whitespace-nowrap align-top",
+                                "{v.name}"
+                            }
+                            td { class: "align-top",
+                                SettingValue {
+                                    setting: v.clone(),
+                                    writes_enabled,
+                                    can_persist,
+                                    on_set: move |_| on_set.call(()),
+                                }
+                            }
+                            td { class: "max-w-md text-xs text-base-content/70", "{why}" }
+                            td { class: "w-8 text-right align-top",
+                                SettingInfo { name: v.name.clone(), help: v.help.clone() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Why these eight and not eight others.
+#[component]
+fn TopInfo() -> Element {
+    rsx! {
+        InfoButton {
+            title: "Top 8".to_string(),
+            body: "The only list on this panel that is an opinion. MariaDB ranks nothing - \
+                   its help text says what each setting does and never which of them \
+                   matter - so these eight are chosen here, and the sentence beside each \
+                   row is the argument for it rather than something read off the server. \
+                   What they have in common is that each one decides something no other \
+                   setting can compensate for: how much stays in memory, how often a \
+                   commit reaches disk, how much redo may be outstanding, whether pages \
+                   are cached twice, the floor and the ceiling on how fast the flusher \
+                   may go, whether a half-written page is survivable, and how densely \
+                   rows are packed. It was seven until the io_capacity ceiling was left \
+                   off to keep the count tidy, which is the label deciding the list; the \
+                   list decides the label. Two of them are \
+                   taken at startup and appear under Startup as well - and the last, the \
+                   page size, is fixed when the data directory is created, so it is the \
+                   one whose cost to change rises with every machine that reports. \
+                   Nothing here says any of them is currently wrong on this server: the \
+                   values are read live beside each row, and on a database that fits \
+                   entirely in the buffer pool none of these will be measurable. They are \
+                   the ones to look at first when that stops being true, which is a \
+                   question of how large the install grows rather than of how it is \
+                   configured today."
+                .to_string(),
+        }
+    }
+}
+
+/// What the Startup tab is, beside the tab itself.
+///
+/// Its own component because it is rendered from the strip, which is in a
+/// different part of the tree from the list it describes - and because the
+/// explanation is the longest thing on this page, which would otherwise sit
+/// in the middle of the markup that draws eight tab buttons.
+#[component]
+fn StartupInfo() -> Element {
+    rsx! {
+        InfoButton {
+            title: "Settings taken at startup".to_string(),
+                body: "These are read once, as the server starts, before any client can \
+                       connect and therefore before any SQL exists to send - so neither the \
+                       controls above nor the file this app keeps them in can touch them. \
+                       Only a configuration file the server reads at startup can, and on \
+                       this machine there is exactly one: /etc/my.cnf, a read-only Nix store \
+                       path. Three things close every other route, each measured on this \
+                       install rather than assumed. The unit starts the server with \
+                       --defaults-file, and that makes --defaults-extra-file be ignored \
+                       outright - with both given, the server reports only bind-address, \
+                       datadir and port, where the extra file alone is read in full - so \
+                       there is no second file to drop beside the first. /etc/systemd/system \
+                       is a symlink into /etc/static and read-only, so there is no unit \
+                       drop-in either, and the start script's only variable parts are two \
+                       Galera environment variables that come from the unit itself. And \
+                       restarting the database is a system service, which is root. So no \
+                       script, and nothing this app runs as, can restart MariaDB with one of \
+                       these changed - which is the whole of what cannot be automated here, \
+                       and it is about this operating system's model rather than about \
+                       MariaDB. What does work is the declarative route: set it under \
+                       services.mysql.settings.mysqld in the NixOS configuration and \
+                       rebuild. That rewrites my.cnf and restarts the database into the new \
+                       value by itself, because the unit's restart trigger is the my.cnf \
+                       store path - so it is one root action, not a config edit plus a \
+                       restart someone has to remember."
+                        .to_string(),
+        }
+    }
+}
+
+/// The settings SQL cannot reach, and what changing one actually takes.
+///
+/// The counterpart to the panel above: those are the settings a running
+/// server will take a new value for, these are the ones it reads once before
+/// any SQL exists to send. The page would be incoherent without them - 106
+/// rows with controls and 31 without, and no statement anywhere about why -
+/// so the division is named rather than left to be inferred from which rows
+/// happen to have a dropdown.
+///
+/// Built from the same fetch as the panel: this is a filter over rows
+/// already on screen, not a second request, and the count is whatever the
+/// server reported rather than a number written here. The group each one
+/// falls in is carried through because it is the only grouping this app has
+/// - the same seven the strip above uses - and a reader looking for one of
+/// these will look for it where the panel put it.
+#[component]
+fn Startup(groups: Vec<api::InnodbGroup>) -> Element {
+    // Group order is the panel's order, which is INNODB_GROUPS' order, so a
+    // reader scanning this list meets the categories in the sequence the
+    // strip above showed them.
+    let mut rows: Vec<(String, api::InnodbSetting)> = Vec::new();
+    for g in groups.iter() {
+        for v in g.variables.iter().filter(|v| v.read_only) {
+            rows.push((g.category.clone(), v.clone()));
+        }
+    }
+    let categories = rows
+        .iter()
+        .map(|(c, _)| c.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let total: usize = groups.iter().map(|g| g.variables.len()).sum();
+
+    rsx! {
+        div { class: "mb-2 flex flex-wrap items-center gap-x-3",
+            span { class: "text-xs text-base-content/60",
+                "{rows.len()} of {total} settings, across {categories} of the 7 groups"
+            }
+        }
+
+        div { class: "overflow-x-auto",
+                table { class: "table table-sm",
+                    tbody {
+                        for (category , v) in rows.iter() {
+                            tr { key: "{v.name}",
+                                td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+                                td { class: "font-mono text-xs break-all", "{v.value}" }
+                                // The group it would be under in the strip
+                                // above, so a setting found here can be
+                                // found there - this app has one grouping
+                                // and both lists use it.
+                                td { class: "text-xs whitespace-nowrap text-base-content/60",
+                                    "{category}"
+                                }
+                            td { class: "w-8 text-right align-top",
+                                SettingInfo { name: v.name.clone(), help: v.help.clone() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One setting's value: a control where the server will take a change, the
+/// value as text where it will not.
+///
+/// Which it is comes from the server, never from a list here: READ_ONLY says
+/// whether there is a control, VARIABLE_TYPE and ENUM_VALUE_LIST say which
+/// one, and the range and block size furnish it. 106 of this server's 137
+/// settings are writable; the other 31 are taken at startup and render as
+/// they always did.
+///
+/// Every control is applied explicitly rather than on change. A select that
+/// writes as it is opened is a server setting changed by scrolling, and the
+/// one request this app makes that is not a read should take a decision.
+///
+/// What is shown after a write is what the server reports, not what was
+/// typed: ask the buffer pool for 100000000 and it is 100663296, because the
+/// value is rounded to the setting's block size.
+#[component]
+fn SettingValue(
+    setting: api::InnodbSetting,
+    writes_enabled: bool,
+    /// Whether a startup file is configured. Without one there is nothing to
+    /// write, so the row offers no Keep button and the panel's header says
+    /// why - rather than a button that writes a file nothing reads.
+    can_persist: bool,
+    /// Fires after a write lands, so the panel can re-read every value - one
+    /// setting can move another, and a table that only updated the row that
+    /// was touched would be quietly wrong about the rest.
+    on_set: EventHandler<()>,
+) -> Element {
+    let api::InnodbSetting {
+        name,
+        value,
+        read_only,
+        options,
+        kind,
+        min,
+        max,
+        block,
+        persisted,
+        ..
+    } = setting.clone();
+
+    let mut draft = use_signal(|| value.clone());
+    let mut busy = use_signal(|| false);
+    let mut failure = use_signal(|| None::<String>);
+    let mut settled = use_signal(|| None::<String>);
+
+    // The row re-renders with a fresh value after every refetch, so the draft
+    // has to follow the server rather than keep whatever was in the box, or
+    // a rounded value would be overwritten by the number that was asked for.
+    use_effect(use_reactive(&value, move |v| {
+        draft.set(v);
+        settled.set(None);
+    }));
+
+    let dirty = draft() != value;
+    let numeric = options.is_empty() && (kind.contains("INT") || kind == "DOUBLE");
+
+    // The whole point of showing the file beside the server: MariaDB stops
+    // replaying the startup file at its first failing line, so a setting can
+    // be written there and silently not applied. The server's value is the
+    // truth; this says what the next restart intends.
+    let drifted = persisted.as_ref().is_some_and(|p| *p != value);
+
+    // Cloned per closure rather than captured: three of them want the name,
+    // and the component owns exactly one.
+    let apply_name = name.clone();
+    let apply = move |_| {
+        let (n, v) = (apply_name.clone(), draft());
+        busy.set(true);
+        failure.set(None);
+        spawn(async move {
+            match api::set_innodb(&n, &v).await {
+                Ok(change) => {
+                    // Said out loud only when it differs from the request:
+                    // the server rounding 100000000 to 100663296 is the
+                    // kind of thing a reader must not have to notice.
+                    if change.value != change.requested {
+                        settled.set(Some(change.value.clone()));
+                    }
+                    on_set.call(());
+                }
+                Err(e) => failure.set(Some(e)),
+            }
+            busy.set(false);
+        });
+    };
+
+    // Writes the value the server actually has, not the draft: Keep only
+    // appears when the two already agree, so there is one value to mean.
+    let persist_keep = {
+        let (n, v) = (name.clone(), value.clone());
+        move |_| {
+            let (n, v) = (n.clone(), v.clone());
+            busy.set(true);
+            failure.set(None);
+            spawn(async move {
+                if let Err(e) = api::persist_innodb(&n, Some(&v)).await {
+                    failure.set(Some(e));
+                }
+                busy.set(false);
+                on_set.call(());
+            });
+        }
+    };
+
+    let persist_drop = {
+        let n = name.clone();
+        move |_| {
+            let n = n.clone();
+            busy.set(true);
+            failure.set(None);
+            spawn(async move {
+                if let Err(e) = api::persist_innodb(&n, None).await {
+                    failure.set(Some(e));
+                }
+                busy.set(false);
+                on_set.call(());
+            });
+        }
+    };
+
+    if read_only {
+        return rsx! {
+            div { class: "flex items-center gap-2",
+                span { class: "font-mono text-xs break-all", "{value}" }
+                // Said, not implied by an absent control: a row with nothing
+                // beside it reads as an oversight.
+                span { class: "badge badge-ghost badge-xs whitespace-nowrap", "at startup" }
+            }
+        };
+    }
+
+    rsx! {
+        div { class: "flex flex-col gap-1",
+            div { class: "flex flex-wrap items-center gap-2",
+                if !options.is_empty() {
+                    select {
+                        class: "select select-bordered select-xs w-40 font-mono",
+                        disabled: !writes_enabled || busy(),
+                        value: "{draft}",
+                        onchange: move |e| draft.set(e.value()),
+                        for o in options.iter() {
+                            option { key: "{o}", value: "{o}", "{o}" }
+                        }
+                    }
+                } else {
+                    input {
+                        class: "input input-bordered input-xs w-56 font-mono",
+                        r#type: if numeric { "number" } else { "text" },
+                        min: min.clone().unwrap_or_default(),
+                        max: max.clone().unwrap_or_default(),
+                        step: block.clone().unwrap_or_default(),
+                        disabled: !writes_enabled || busy(),
+                        value: "{draft}",
+                        oninput: move |e| draft.set(e.value()),
+                    }
+                }
+
+                // Only once the value differs from the server's, so 106 live
+                // buttons do not sit on a page where nothing has been asked
+                // for yet.
+                if dirty && writes_enabled {
+                    button {
+                        class: "btn btn-xs",
+                        disabled: busy(),
+                        onclick: apply,
+                        if busy() {
+                            span { class: "loading loading-spinner loading-xs" }
+                        }
+                        "Apply"
+                    }
+                    button {
+                        class: "btn btn-ghost btn-xs",
+                        disabled: busy(),
+                        onclick: move |_| {
+                            draft.set(value.clone());
+                            failure.set(None);
+                        },
+                        "Reset"
+                    }
+                }
+            }
+
+            // Keeping is a second decision, taken after a value is the
+            // one you want: the live change is instant, this is about what
+            // the server comes back as.
+            if can_persist && writes_enabled && !dirty {
+                div { class: "flex flex-wrap items-center gap-2",
+                    if persisted.is_some() {
+                        span {
+                            class: if drifted { "badge badge-warning badge-xs whitespace-nowrap" } else { "badge badge-ghost badge-xs whitespace-nowrap" },
+                            "kept at startup"
+                        }
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            disabled: busy(),
+                            onclick: persist_drop,
+                            "Stop keeping"
+                        }
+                    } else {
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            disabled: busy(),
+                            onclick: persist_keep,
+                            "Keep"
+                        }
+                    }
+                }
+            }
+
+            if drifted {
+                p { class: "text-xs text-warning break-words",
+                    "The startup file asks for "
+                    span { class: "font-mono", "{persisted.clone().unwrap_or_default()}" }
+                    ", which is not what the server has. MariaDB stops replaying that file "
+                    "at its first failing line, so a line above this one may have been "
+                    "rejected."
+                }
+            }
+
+            if let Some(v) = settled() {
+                p { class: "text-xs text-base-content/60",
+                    "The server rounded it to "
+                    span { class: "font-mono", "{v}" }
+                    "."
+                }
+            }
+            if let Some(e) = failure() {
+                p { class: "text-xs text-error break-words", "{e}" }
+            }
+        }
+    }
+}
+
+/// Where a setting's running value came from, in words rather than in the
+/// server's enum.
+///
+/// SQL is the one worth a colour. It means someone ran SET GLOBAL, so the
+/// value is real now and gone at the next restart - and it is invisible in
+/// the value column, because setting something back to its own default
+/// leaves the value identical and the origin SQL. That is the disagreement
+/// this panel exists to show and the one no value comparison can find.
+#[component]
+fn SettingOrigin(origin: String, read_only: bool) -> Element {
+    let (text, tone) = match origin.as_str() {
+        "COMPILE-TIME" => ("default", "text-base-content/50"),
+        // my.cnf is a read-only store path on this deployment, so the place
+        // a CONFIG value is actually edited is /etc/nixos.
+        "CONFIG" => ("my.cnf \u{2192} /etc/nixos", "text-base-content/70"),
+        "COMMAND-LINE" => ("the unit's ExecStart", "text-base-content/70"),
+        "SQL" => ("SET GLOBAL \u{b7} reverts at restart", "text-warning"),
+        "AUTO" => ("sized by the server", "text-base-content/70"),
+        // A later MariaDB may add one. Passed through rather than mapped to
+        // "unknown", which would hide the only clue to what it was.
+        other if !other.is_empty() => (other, "text-base-content/70"),
+        _ => ("not reported", "text-base-content/50"),
+    };
+    rsx! {
+        span { class: "{tone}", "{text}" }
+        if read_only {
+            span { class: "ml-2 text-base-content/50", "(restart to change)" }
+        }
+    }
+}
+
+/// The info button on one InnoDB setting.
+///
+/// Its own component because the absent case needs saying, not hiding. Two of
+/// this server's 137 variables have no description in `mariadbd --help
+/// --verbose`, and a row with no button there would read as "nothing to
+/// explain" rather than "the server does not say" - the same distinction
+/// between absent and unavailable the rest of this app insists on.
+///
+/// The body is the server's own sentence verbatim; see glpi::innodb_help for
+/// why none of it is written here.
+#[component]
+fn SettingInfo(name: String, help: Option<String>) -> Element {
+    rsx! {
+        InfoButton {
+            title: name.clone(),
+            body: match &help {
+                Some(h) => h.clone(),
+                None => format!(
+                    "The server does not describe this one. {name} is reported by SHOW \
+                     VARIABLES but has no entry in `mariadbd --help --verbose`, which is \
+                     where every other description on this panel comes from - so there is \
+                     nothing to quote, and nothing is invented in its place. Two of this \
+                     server's 137 InnoDB settings are in that position."
+                ),
+            },
         }
     }
 }

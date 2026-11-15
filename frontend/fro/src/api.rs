@@ -883,7 +883,7 @@ pub struct ServerFacts {
     #[serde(default)]
     pub uptime_seconds: u64,
     #[serde(default)]
-    pub variables: Vec<(String, String)>,
+    pub variables: Vec<ServerSetting>,
     #[serde(default)]
     pub engines: Vec<(String, String)>,
     #[serde(default)]
@@ -894,6 +894,23 @@ pub struct ServerFacts {
     pub glpi_other_engines: Vec<(String, String)>,
 }
 
+/// One of the ten settings on the server panel. Mirrors the backend's
+/// ServerSetting - `origin` is the field the panel is really for, since a
+/// value equal to its default says nothing about whether anyone chose it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct ServerSetting {
+    pub name: String,
+    pub value: String,
+    /// None where the server publishes no default. Not a divergence - there
+    /// is nothing on the other side to differ from.
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub origin: String,
+    #[serde(default)]
+    pub read_only: bool,
+}
+
 #[derive(Clone, PartialEq, serde::Deserialize)]
 pub struct MariadbReport {
     /// False when the app has no database URL. The page says so rather than
@@ -902,6 +919,297 @@ pub struct MariadbReport {
     #[serde(default)]
     pub configured: bool,
     pub facts: Option<ServerFacts>,
+}
+
+/// One group of InnoDB settings. The grouping is the backend's, and the
+/// order of the groups is the order they are rendered in - the panel does
+/// not sort them, because the order is a reading order rather than
+/// alphabetical.
+/// One setting, with the server's own description of it when the server has
+/// one. `help` is None for the two this server reports but does not
+/// document; the panel says that rather than showing an empty button.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct InnodbSetting {
+    pub name: String,
+    pub value: String,
+    #[serde(default)]
+    pub help: Option<String>,
+    /// Startup-only on this server - 31 of 137. The row renders as text.
+    #[serde(default)]
+    pub read_only: bool,
+    /// Every value the server will accept, for booleans and enums. Empty for
+    /// everything else, which is what makes it the test for "does this row
+    /// get a dropdown".
+    #[serde(default)]
+    pub options: Vec<String>,
+    /// The server's own word: BOOLEAN, ENUM, BIGINT UNSIGNED, DOUBLE,
+    /// VARCHAR and so on. Anything this app does not recognise falls back to
+    /// a text box rather than to nothing.
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub min: Option<String>,
+    #[serde(default)]
+    pub max: Option<String>,
+    #[serde(default)]
+    pub block: Option<String>,
+    #[serde(default)]
+    pub default: Option<String>,
+    /// What the startup file asks for, if it names this setting. None means
+    /// a restart hands it back to my.cnf and the compiled default; a value
+    /// differing from `value` means the file and the running server disagree.
+    #[serde(default)]
+    pub persisted: Option<String>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct InnodbGroup {
+    pub category: String,
+    #[serde(default)]
+    pub variables: Vec<InnodbSetting>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct InnodbReport {
+    #[serde(default)]
+    pub configured: bool,
+    /// Whether the backend will accept a change at all. False is the default
+    /// and the panel says why rather than hiding its controls.
+    #[serde(default)]
+    pub writes_enabled: bool,
+    /// Where persisted settings are written. None means no startup file is
+    /// configured, and the panel says a change lasts until the next restart
+    /// rather than offering to keep it.
+    #[serde(default)]
+    pub persist_path: Option<String>,
+    #[serde(default)]
+    pub groups: Vec<InnodbGroup>,
+}
+
+/// What a write did: what was asked for, and what the server reports now.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct InnodbChange {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub requested: String,
+    #[serde(default)]
+    pub value: String,
+}
+
+/// Every InnoDB setting the server has, grouped. Its own request rather than
+/// part of the facts: 137 rows that only one panel reads.
+pub async fn fetch_innodb() -> Result<InnodbReport, String> {
+    reqwest::get(api_url("/api/mariadb/innodb"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<InnodbReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Set one InnoDB setting, and report what it became.
+///
+/// The only request this app makes that is not a GET. A refusal comes back
+/// as 400 with the reason in `error`, and that sentence is what the panel
+/// shows: the server's own objection beats anything this layer could invent
+/// about why a value was not taken.
+pub async fn set_innodb(name: &str, value: &str) -> Result<InnodbChange, String> {
+    let r = reqwest::Client::new()
+        .post(api_url(&format!("/api/mariadb/innodb/{name}")))
+        .json(&serde_json::json!({ "value": value }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if r.status().is_success() {
+        return r.json::<InnodbChange>().await.map_err(|e| e.to_string());
+    }
+    // The body carries the reason; the status alone would reduce "takes one
+    // of OFF, ON" to "400".
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
+}
+
+/// Keep a setting across restarts, or stop keeping it.
+///
+/// `Some(value)` writes it into the file MariaDB replays at startup; None
+/// drops the line, leaving the running server exactly as it is - what is
+/// being changed is the next restart, not this one.
+pub async fn persist_innodb(name: &str, value: Option<&str>) -> Result<(), String> {
+    let url = api_url(&format!("/api/mariadb/innodb/{name}/persist"));
+    let req = reqwest::Client::new().post(url);
+    let req = match value {
+        Some(v) => req.json(&serde_json::json!({ "value": v })),
+        None => req,
+    };
+
+    let r = req.send().await.map_err(|e| e.to_string())?;
+    if r.status().is_success() {
+        return Ok(());
+    }
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
+}
+
+/// What scripts/db-restart.sh said.
+///
+/// `code` is the script's own exit status and the UI reads it rather than the
+/// HTTP status: 0 done, 2 misuse, 3 not possible on this operating system, 4
+/// tried and failed. 3 is not an error - on NixOS it is the normal answer for
+/// the settings link, and what comes back is the instructions.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct RestartRun {
+    #[serde(default)]
+    pub code: i32,
+    #[serde(default)]
+    pub output: String,
+    #[serde(default)]
+    pub script: String,
+    #[serde(default)]
+    pub preview: bool,
+}
+
+/// Ask the backend to run the restart script.
+///
+/// `preview` sets DRY_RUN in the script, which prints the commands and runs
+/// nothing - that is what both links do first, so nothing restarts until a
+/// second, separate click.
+pub async fn db_restart(
+    mode: &str,
+    settings: &[String],
+    preview: bool,
+) -> Result<RestartRun, String> {
+    let body = serde_json::json!({ "mode": mode, "settings": settings, "preview": preview });
+    let res = reqwest::Client::new()
+        .post(api_url("/api/db/restart"))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !res.status().is_success() {
+        let status = res.status();
+        let msg = res
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str().map(String::from)))
+            .unwrap_or_else(|| status.to_string());
+        return Err(msg);
+    }
+    res.json::<RestartRun>().await.map_err(|e| e.to_string())
+}
+
+/// One timed thing: an endpoint of GLPI's, or a query of the kind its pages
+/// run. Every field optional-by-default for the usual reason - a backend
+/// that grows a field should not fail the page that has not learned it yet.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct Timing {
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub best_ms: f64,
+    #[serde(default)]
+    pub median_ms: f64,
+    #[serde(default)]
+    pub worst_ms: f64,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// A derived reading with the figures it came from. No verdicts: the
+/// backend formats the value and names its inputs, and what counts as good
+/// is the reader's call on their own workload.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct Gauge {
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub detail: String,
+}
+
+/// One of GLPI's scheduled tasks, timed by GLPI itself.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct CronTask {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub frequency: i64,
+    /// GLPI's own column: 0 disabled, 1 waiting, 2 running.
+    #[serde(default)]
+    pub state: i64,
+    #[serde(default)]
+    pub last_run: Option<String>,
+    #[serde(default)]
+    pub avg_seconds: f64,
+    #[serde(default)]
+    pub max_seconds: f64,
+    #[serde(default)]
+    pub runs: i64,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct TableSize {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub rows: i64,
+    #[serde(default)]
+    pub kib: i64,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct PerfReport {
+    #[serde(default)]
+    pub glpi_url: String,
+    #[serde(default)]
+    pub php: Option<String>,
+    #[serde(default)]
+    pub http: Vec<Timing>,
+    #[serde(default)]
+    pub query: Option<Timing>,
+    #[serde(default)]
+    pub samples: usize,
+    #[serde(default)]
+    pub engine: Vec<Gauge>,
+    #[serde(default)]
+    pub cron: Vec<CronTask>,
+    #[serde(default)]
+    pub tables: Vec<TableSize>,
+    #[serde(default)]
+    pub total_kib: i64,
+    #[serde(default)]
+    pub total_tables: i64,
+}
+
+/// Measured on request, never cached: the page is for reloading after a
+/// change, and a cached number answers the question the reader asked before
+/// they made it.
+pub async fn fetch_perf() -> Result<PerfReport, String> {
+    reqwest::get(api_url("/api/perf"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<PerfReport>()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub async fn fetch_mariadb() -> Result<MariadbReport, String> {

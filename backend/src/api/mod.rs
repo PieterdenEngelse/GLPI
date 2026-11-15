@@ -6,20 +6,20 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::{
         header::{CACHE_CONTROL, CONTENT_TYPE},
         HeaderValue, StatusCode,
     },
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use serde::Serialize;
 
 use crate::glpi::{
-    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, posture, refused::Db,
-    rights::RightsReport, session::SessionInfo, Client,
+    agents::Agent, computers::Computer, entities::Entity, legacy::Legacy, posture, refused,
+    refused::Db, rights::RightsReport, session::SessionInfo, Client,
 };
 
 pub struct AppState {
@@ -54,6 +54,20 @@ pub struct AppState {
     /// rather than rendering empty panes, because an empty log and an
     /// unreadable one mean opposite things.
     pub logs: Option<crate::logs::LogDir>,
+
+    /// Whether SET GLOBAL on an InnoDB setting is permitted. See
+    /// config::Config::innodb_writes - off by default, and checked in the
+    /// handler rather than only in the UI.
+    pub innodb_writes: bool,
+
+    /// Whether the restart links may run scripts/db-restart.sh. A separate
+    /// flag from innodb_writes, and a bigger one: see config::Config.
+    pub db_restart: bool,
+
+    /// The startup file, when one is configured. See
+    /// glpi::innodb_init - it is what makes a change outlive a restart, and
+    /// its absence is why the panel otherwise says a change does not.
+    pub innodb_init: Option<crate::glpi::innodb_init::InitFile>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -66,7 +80,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/authorizations", get(authorizations))
         .route("/api/posture", get(security_posture))
         .route("/api/refused", get(refused))
+        .route("/api/perf", get(perf))
         .route("/api/mariadb", get(mariadb))
+        .route("/api/mariadb/innodb", get(innodb))
+        .route("/api/mariadb/innodb/{name}", post(set_innodb))
+        .route("/api/mariadb/innodb/{name}/persist", post(persist_innodb))
+        // The two restart links. One route, because what differs between
+        // them is a mode the script understands and this process does not
+        // interpret.
+        .route("/api/db/restart", post(db_restart))
         .route("/api/field-gaps", get(field_gaps))
         .route("/api/system-status", get(system_status))
         .route("/api/login-sessions", get(login_sessions))
@@ -1099,6 +1121,292 @@ async fn mariadb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse
         configured: true,
         facts: Some(db.server_facts().await?),
     }))
+}
+
+/// Every InnoDB setting, grouped.
+///
+/// Separate from /api/mariadb because of its size: 137 rows on this server
+/// against the facts payload's ten, and only one panel wants them. The
+/// grouping is this app's - MariaDB publishes none - and lives beside the
+/// rules that decide it, in glpi::refused.
+#[derive(Serialize)]
+struct InnodbReport {
+    configured: bool,
+    /// Whether this backend will accept a change. The panel renders its
+    /// controls either way and says why they are disabled - a page that
+    /// simply shows no buttons leaves the reader to guess whether the
+    /// settings are read-only or the app is.
+    writes_enabled: bool,
+    /// Where persisted settings are written, if anywhere. Shown rather than
+    /// hidden: a reader who wonders what "kept at startup" means should be
+    /// able to go and read the file.
+    persist_path: Option<String>,
+    groups: Vec<refused::InnodbGroup>,
+}
+
+/// What a write did, in the server's terms rather than the page's.
+#[derive(Serialize)]
+struct InnodbChange {
+    name: String,
+    /// What was asked for.
+    requested: String,
+    /// What the server reports now. Not the same thing: a numeric value is
+    /// rounded to the setting's block size, and a buffer pool resize is
+    /// asynchronous, so this can lag or differ.
+    value: String,
+}
+
+/// How long GLPI takes to answer, measured now.
+///
+/// Measured per request rather than cached: the page exists to be reloaded
+/// after a change, and a cached figure would answer the question the reader
+/// asked five minutes ago. It costs ten small HTTP requests to GLPI, which
+/// is why nothing else on this dashboard calls it.
+async fn perf(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    Ok(Json(
+        crate::glpi::perf::measure(&state.glpi_url, state.db.as_ref()).await?,
+    ))
+}
+
+async fn innodb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let Some(db) = state.db.as_ref() else {
+        return Ok(Json(InnodbReport {
+            configured: false,
+            writes_enabled: false,
+            persist_path: None,
+            groups: Vec::new(),
+        }));
+    };
+
+    // What the startup file asks for, folded into the rows it is about, so
+    // the panel can put "this is what a restart will give you" beside "this
+    // is what the server has". An unreadable file is reported as nothing
+    // persisted rather than failing the whole panel: the settings are still
+    // worth seeing, and the mismatch column is where the problem shows.
+    let persisted = state
+        .innodb_init
+        .as_ref()
+        .map(|f| f.read().unwrap_or_default())
+        .unwrap_or_default();
+
+    let mut groups = db.innodb_variables().await?;
+    for group in &mut groups {
+        for v in &mut group.variables {
+            v.persisted = persisted.get(&v.name).cloned();
+        }
+    }
+
+    Ok(Json(InnodbReport {
+        configured: true,
+        writes_enabled: state.innodb_writes,
+        persist_path: state
+            .innodb_init
+            .as_ref()
+            .map(|f| f.path().display().to_string()),
+        groups,
+    }))
+}
+
+/// Keep one InnoDB setting across restarts, or stop keeping it.
+///
+/// Writes the file MariaDB replays at startup. Gated exactly as the live
+/// write is - this is the same change, made to apply again unattended - and
+/// validated through the same path, because a value nobody is watching when
+/// it runs is the last place to accept one the server might refuse.
+async fn persist_innodb(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<InnodbWrite>>,
+) -> axum::response::Response {
+    if !state.innodb_writes {
+        return refused_write();
+    }
+    let Some(init) = state.innodb_init.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No startup file is configured, so there is nowhere to keep this.                           Set GLPI_INV_INNODB_INIT_FILE, and point MariaDB's init-file at                           the same path."
+            })),
+        )
+            .into_response();
+    };
+
+    // No body means stop persisting it. The setting keeps whatever it is
+    // set to now - dropping the line is about the next restart, not this
+    // one, and silently reverting a running server would be a second change
+    // nobody asked for.
+    let Some(Json(body)) = body else {
+        return match init.remove(&name) {
+            Ok(()) => {
+                tracing::info!("no longer persisting {name}");
+                Json(serde_json::json!({ "name": name, "persisted": null })).into_response()
+            }
+            Err(e) => bad_request(e),
+        };
+    };
+
+    let Some(db) = state.db.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No database connection is configured, so nothing can be checked                           against the server."
+            })),
+        )
+            .into_response();
+    };
+
+    match db.innodb_literal(&name, &body.value).await {
+        Ok((canonical, literal)) => match init.upsert(&canonical, &literal) {
+            Ok(()) => {
+                tracing::info!("persisting {canonical} = {:?}", body.value);
+                Json(serde_json::json!({
+                    "name": canonical,
+                    "persisted": body.value,
+                }))
+                .into_response()
+            }
+            Err(e) => bad_request(e),
+        },
+        Err(e) => bad_request(e),
+    }
+}
+
+/// Which restart, and whether to only show what would happen.
+#[derive(serde::Deserialize)]
+struct RestartRequest {
+    /// "plain" or "settings". Anything else is the script's to reject - it
+    /// prints its own usage and exits 2 - so this process does not keep a
+    /// second list of valid modes that could disagree with the first.
+    mode: String,
+    #[serde(default)]
+    settings: Vec<String>,
+    /// True runs it with DRY_RUN=1: the script prints the commands and runs
+    /// nothing. The links use this for the preview shown before confirming.
+    #[serde(default)]
+    preview: bool,
+}
+
+/// Restart GLPI's database, or restart it carrying a non-default InnoDB
+/// setting.
+///
+/// THIS PROCESS DECIDES ALMOST NOTHING. It checks its flag, then runs
+/// scripts/db-restart.sh and returns what the script said, verbatim and with
+/// the script's own exit code. Everything that varies - the operating system,
+/// the unit name, whether the config file is writable, which settings are
+/// refused outright - is in the script, where it can be read and run by hand
+/// by whoever is about to let it restart their database.
+///
+/// The escalation is the script's too, and it is polkit rather than a sudo
+/// rule: a human consents to this specific restart, at the moment it happens.
+/// The flag here is a separate question - whether an install offers the
+/// control at all.
+async fn db_restart(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<RestartRequest>,
+) -> axum::response::Response {
+    // A preview runs nothing, so it is allowed to describe what the control
+    // would do even where the control is off: a reader deserves to see why a
+    // disabled link exists. The script's settings mode on NixOS is pure
+    // instructions anyway, which is the case this matters for.
+    if !state.db_restart && !req.preview {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Restarting the database is disabled in this backend. Start it \
+                          with GLPI_INV_DB_RESTART=1 to allow it - and note that a restart \
+                          takes every in-flight inventory import with it."
+            })),
+        )
+            .into_response();
+    }
+
+    match crate::db_restart::run(&req.mode, &req.settings, req.preview).await {
+        Ok(run) => {
+            if !run.preview {
+                tracing::warn!(
+                    "db-restart.sh {} {:?} exited {}",
+                    req.mode,
+                    req.settings,
+                    run.code
+                );
+            }
+            Json(run).into_response()
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+fn refused_write() -> axum::response::Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({
+            "error": "Engine settings are read-only in this backend. Start it with                       GLPI_INV_INNODB_WRITES=1 to allow changes."
+        })),
+    )
+        .into_response()
+}
+
+fn bad_request(e: anyhow::Error) -> axum::response::Response {
+    let msg = format!("{e:#}");
+    tracing::warn!("refused: {msg}");
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": msg })),
+    )
+        .into_response()
+}
+
+/// Change one InnoDB setting on the running server.
+///
+/// The only request this backend makes that is not a read. Three refusals
+/// before it reaches SQL, in this order: writes must be enabled, a database
+/// must be configured, and the setting must be one the server reports as
+/// writable - the last two are decided in glpi::refused, against the server,
+/// not against anything the page sent.
+///
+/// A rejected value answers 400 with the reason in `error`, not 502: the
+/// request was understood and refused, and the panel prints that sentence
+/// beside the row. 502 stays what it has always been here - the upstream
+/// could not be reached or failed.
+async fn set_innodb(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<InnodbWrite>,
+) -> axum::response::Response {
+    if !state.innodb_writes {
+        return refused_write();
+    }
+    let Some(db) = state.db.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No database connection is configured, so there is no server to set."
+            })),
+        )
+            .into_response();
+    };
+
+    match db.set_innodb_setting(&name, &body.value).await {
+        Ok(value) => {
+            tracing::info!("SET GLOBAL {name} = {:?}, now {value:?}", body.value);
+            Json(InnodbChange {
+                name,
+                requested: body.value,
+                value,
+            })
+            .into_response()
+        }
+        Err(e) => bad_request(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct InnodbWrite {
+    value: String,
 }
 
 /// Submissions GLPI refused - the third failure, invisible to both APIs.

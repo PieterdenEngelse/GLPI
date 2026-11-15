@@ -40,6 +40,14 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(api::AppState {
         static_dir,
+        innodb_writes: cfg.innodb_writes,
+        db_restart: cfg.db_restart,
+        // A path, not an open file: it is read and rewritten per request,
+        // because it is also whatever someone edited on the server since.
+        innodb_init: cfg
+            .innodb_init_file
+            .as_deref()
+            .map(glpi::innodb_init::InitFile::new),
         glpi_url: cfg.glpi_url.clone(),
         bind: cfg.bind.clone(),
         // A bad URL disables the feature with a warning rather than refusing
