@@ -217,8 +217,8 @@ impl Db {
         let uptime_seconds = uptime.and_then(|(_, v)| v.parse().ok()).unwrap_or_default();
 
         // Named one by one, so the list is a decision rather than whatever the
-        // server happened to expose. These are the ones that change what GLPI
-        // does or how its data is stored.
+        // server happened to expose. These are the ones that could change what
+        // GLPI does or how its data is stored.
         const WANTED: [&str; 10] = [
             "character_set_server",
             "collation_server",
@@ -408,6 +408,97 @@ pub fn innodb_group(name: &str) -> &'static str {
         .unwrap_or("Others")
 }
 
+/// The four tiers every system variable falls into, cut by what changing one
+/// costs rather than by what it is about.
+///
+/// `live` is the server's own answer: `READ_ONLY = 'NO'` and `SET GLOBAL` is
+/// accepted. The other three are a reading of the 196 it refuses, and two of
+/// them have to be written down by hand because no query produces them.
+///
+/// Why they cannot be derived, both routes having been tried against 11.4.12:
+///
+/// - `information_schema.SYSTEM_VARIABLES.COMMAND_LINE_ARGUMENT` is NULL for
+///   `character_set_server`, which `-C, --character-set-server=name` sets
+///   perfectly well. False negatives, so it cannot be trusted either way.
+/// - The `Variables (--variable-name=value)` table in `mariadbd --help
+///   --verbose` is a dump of current values, not a list of settable ones: it
+///   contains `system-time-zone`, `protocol-version` and `server-uid`, none
+///   of which can be set.
+///
+/// What defeats a name join even in principle is that MariaDB's option names
+/// and its variable names are separate namespaces: `--memlock` sets
+/// `locked_in_memory`, and `--external-locking` sets `skip_external_locking`.
+/// Both were in an earlier draft of REPORTS for exactly that reason, and both
+/// are ordinary restart settings.
+const INSTALL: [&str; 3] = [
+    "innodb_page_size",
+    "innodb_data_file_path",
+    "innodb_undo_tablespaces",
+];
+
+/// Read-only variables with no edit behind them at any price - they report
+/// the build, the host, or the last statement.
+///
+/// Measured on 11.4.12 by taking the 196 the server calls read-only and
+/// removing every one with a startup option, then checking the remainder by
+/// hand against `mariadbd --help --verbose`. The `have_` family is a prefix
+/// rule rather than ten names so a capability a later MariaDB adds lands
+/// here instead of in `restart`.
+///
+/// Over-matching is safe in one direction only, and it is the safe one: this
+/// is consulted for read-only variables alone, so a name that became
+/// settable would be `live` before any rule here could see it.
+const REPORTS: [&str; 16] = [
+    "aria_used_for_temp_tables",
+    "character_set_system",
+    "error_count",
+    "external_user",
+    "gtid_binlog_pos",
+    "gtid_current_pos",
+    "hostname",
+    "in_transaction",
+    "large_page_size",
+    "last_gtid",
+    "license",
+    "log_bin_basename",
+    "proxy_user",
+    "relay_log_basename",
+    "warning_count",
+    "wsrep_sr_store",
+];
+
+/// Which tier a variable is in. Pure, so the cut is testable without a
+/// server.
+pub fn variable_tier(name: &str, read_only: bool) -> &'static str {
+    if !read_only {
+        return "live";
+    }
+    if INSTALL.contains(&name) {
+        return "install";
+    }
+    if name.starts_with("have_") || REPORTS.contains(&name) {
+        return "reports";
+    }
+    "restart"
+}
+
+/// One system variable as the tier pages read it.
+///
+/// Four fields and no help text: this is the whole of the server's variable
+/// space, about 700 rows, and the InnoDB panel already carries descriptions
+/// for the 137 that have a page willing to explain them.
+#[derive(Debug, Clone, Serialize)]
+pub struct Variable {
+    pub name: String,
+    pub value: String,
+    /// The server's own word for where the running value came from -
+    /// COMPILE-TIME, CONFIG, COMMAND-LINE, SQL, AUTO. `SQL` is the one that
+    /// means the running server and the next restart disagree.
+    pub origin: String,
+    pub read_only: bool,
+    pub tier: &'static str,
+}
+
 /// One InnoDB setting: what it is called, what it is set to, and what the
 /// server's own binary says it does.
 ///
@@ -493,6 +584,42 @@ impl Db {
                     .filter(|v| innodb_group(&v.name) == *group)
                     .cloned()
                     .collect(),
+            })
+            .collect())
+    }
+
+    /// Every system variable the server has, each tagged with its tier.
+    ///
+    /// One query and no filter, which is the point: the panels above this
+    /// one read ten names and `innodb%`, so neither could say how much of
+    /// the server they were leaving out. About 700 rows on 11.4.12.
+    ///
+    /// SESSION ONLY variables have no GLOBAL_VALUE and arrive empty rather
+    /// than being dropped - `warning_count` having no global value is a fact
+    /// about it, and the tier it lands in is the one that says so.
+    pub async fn variables(&self) -> Result<Vec<Variable>> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        let rows: Vec<(String, String, String, bool)> =
+            "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), \
+             COALESCE(GLOBAL_VALUE_ORIGIN, ''), READ_ONLY = 'YES' \
+             FROM information_schema.SYSTEM_VARIABLES ORDER BY VARIABLE_NAME"
+                .fetch(&mut conn)
+                .await
+                .context("reading the server's variables")?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(name, value, origin, read_only)| Variable {
+                tier: variable_tier(&name, read_only),
+                name,
+                value,
+                origin,
+                read_only,
             })
             .collect())
     }
@@ -1043,6 +1170,70 @@ mod innodb_write_tests {
         let v = var("VARCHAR", &[], None, None);
         assert_eq!(literal_for(&v, "O'Brien").unwrap(), r"'O\'Brien'");
         assert_eq!(literal_for(&v, r"a\b").unwrap(), r"'a\\b'");
+    }
+}
+
+#[cfg(test)]
+mod tier_tests {
+    use super::*;
+
+    /// read_only is the gate, so a dynamic variable can never be filed as
+    /// anything but live - including one whose name matches a rule below.
+    #[test]
+    fn dynamic_is_always_live() {
+        assert_eq!(variable_tier("innodb_buffer_pool_size", false), "live");
+        assert_eq!(variable_tier("have_ssl", false), "live");
+        assert_eq!(variable_tier("innodb_page_size", false), "live");
+    }
+
+    /// The three that validate and then leave the server unable to start
+    /// against its datadir. scripts/db-restart.sh refuses the same three by
+    /// name; if these lists drift apart the page and the script disagree.
+    #[test]
+    fn the_install_three_are_not_restart() {
+        for name in INSTALL {
+            assert_eq!(variable_tier(name, true), "install", "{name}");
+        }
+    }
+
+    /// have_ is a prefix so a capability a later MariaDB adds lands in
+    /// reports rather than being offered as something a restart could change.
+    #[test]
+    fn capabilities_are_reports_by_prefix() {
+        assert_eq!(variable_tier("have_ssl", true), "reports");
+        assert_eq!(variable_tier("have_something_new", true), "reports");
+    }
+
+    /// The four that were in REPORTS until their startup options were found.
+    /// MariaDB's option names are a separate namespace from its variable
+    /// names, which is what made them look unsettable: --memlock sets
+    /// locked_in_memory and --external-locking sets skip_external_locking.
+    #[test]
+    fn variables_with_differently_named_options_are_restart() {
+        for name in [
+            "locked_in_memory",
+            "skip_external_locking",
+            "binlog_do_db",
+            "binlog_ignore_db",
+        ] {
+            assert_eq!(variable_tier(name, true), "restart", "{name}");
+        }
+    }
+
+    /// Session results have no global value and no setter. The tier exists
+    /// so they are not listed as things a restart would change.
+    #[test]
+    fn session_results_are_reports() {
+        assert_eq!(variable_tier("warning_count", true), "reports");
+        assert_eq!(variable_tier("in_transaction", true), "reports");
+    }
+
+    /// An unrecognised read-only name is restart, not reports: a config edit
+    /// is the ordinary case, and guessing "no edit exists" for a variable
+    /// nobody has classified would hide the one route that probably works.
+    #[test]
+    fn unknown_read_only_falls_to_restart() {
+        assert_eq!(variable_tier("some_future_setting", true), "restart");
     }
 }
 

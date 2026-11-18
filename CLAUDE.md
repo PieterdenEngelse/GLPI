@@ -280,8 +280,21 @@ Three things worth not undoing:
 - **`innodb_page_size`, `innodb_data_file_path` and `innodb_undo_tablespaces`
   are denied by name**, not by validation. They are valid values that leave
   the server unable to start against its existing datadir, and a config file
-  keeps it that way across every later restart. `--validate-config` does not
-  catch them because the value is not what is wrong.
+  keeps it that way across every later restart. No validation catches them
+  because the value is not what is wrong -
+  `mariadbd --help --verbose --innodb-page-size=64K` passes clean.
+- **`mariadbd` has no `--validate-config`, and passing it starts a server.**
+  That is a MySQL 8 flag. The unknown option is not reported until after the
+  storage engines initialise, so the command writes a datadir and then
+  aborts - measured at 145MB into `--datadir`, which was `/tmp`, and
+  `DRY_RUN` did it too. Its own `[ERROR] unknown option` line then matched
+  the script's error grep, so every valid setting came back as *rejected by
+  the server*. Fixed on 2026-11-18; `validate_settings` in
+  `scripts/db-restart.sh` uses `--help --verbose`, which parses the same
+  options through the same code, writes nothing, and reports on stderr.
+  `~/docs/gl-win-install.md` asserted the flag existed and gave a
+  verification for it; the test used `innodb_page_size=7777`, which InnoDB
+  refuses early enough that the real error looks like validation working.
 - **106 of this server's 137 InnoDB settings never need any of this.** They
   are dynamic (`SYSTEM_VARIABLES.READ_ONLY = 'NO'`), so SQL changes them and
   the init-file keeps them. Only 31 need a file and a restart. A restart-

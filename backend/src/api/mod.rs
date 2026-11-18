@@ -83,6 +83,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/perf", get(perf))
         .route("/api/mariadb", get(mariadb))
         .route("/api/mariadb/innodb", get(innodb))
+        .route("/api/mariadb/variables", get(variables))
         .route("/api/mariadb/innodb/{name}", post(set_innodb))
         .route("/api/mariadb/innodb/{name}/persist", post(persist_innodb))
         // The two restart links. One route, because what differs between
@@ -1142,6 +1143,34 @@ struct InnodbReport {
     /// able to go and read the file.
     persist_path: Option<String>,
     groups: Vec<refused::InnodbGroup>,
+}
+
+/// Every system variable, in four tiers.
+#[derive(Serialize)]
+struct VariablesReport {
+    configured: bool,
+    variables: Vec<refused::Variable>,
+}
+
+/// The whole variable space, each row tagged with what changing it costs.
+///
+/// No write path, deliberately. The InnoDB panel's writes are guarded by
+/// matching the submitted name against a row the server reports under
+/// `innodb%`; serving 700 names here does not widen that guard, and should
+/// not - a SET GLOBAL reachable for any variable the server has is a
+/// different decision from the one that was made for 137.
+async fn variables(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let Some(db) = state.db.as_ref() else {
+        return Ok(Json(VariablesReport {
+            configured: false,
+            variables: Vec::new(),
+        }));
+    };
+
+    Ok(Json(VariablesReport {
+        configured: true,
+        variables: db.variables().await?,
+    }))
 }
 
 /// What a write did, in the server's terms rather than the page's.

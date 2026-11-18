@@ -57,11 +57,12 @@ pub const INSTRUCT_SUBS: [(&str, &str); 2] = [("general", "General"), ("template
 
 pub const RIGHTS_TABS: [(&str, &str); 3] =
     [("profiles", "Profiles"), ("api", "API"), ("db", "Database")];
-pub const DB_TABS: [(&str, &str); 4] = [
+pub const DB_TABS: [(&str, &str); 5] = [
     ("overview", "Overview"),
     ("db-read", "db-read"),
     ("api-read", "api-read"),
     ("maria", "Maria"),
+    ("vars", "Variables"),
 ];
 
 /// Third-level names: the sub-tabs two of the DB tabs carry, as they appear in
@@ -73,6 +74,18 @@ pub const MARIA_SUBS: [(&str, &str); 3] = [
 ];
 pub const API_SUBS: [(&str, &str); 3] =
     [("fields", "fields"), ("schema", "schema"), ("rsql", "rsql")];
+
+/// The four tiers the Variables tab is cut into, in the order they cost:
+/// a statement, a restart, a dump and reload, and nothing that can be paid.
+///
+/// Reports is last because it is the tier with no price rather than the
+/// highest one - putting it first would read as the cheapest.
+pub const VARS_SUBS: [(&str, &str); 4] = [
+    ("live", "live"),
+    ("restart", "restart"),
+    ("install", "install"),
+    ("reports", "reports"),
+];
 
 /// Every page, in the order both renderers show them.
 ///
@@ -234,6 +247,7 @@ pub fn children(current: &Route) -> Vec<Node> {
                 let subs = match (*name, on_this_tab) {
                     ("maria", true) => db_subs(&MARIA_SUBS, "maria", sub),
                     ("api-read", true) => db_subs(&API_SUBS, "api-read", sub),
+                    ("vars", true) => db_subs(&VARS_SUBS, "vars", sub),
                     _ => vec![],
                 };
                 Node {

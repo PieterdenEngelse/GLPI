@@ -93,6 +93,29 @@ pub struct Config {
     pub innodb_init_file: Option<String>,
 }
 
+/// Whether a flag that permits a write is set, by one rule for all of them.
+///
+/// `1`, `true`, `yes` or `on` - case and surrounding space ignored - and
+/// nothing else. Anything unrecognised is OFF, which matters more than it
+/// looks: these two flags used to disagree, because they were written in
+/// separate sessions. GLPI_INV_INNODB_WRITES read any non-empty value as
+/// consent, so `GLPI_INV_INNODB_WRITES=no` ENABLED writes, while
+/// `GLPI_INV_DB_RESTART=no` did not. Two conventions in one env file is a
+/// trap whichever way each one leans, and for a flag that permits a write
+/// the safe default is to need the word.
+fn enabled(var: &str) -> bool {
+    permits(std::env::var(var).ok().as_deref())
+}
+
+/// The rule itself, split from the lookup so it can be tested without
+/// setting a process-wide environment variable from a test.
+fn permits(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
         Ok(Self {
@@ -108,31 +131,48 @@ impl Config {
             db_url: std::env::var("GLPI_DB_URL")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
-            // Same reading as the other flags: anything but an explicit yes
-            // is off, so a typo cannot enable a restart.
-            db_restart: std::env::var("GLPI_INV_DB_RESTART")
-                .map(|v| {
-                    let v = v.trim().to_ascii_lowercase();
-                    matches!(v.as_str(), "1" | "true" | "yes" | "on")
-                })
-                .unwrap_or(false),
+            db_restart: enabled("GLPI_INV_DB_RESTART"),
             log_dir: std::env::var("GLPI_INV_LOG_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
-            // Any non-empty value other than 0/false/off enables it. Opt-in
-            // is the whole point, so an unparseable value counts as asking
-            // for it rather than as a silent no.
             innodb_init_file: std::env::var("GLPI_INV_INNODB_INIT_FILE")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
-            innodb_writes: std::env::var("GLPI_INV_INNODB_WRITES")
-                .map(|v| {
-                    !matches!(
-                        v.trim().to_ascii_lowercase().as_str(),
-                        "" | "0" | "false" | "off"
-                    )
-                })
-                .unwrap_or(false),
+            innodb_writes: enabled("GLPI_INV_INNODB_WRITES"),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::permits;
+
+    #[test]
+    fn the_four_words_permit() {
+        for v in ["1", "true", "yes", "on", "TRUE", " Yes ", "ON"] {
+            assert!(permits(Some(v)), "{v:?} should permit");
+        }
+    }
+
+    /// The regression this rule exists for. GLPI_INV_INNODB_WRITES used to
+    /// read any non-empty value as consent, so a reader who wrote the
+    /// obvious thing turned the write ON.
+    #[test]
+    fn a_word_that_means_no_does_not_permit() {
+        for v in ["no", "No", "off", "false", "0", "disabled", "", " "] {
+            assert!(!permits(Some(v)), "{v:?} must not permit");
+        }
+    }
+
+    #[test]
+    fn anything_unrecognised_is_off() {
+        for v in ["maybe", "2", "yes please", "true-ish"] {
+            assert!(!permits(Some(v)), "{v:?} must not permit");
+        }
+    }
+
+    #[test]
+    fn unset_is_off() {
+        assert!(!permits(None));
     }
 }

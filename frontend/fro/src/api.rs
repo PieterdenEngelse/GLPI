@@ -997,6 +997,46 @@ pub struct InnodbChange {
     pub value: String,
 }
 
+/// One system variable, with the tier the backend put it in.
+///
+/// `tier` is the backend's word and is rendered as given. Classifying here
+/// too would mean two lists of names drifting apart, and the backend's is
+/// the one with tests behind it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct Variable {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub origin: String,
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default)]
+    pub tier: String,
+}
+
+/// Every system variable the server has, in one response.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct VariablesReport {
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub variables: Vec<Variable>,
+}
+
+/// The whole variable space, about 700 rows. Its own request for the same
+/// reason the InnoDB one is: only the tier pages read it, and the panels
+/// that load with the page must not pay for it.
+pub async fn fetch_variables() -> Result<VariablesReport, String> {
+    reqwest::get(api_url("/api/mariadb/variables"))
+        .await
+        .map_err(|e| e.to_string())?
+        .json::<VariablesReport>()
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Every InnoDB setting the server has, grouped. Its own request rather than
 /// part of the facts: 137 rows that only one panel reads.
 pub async fn fetch_innodb() -> Result<InnodbReport, String> {

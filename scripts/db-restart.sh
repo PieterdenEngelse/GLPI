@@ -144,8 +144,85 @@ restart_plain() {
 # innodb_page_size validates fine and then refuses to start against a datadir
 # written at another size - the remedy is a dump and reload. Written into a
 # file that persists, the server stays down across every restart after. The
-# value is not what is wrong, so --validate-config does not catch it.
+# value is not what is wrong, so no validation catches it: validate_settings
+# below accepts innodb_page_size=64K without a murmur.
 DENIED="innodb_page_size innodb_data_file_path innodb_undo_tablespaces"
+
+# --------------------------------------------------- validating the settings
+#
+# MariaDB HAS NO --validate-config. It is a MySQL 8 flag, and this script
+# passed it to mariadbd until 2026-11-18. It looked like it worked, and the
+# way it misled is worth keeping: the unknown option is not reported until
+# after the storage engines have initialised, so the command does not
+# validate anything - it STARTS A SERVER against --datadir, prints real
+# diagnostics about the settings, and only then says unknown option
+# '--validate-config' and aborts. Two costs, both measured on 11.4.12:
+#
+#   - 145MB written into --datadir, which was /tmp. ibdata1 12M, ib_logfile0
+#     96M, three 10M undo tablespaces, two Aria logs. DRY_RUN did it too,
+#     because validation is not a step the preview skips.
+#   - the abort's own "[ERROR] mariadbd: unknown option" matched the error
+#     grep, so EVERY valid setting was reported as rejected by the server.
+#
+# The check that first established the flag "exists" ran it with
+# innodb_page_size=7777, which InnoDB refuses so early that only 28K lands
+# and the unknown-option line two lines below is easy to miss. A valid
+# setting gets all the way through initialisation.
+#
+# --help --verbose is the real validator, and a better one. It parses the
+# options through the same code startup uses, writes NOTHING to --datadir,
+# puts the help text on stdout and every diagnostic on stderr, and exits
+# non-zero on an unknown variable (7) or an unacceptable enum (13). A bad
+# value exits 0 and reports [ERROR] on stderr, so the grep is what decides
+# and the exit status is only a second opinion.
+#
+#   0  accepted, warnings printed
+#   1  the server rejects them
+#   2  no server binary here to ask
+validate_settings() {
+  local args=() dir err diag rc p name mdb=""
+
+  # /usr/sbin before PATH: on Debian and RHEL the daemon lives there and a
+  # user service's PATH need not include it, and a silent "command not found"
+  # would have read as acceptance.
+  for p in /usr/sbin/mariadbd /usr/sbin/mysqld; do
+    [ -x "$p" ] && { mdb="$p"; break; }
+  done
+  if [ -z "$mdb" ]; then
+    mdb="$(command -v mariadbd 2>/dev/null || command -v mysqld 2>/dev/null)" || return 2
+    [ -n "$mdb" ] || return 2
+  fi
+
+  # Only the NAME is dash-spelled. Folding the whole pair, as this did until
+  # 2026-11-18, corrupts any value containing an underscore:
+  # sql_mode=STRICT_TRANS_TABLES became --sql-mode=STRICT-TRANS-TABLES, which
+  # the server rejects - a false rejection with no server involved in it.
+  for p in "$@"; do
+    name="${p%%=*}"
+    args+=("--${name//_/-}=${p#*=}")
+  done
+
+  # A throwaway datadir because --help still resolves one. Nothing is written
+  # into it; the only consequence of its being empty is one warning about
+  # mysql.plugin, which is about the help text and not about the settings.
+  dir="$(mktemp -d)" || return 2
+  err="$dir/stderr"
+  "$mdb" --help --verbose "${args[@]}" \
+    --datadir="$dir" --socket="$dir/s" --pid-file="$dir/p" >/dev/null 2>"$err"
+  rc=$?
+  diag="$(grep -v "Could not open mysql.plugin table" "$err")"
+  rm -rf "$dir"
+
+  if [ -n "$diag" ]; then
+    printf '%s\n' "$diag" | sed 's/^/    /'
+  else
+    say "    (no complaints - accepted)"
+  fi
+
+  [ "$rc" -eq 0 ] || return 1
+  printf '%s\n' "$diag" | grep -q '\[ERROR\]' && return 1
+  return 0
+}
 
 restart_with_settings() {
   local os="$1"; shift
@@ -240,20 +317,15 @@ restart_with_settings() {
 
       # Validated before anything is written: the server itself says whether
       # it would accept these, and it is the only authority that counts.
-      local args=()
-      for p in "${pairs[@]}"; do args+=("--${p//_/-}"); done
-      say "Validating with the server's own parser:"
-      if ! mariadbd --validate-config --datadir=/tmp "${args[@]}" 2>&1 | grep -qv '^$'; then
-        say "    (no output - accepted)"
-      else
-        mariadbd --validate-config --datadir=/tmp "${args[@]}" 2>&1 | grep -iE "error|warning" | sed 's/^/    /' && {
-          if mariadbd --validate-config --datadir=/tmp "${args[@]}" 2>&1 | grep -qiE "\[ERROR\]"; then
-            say ""
-            say "The server rejects these. Nothing written, nothing restarted."
-            return 4
-          fi
-        }
-      fi
+      say "Validating with the server's own option parser:"
+      validate_settings "${pairs[@]}"
+      case $? in
+        0) ;;
+        1) say ""
+           say "The server rejects these. Nothing written, nothing restarted."
+           return 4 ;;
+        2) say "    (no mariadbd or mysqld to ask - validation skipped)" ;;
+      esac
 
       say ""
       say "Writing $file and restarting $unit with $esc."
@@ -294,9 +366,14 @@ restart_with_settings() {
       say ""
       say "    Restart-Service MariaDB"
       say ""
-      say "Validate first, with the same flag this script uses on Linux:"
+      say "Validate first, the same way this script does on Linux. There is no"
+      say "--validate-config - that is a MySQL flag, and mariadbd starts a server"
+      say "instead of refusing it. --help --verbose parses the same options, writes"
+      say "nothing, and reports on stderr:"
       say ""
-      say "    mariadbd --validate-config ${pairs[*]/#/--}"
+      local vargs=""
+      for p in "${pairs[@]}"; do name="${p%%=*}"; vargs+=" --${name//_/-}=${p#*=}"; done
+      say "    mariadbd --help --verbose$vargs 1>NUL"
       say ""
       say "Not done from here for the same reason as the plain restart: no polkit,"
       say "so no way to ask consent for one action."
