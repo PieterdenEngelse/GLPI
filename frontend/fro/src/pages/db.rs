@@ -709,16 +709,54 @@ fn Tiers() -> Element {
     // are in the header, where they are true before any read lands and stay
     // true when one fails - which is why the loading and error states below
     // are about the counts alone and never about the tiers.
-    let counts: Option<Vec<usize>> = match &*report.read_unchecked() {
+    //
+    // One row per tier rather than a row of four numbers: the count says how
+    // big a tier is, and who chose the values in it is the part a reader can
+    // act on. They are opposite answers on this server - every variable
+    // anyone has set is in one tier, and the largest tier holds none of them
+    // - and a bare count cannot show that.
+    let rows: Option<Vec<(usize, String)>> = match &*report.read_unchecked() {
         Some(Ok(r)) if r.configured => Some(
             TIERS
                 .iter()
-                .map(|(name, ..)| r.variables.iter().filter(|v| v.tier == *name).count())
+                .map(|(name, ..)| {
+                    let mine: Vec<&api::Variable> =
+                        r.variables.iter().filter(|v| v.tier == *name).collect();
+                    // The server's own origins, in three groups a reader can
+                    // do something with: someone typed it, the server worked
+                    // it out at startup, or nobody has ever touched it.
+                    // AUTO is its own group deliberately - it is not a
+                    // default and it is not a decision, and folding it into
+                    // either would misreport both.
+                    let chosen = mine
+                        .iter()
+                        .filter(|v| matches!(v.origin.as_str(), "CONFIG" | "COMMAND-LINE" | "SQL"))
+                        .count();
+                    let auto = mine.iter().filter(|v| v.origin == "AUTO").count();
+                    let rest = mine.len() - chosen - auto;
+                    // Said in words when the whole tier is untouched, because
+                    // "3 untouched" beside a count of 3 prints the same number
+                    // twice and reads as two facts.
+                    if rest == mine.len() {
+                        return (mine.len(), "none set by anyone".to_string());
+                    }
+                    let mut parts = Vec::new();
+                    if chosen > 0 {
+                        parts.push(format!("{chosen} set by hand"));
+                    }
+                    if auto > 0 {
+                        parts.push(format!("{auto} sized at startup"));
+                    }
+                    if rest > 0 {
+                        parts.push(format!("{rest} untouched"));
+                    }
+                    (mine.len(), parts.join(" \u{b7} "))
+                })
                 .collect(),
         ),
         _ => None,
     };
-    let total: Option<usize> = counts.as_ref().map(|c| c.iter().sum());
+    let total: Option<usize> = rows.as_ref().map(|r| r.iter().map(|(n, _)| n).sum());
 
     rsx! {
         Panel {
@@ -729,29 +767,54 @@ fn Tiers() -> Element {
             },
             info: "Cost of change rather than subject, which is the one cut of these \
                    variables that says what to do next: a subject taxonomy answers where a \
-                   variable lives, this answers what moving it will take. MariaDB publishes \
-                   neither. It states READ_ONLY per variable and stops there, so live is the \
-                   server's own answer and the other three are a reading of the ones it \
-                   refuses. Two of them have to be written down by hand, because no query \
-                   produces them: information_schema's COMMAND_LINE_ARGUMENT is null for \
-                   character_set_server, which -C sets perfectly well, and the variables \
-                   table in mariadbd --help --verbose is a dump of current values that \
-                   lists read-only names beside settable ones. What defeats a name join \
-                   even in principle is that MariaDB's option names and its variable names \
-                   are separate namespaces - --memlock sets locked_in_memory and \
-                   --external-locking sets skip_external_locking. Both sat in the reports \
-                   list until their options were found, and both are ordinary restart \
-                   variables. Reports is last because it is the tier with no price rather \
-                   than a cheap one; first would read as cheapest."
+                   variable lives, this answers what moving it will take.\n\n\
+                   MariaDB publishes no such cut. It states READ_ONLY per variable and \
+                   stops there, so live is the server's own answer and the other three are \
+                   a reading of the ones it refuses. Two had to be written down by hand \
+                   because no query produces them: information_schema's \
+                   COMMAND_LINE_ARGUMENT is null for character_set_server, which -C sets \
+                   perfectly well, and the variables table in mariadbd --help --verbose is \
+                   a dump of current values that lists read-only names beside settable \
+                   ones. What defeats a name join even in principle is that MariaDB's \
+                   option names and its variable names are separate namespaces - --memlock \
+                   sets locked_in_memory and --external-locking sets \
+                   skip_external_locking. Both sat in reports until their options were \
+                   found, and both are ordinary restart variables.\n\n\
+                   Reports is last because it is the tier with no price rather than a \
+                   cheap one; first would read as cheapest. It is 26 of this server's 693 \
+                   and nothing you can write reaches one: ten have_* flags compiled into \
+                   the binary, five that report the last statement, five replication \
+                   positions, and the rest identity - hostname, license, \
+                   character_set_system.\n\n\
+                   Why a variable nobody can set is worth having: the use case is the \
+                   READ, and being unsettable is what makes the answer worth trusting. A \
+                   value you can set is a claim the next statement can falsify; one you \
+                   cannot is a fact a client may branch on. have_crypt=NO tells a driver \
+                   not to call ENCRYPT() - setting it to YES would not compile the \
+                   function in, only make the server lie. character_set_system is how a \
+                   client knows to encode an identifier. warning_count is read after a \
+                   statement: SELECT @@warning_count is the API, and writing it is \
+                   incoherent.\n\n\
+                   This app already leans on that. Of GLPI's three install-time server \
+                   checks, on the panel beside this one, two read variables that cannot be \
+                   changed on a running server - version, and innodb_page_size, which is \
+                   one of the three in install. GLPI is not configuring anything there; it \
+                   is asking whether the server is admissible, and a settable answer would \
+                   be useless for that.\n\n\
+                   Read-only is not the same as constant - warning_count moves with every \
+                   statement - and READ_ONLY on its own would have made this tier 196 \
+                   rather than 26."
                 .to_string(),
 
-            // In the header, not the body: these four are the whole of what
-            // this panel is, and a destination reads as a destination when it
-            // sits where a panel's controls sit. Each keeps the one line that
-            // used to follow it, and the paragraph that used to follow that is
-            // behind its own info button - the tier is a figure a reader could
-            // misread, so it gets a modal rather than a tooltip.
-            actions: rsx! {
+            // In the title row directly after the info button, not in the
+            // actions slot: these four are the whole of what this panel is,
+            // so they belong to the heading rather than parked at the far end
+            // of it, where justify-between put them on a line of their own.
+            // Each keeps the one line that used to follow it, and the
+            // paragraph that used to follow that is behind its own info
+            // button - the tier is a figure a reader could misread, so it
+            // gets a modal rather than a tooltip.
+            beside_title: rsx! {
                 div { class: "flex flex-wrap items-center gap-x-5 gap-y-2",
                     for (name , cost , why) in TIERS {
                         div { key: "{name}", class: "flex items-center gap-1.5",
@@ -770,13 +833,34 @@ fn Tiers() -> Element {
                 }
             },
 
-            match counts.as_ref() {
-                Some(c) => rsx! {
-                    div { class: "flex flex-wrap gap-x-6 gap-y-1",
+            match rows.as_ref() {
+                Some(rs) => rsx! {
+                    // Grid rather than four flex rows, so the counts align on
+                    // their own column: 497 beside 3 only reads as a scale
+                    // when the digits line up. `contents` lets each tier's
+                    // three cells belong to the one grid.
+                    // The same stats strip the Counts panel and the Computers
+                    // page use, so four figures read here the way four
+                    // figures read everywhere else in this app. Four across
+                    // rather than four stacked rows: the tiers are peers
+                    // being compared, and a row of three short cells left
+                    // most of the panel's width empty.
+                    //
+                    // Not StatTile, which is the component for this shape,
+                    // and the reason is the info buttons: StatTile carries
+                    // one beside its title, and these four already have
+                    // theirs on the links in the header. Two buttons per
+                    // tier opening the same text is a choice a reader should
+                    // not have to make.
+                    div {
+                        class: "stats stats-vertical w-full border border-base-300 bg-base-100 sm:stats-horizontal",
                         for (i , (name , ..)) in TIERS.iter().enumerate() {
-                            div { key: "{name}", class: "flex items-baseline gap-1.5",
-                                span { class: "font-mono text-sm", "{c[i]}" }
-                                span { class: "text-sm text-base-content/60", "{name}" }
+                            div { key: "{name}", class: "stat",
+                                // A label, not a second link, for the same
+                                // reason there is no second info button.
+                                div { class: "stat-title font-mono", "{name}" }
+                                div { class: "stat-value text-2xl", "{rs[i].0}" }
+                                div { class: "stat-desc", "{rs[i].1}" }
                             }
                         }
                     }
@@ -806,6 +890,60 @@ fn Tiers() -> Element {
     }
 }
 
+/// Subsystems whose variables are inert when their own switch is off.
+///
+/// (switch variable, what to call it, name prefixes). The switch is READ FROM
+/// THE SAME PAYLOAD as the rows, never assumed: a server running Galera must
+/// not have its 43 wsrep rows folded away because a list in here said they
+/// were dormant. On this server wsrep_on, performance_schema, log_bin and
+/// query_cache_type are all OFF, which is 104 of live's 497 and 60 of
+/// restart's 167.
+///
+/// Aria and MyISAM are deliberately absent though they are just as unused
+/// here. That rests on all 447 GLPI tables being InnoDB, which is a fact
+/// about the schema and not about any variable on this page - nothing in
+/// this payload can check it, so folding on it would be an assertion wearing
+/// a measurement's clothes.
+const DORMANT: [(&str, &str, &[&str]); 4] = [
+    ("wsrep_on", "Galera", &["wsrep"]),
+    (
+        "performance_schema",
+        "performance_schema",
+        &["performance_schema"],
+    ),
+    (
+        "log_bin",
+        "replication",
+        &[
+            "slave_",
+            "master_",
+            "binlog_",
+            "relay_",
+            "rpl_",
+            "gtid_",
+            "replicate_",
+            "sync_binlog",
+        ],
+    ),
+    ("query_cache_type", "the query cache", &["query_cache"]),
+];
+
+/// How the rows inside each group may be ordered.
+///
+/// (key, label, what it does). Editable is here because it was asked for and
+/// because the column is real, but it cannot reorder anything on these four
+/// pages and the control says so rather than appearing to work: a tier IS
+/// the editability cut. `variable_tier` returns live if and only if the
+/// server reports READ_ONLY = NO, so live is 497 rows all editable and the
+/// other three are 196 rows none of which are. The page annotates the key
+/// with which of the two it is looking at, so a dead control is at least an
+/// informative one.
+const SORTS: [(&str, &str); 3] = [
+    ("set", "set by someone"),
+    ("name", "name"),
+    ("editable", "editable"),
+];
+
 /// One page per tier: what it costs, then every variable in it.
 ///
 /// The rows are filtered on the tier the backend assigned, not re-derived
@@ -814,6 +952,11 @@ fn Tiers() -> Element {
 #[component]
 fn Vars(sub: String) -> Element {
     let report = use_resource(|| async move { api::fetch_variables().await });
+    let mut show_dormant = use_signal(|| false);
+    // "set" is the default because it is the only key that puts the few rows
+    // worth finding on top. See SORTS for why "editable" is offered at all
+    // when it cannot reorder anything on these four pages.
+    let mut sort_by = use_signal(|| "set");
 
     // live first, so a bare ?tab=vars lands on the cheapest tier rather than
     // on whichever name happens to sort first.
@@ -840,26 +983,191 @@ fn Vars(sub: String) -> Element {
             }
         },
         Some(Ok(r)) => {
-            let rows: Vec<api::Variable> = r
-                .variables
+            let is_off = |switch: &str| {
+                r.variables
+                    .iter()
+                    .find(|v| v.name == switch)
+                    .is_some_and(|v| matches!(v.value.as_str(), "OFF" | "0"))
+            };
+            let dormant_label = |var: &str| -> Option<&'static str> {
+                DORMANT
+                    .iter()
+                    .find(|(switch, _, prefixes)| {
+                        is_off(switch) && prefixes.iter().any(|p| var.starts_with(p))
+                    })
+                    .map(|(_, label, _)| *label)
+            };
+
+            let mut shown: Vec<api::Variable> = Vec::new();
+            let mut dormant: Vec<api::Variable> = Vec::new();
+            let mut folded: Vec<&'static str> = Vec::new();
+            for v in r.variables.iter().filter(|v| v.tier == name) {
+                match dormant_label(&v.name) {
+                    Some(label) => {
+                        folded.push(label);
+                        dormant.push(v.clone());
+                    }
+                    None => shown.push(v.clone()),
+                }
+            }
+
+            let chosen = shown.iter().filter(|v| v.origin != "COMPILE-TIME").count();
+
+            // Grouped by what each variable is FOR - the backend's opinion,
+            // carried on the row so the two never drift. Largest group first
+            // because the reader is scanning for a subject rather than
+            // reading down, and Others pinned last however big it gets: it
+            // is the absence of an answer, not an answer.
+            //
+            // Sorted WITHIN each group, so whichever key is chosen the rows
+            // stay under the subject they belong to - the grouping answers
+            // "where does this live", the key answers "which of these first",
+            // and they are different questions. Stable in every case, so the
+            // backend's order survives underneath.
+            match sort_by() {
+                "name" => shown.sort_by(|a, b| a.name.cmp(&b.name)),
+                "editable" => shown.sort_by_key(|v| v.read_only),
+                // "set", the default.
+                _ => shown.sort_by_key(|v| v.origin == "COMPILE-TIME"),
+            }
+            let mut groups: Vec<(String, Vec<api::Variable>)> = Vec::new();
+            for v in shown {
+                let key = if v.group.is_empty() {
+                    "Others".to_string()
+                } else {
+                    v.group.clone()
+                };
+                match groups.iter_mut().find(|(g, _)| *g == key) {
+                    Some((_, rows)) => rows.push(v),
+                    None => groups.push((key, vec![v])),
+                }
+            }
+            groups.sort_by(|a, b| {
+                (a.0 == "Others")
+                    .cmp(&(b.0 == "Others"))
+                    .then(b.1.len().cmp(&a.1.len()))
+            });
+
+            // The headline, so the table is evidence rather than the message.
+            // The same move the settings tile makes: a page of rows that all
+            // say COMPILE-TIME has told you one thing, once.
+            let shown_total: usize = groups.iter().map(|(_, rows)| rows.len()).sum();
+            let headline = if chosen == 0 {
+                format!(
+                    "Nothing in this tier was set by anyone: all {shown_total} are this \
+                     build's compiled-in defaults."
+                )
+            } else {
+                format!(
+                    "{chosen} of {shown_total} were set by something other than the compiled \
+                     default."
+                )
+            };
+
+            let fold_summary = {
+                let mut counts: Vec<(&str, usize)> = Vec::new();
+                for label in &folded {
+                    match counts.iter_mut().find(|(l, _)| l == label) {
+                        Some((_, n)) => *n += 1,
+                        None => counts.push((label, 1)),
+                    }
+                }
+                counts
+                    .iter()
+                    .map(|(l, n)| format!("{n} from {l}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+
+            // All editable or none, never a mix - see SORTS. Said out loud
+            // beside the key, because a control that cannot change anything
+            // is worse than absent unless it explains itself.
+            let editable_note = if groups
                 .iter()
-                .filter(|v| v.tier == name)
-                .cloned()
-                .collect();
+                .flat_map(|(_, rows)| rows.iter())
+                .chain(dormant.iter())
+                .all(|v| !v.read_only)
+            {
+                "all editable"
+            } else {
+                "none editable"
+            };
+
             rsx! {
+                p { class: "mt-3 text-sm", "{headline}" }
+
+                div { class: "mt-2 flex flex-wrap items-baseline gap-x-2 text-sm text-base-content/70",
+                    span { "Sort rows within each group by" }
+                    for (key , label) in SORTS {
+                        button {
+                            key: "{key}",
+                            class: if sort_by() == key {
+                                "btn btn-ghost btn-xs font-semibold text-primary"
+                            } else {
+                                "btn btn-ghost btn-xs"
+                            },
+                            onclick: move |_| sort_by.set(key),
+                            "{label}"
+                        }
+                    }
+                    if sort_by() == "editable" {
+                        span { class: "text-base-content/50",
+                            "- every row in this tier is the same here: {editable_note}."
+                        }
+                    }
+                }
+
+                if !dormant.is_empty() {
+                    div { class: "mt-2 flex flex-wrap items-baseline gap-2 text-sm text-base-content/70",
+                        span { "{dormant.len()} are from subsystems this server has switched off - {fold_summary}." }
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            onclick: move |_| {
+                                let was = show_dormant();
+                                show_dormant.set(!was);
+                            },
+                            if show_dormant() { "Hide them" } else { "Show them" }
+                        }
+                    }
+                }
+
                 div { class: "mt-3 overflow-x-auto",
                     table { class: "table table-sm",
                         tbody {
-                            for v in rows.iter() {
-                                tr { key: "{v.name}",
-                                    td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
-                                    // Empty rather than absent, and left that
-                                    // way: a SESSION ONLY variable has no
-                                    // global value, and an em dash here would
-                                    // read as the server declining to say.
-                                    td { class: "font-mono text-xs break-all", "{v.value}" }
-                                    td { class: "text-xs whitespace-nowrap text-base-content/60",
-                                        "{v.origin}"
+                            for (group , rows) in groups.iter() {
+                                tr { key: "group-{group}",
+                                    td {
+                                        class: "bg-base-200 text-xs font-semibold",
+                                        colspan: "3",
+                                        "{group}"
+                                        span { class: "ml-2 font-normal text-base-content/60",
+                                            "{rows.len()}"
+                                        }
+                                    }
+                                }
+                                for v in rows.iter() {
+                                    tr { key: "{v.name}",
+                                        td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+                                        // Empty rather than absent, and left
+                                        // that way: a SESSION ONLY variable
+                                        // has no global value, and an em dash
+                                        // would read as the server declining
+                                        // to say.
+                                        td { class: "font-mono text-xs break-all", "{v.value}" }
+                                        td { class: "text-xs whitespace-nowrap text-base-content/60",
+                                            "{v.origin}"
+                                        }
+                                    }
+                                }
+                            }
+                            if show_dormant() {
+                                for v in dormant.iter() {
+                                    tr { key: "{v.name}", class: "opacity-60",
+                                        td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+                                        td { class: "font-mono text-xs break-all", "{v.value}" }
+                                        td { class: "text-xs whitespace-nowrap text-base-content/60",
+                                            "{v.origin}"
+                                        }
                                     }
                                 }
                             }
@@ -882,6 +1190,23 @@ fn Vars(sub: String) -> Element {
                    server and the next restart disagree. Nothing here is compared against \
                    anything - which of it matters depends on the question being asked."
                 .to_string(),
+
+            // The only way back, and that is why it is here rather than
+            // implied. These four tiers have no sidebar entry on purpose -
+            // Maria - general already carries the panel they belong to - so
+            // nothing in the menu is lit while this page is open, and a
+            // reader who arrived by clicking a tier would otherwise have to
+            // guess which tab to return to.
+            actions: rsx! {
+                Link {
+                    class: "link link-primary text-sm",
+                    to: Route::Db {
+                        tab: "maria".to_string(),
+                        sub: "general".to_string(),
+                    },
+                    "\u{2190} all four tiers"
+                }
+            },
 
             p { class: "text-sm text-base-content/70", "{why}" }
             {state}

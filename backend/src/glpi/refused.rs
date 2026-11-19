@@ -497,6 +497,9 @@ pub struct Variable {
     pub origin: String,
     pub read_only: bool,
     pub tier: &'static str,
+    /// What the variable is FOR, as against `tier`, which is what changing
+    /// it costs. An opinion, and `vargroup` says so at length.
+    pub group: &'static str,
 }
 
 /// One InnoDB setting: what it is called, what it is set to, and what the
@@ -616,6 +619,7 @@ impl Db {
             .into_iter()
             .map(|(name, value, origin, read_only)| Variable {
                 tier: variable_tier(&name, read_only),
+                group: crate::glpi::vargroup::variable_group(&name),
                 name,
                 value,
                 origin,

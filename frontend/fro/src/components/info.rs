@@ -291,7 +291,13 @@ pub fn InfoButton(
                     // stays reachable. Without this the reader gets two
                     // horizontal scrollbars stacked, and the outer one moves
                     // the whole panel.
-                    class: "max-h-[90vh] w-full max-w-lg overflow-x-hidden overflow-y-auto rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl sm:max-w-2xl lg:max-w-3xl",
+                    // Widens once more at xl. The rule here is that a modal
+                    // scrolling means it is too NARROW, not that its text is
+                    // too long: the longest body on this page needed 690px of
+                    // height at 768px wide and fitted at 1024. Cutting the
+                    // text instead would have been answering a layout problem
+                    // by deleting content.
+                    class: "max-h-[90vh] w-full max-w-lg overflow-x-hidden overflow-y-auto rounded-box border border-base-300 bg-base-100 p-5 shadow-2xl sm:max-w-2xl lg:max-w-3xl xl:max-w-5xl",
                     onclick: move |e: Event<MouseData>| e.stop_propagation(),
 
                     div { class: "mb-3 flex items-start justify-between gap-3",
@@ -303,7 +309,34 @@ pub fn InfoButton(
                         }
                     }
 
-                    p { class: "text-sm leading-relaxed text-base-content/80", "{body}" }
+                    // Paragraphs, not one block, split on a blank line. The
+                    // longest bodies here run past 1800 characters and a
+                    // single <p> of that is a wall - but the house rule
+                    // forbids a tab strip for hiding text the reader could
+                    // already see, so the structure has to live in the body.
+                    // Bodies without a blank line render exactly as before,
+                    // which is all but one of them.
+                    //
+                    // mt-3 rather than a space-y-* wrapper deliberately:
+                    // space-y-3 is not in the generated stylesheet, and a
+                    // class that only appears after the next css-build fails
+                    // silently as a styling mistake rather than a stale one.
+                    for (i , para) in body
+                        .split("\n\n")
+                        .map(str::trim)
+                        .filter(|p| !p.is_empty())
+                        .enumerate()
+                    {
+                        p {
+                            key: "{i}",
+                            class: if i == 0 {
+                                "text-sm leading-relaxed text-base-content/80"
+                            } else {
+                                "mt-3 text-sm leading-relaxed text-base-content/80"
+                            },
+                            "{para}"
+                        }
+                    }
 
                     if !sections.is_empty() {
                         // Scrollable rather than wrapping: a panel with several

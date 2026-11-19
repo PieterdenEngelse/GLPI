@@ -45,6 +45,7 @@ pub mod schema_check;
 pub mod session;
 pub mod sessions;
 pub mod system_status;
+pub mod vargroup;
 
 /// An OAuth2 access token with the instant it stops being valid.
 struct Token {
