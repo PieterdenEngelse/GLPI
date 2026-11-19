@@ -12,7 +12,7 @@ use axum::{
         HeaderValue, StatusCode,
     },
     response::IntoResponse,
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -100,6 +100,20 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/network", get(network))
         .route("/api/logs", get(log_list))
         .route("/api/logs/{file}", get(log_tail))
+        // Last, and the reason is a bug this cost an hour of: without it an
+        // unknown /api path falls through to the SPA fallback below and comes
+        // back as index.html with 200, because a path the frontend owns
+        // client-side has to. The frontend then fails to parse a web page as
+        // JSON and reports "error decoding response body" - which names the
+        // symptom and hides the cause, since the backend was reached and
+        // answered perfectly. Any method, so a mistyped POST says the same.
+        //
+        // matchit prefers literal and named segments over a wildcard, so
+        // every route above still wins; this only catches what nothing
+        // matched. /api itself is spelled separately because {*rest} needs at
+        // least one segment after the slash.
+        .route("/api", any(api_not_found))
+        .route("/api/{*rest}", any(api_not_found))
         .with_state(state.clone());
 
     match &state.static_dir {
@@ -123,6 +137,21 @@ pub fn router(state: Arc<AppState>) -> Router {
         // serve - and better than failing to start.
         None => api,
     }
+}
+
+/// Every /api path nothing else claimed.
+///
+/// 404 with a JSON body, so a caller that expected JSON gets JSON and a
+/// caller reading the status sees the truth. The SPA fallback cannot do this
+/// job: it has to answer index.html for unknown paths, because the frontend
+/// owns its own routes client-side.
+async fn api_not_found(uri: axum::http::Uri) -> impl IntoResponse {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": format!("no such endpoint: {}", uri.path()),
+        })),
+    )
 }
 
 #[derive(Serialize)]

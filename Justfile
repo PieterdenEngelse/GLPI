@@ -231,16 +231,27 @@ deploy: build-release build-frontend-release
     cp scripts/db-restart.sh ~/.local/lib/glpi-inv/.db-restart.sh.new
     chmod 0755 ~/.local/lib/glpi-inv/.db-restart.sh.new
     mv -f ~/.local/lib/glpi-inv/.db-restart.sh.new ~/.local/lib/glpi-inv/db-restart.sh
-    # Same shape for the bundle, for a different reason: ServeDir opens files
-    # per request, so deleting the directory first leaves a window in which
-    # every page 404s while the service still reports healthy.
+    # Staged beside the live directory but NOT swapped in yet - the swap is
+    # after the restart, below.
     rm -rf ~/.local/lib/glpi-inv/web.new
     cp -r target/dx/glpi-inv-frontend/release/web/public ~/.local/lib/glpi-inv/web.new
+    # Before the bundle swap, not after, and the order is the whole point.
+    # The binary is already renamed into place above, so this is what makes
+    # the new code live. Swapping the bundle first leaves a window where the
+    # NEW page is served by the OLD process: the page calls a route that
+    # process does not have, the SPA fallback answers index.html with 200,
+    # and the frontend reports "error decoding response body" - reached the
+    # backend, got a web page. Observed on 2026-11-18. This way round the
+    # window holds the old page against the new process, which is harmless:
+    # an old page simply does not call a route it has never heard of.
+    systemctl --user restart glpi-inv.service
+    # Rotate rather than delete-then-copy: ServeDir resolves the path per
+    # request, so removing the directory first leaves a window in which every
+    # page 404s while the service still reports healthy.
     rm -rf ~/.local/lib/glpi-inv/web.old
     if [ -d ~/.local/lib/glpi-inv/web ]; then mv ~/.local/lib/glpi-inv/web ~/.local/lib/glpi-inv/web.old; fi
     mv ~/.local/lib/glpi-inv/web.new ~/.local/lib/glpi-inv/web
     rm -rf ~/.local/lib/glpi-inv/web.old
-    systemctl --user restart glpi-inv.service
 
 clean:
     cargo clean
