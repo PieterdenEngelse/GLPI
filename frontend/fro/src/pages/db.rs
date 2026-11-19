@@ -16,7 +16,7 @@
 use crate::api::{self, RightsReport};
 use crate::app::Route;
 use crate::components::nav;
-use crate::components::{InfoButton, InfoLink, Panel, StatTile};
+use crate::components::{FetchError, InfoButton, InfoLink, Panel, StatTile};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -402,12 +402,7 @@ fn MariaFacts(
             }
         },
         Some(Err(e)) => rsx! {
-            div { class: "alert alert-error",
-                div {
-                    div { class: "font-semibold", "Could not reach the backend." }
-                    pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                }
-            }
+            FetchError { error: e.clone() }
         },
         // Not an error, and deliberately not an empty table: the app runs
         // without a database URL and only this page and Refused go dark.
@@ -791,12 +786,7 @@ fn Tiers() -> Element {
                 // as a tier with nothing in it.
                 None => match &*report.read_unchecked() {
                     Some(Err(e)) => rsx! {
-                        div { class: "alert alert-error",
-                            div {
-                                div { class: "font-semibold", "Could not reach the backend." }
-                                pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                            }
-                        }
+                        FetchError { error: e.clone() }
                     },
                     Some(Ok(_)) => rsx! {
                         div { class: "alert alert-info",
@@ -841,12 +831,7 @@ fn Vars(sub: String) -> Element {
             }
         },
         Some(Err(e)) => rsx! {
-            div { class: "alert alert-error",
-                div {
-                    div { class: "font-semibold", "Could not reach the backend." }
-                    pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                }
-            }
+            FetchError { error: e.clone() }
         },
         Some(Ok(r)) if !r.configured => rsx! {
             div { class: "alert alert-info",
@@ -937,12 +922,7 @@ fn Innodb() -> Element {
                 }
             },
             Some(Err(e)) => rsx! {
-                div { class: "alert alert-error",
-                    div {
-                        div { class: "font-semibold", "Could not reach the backend." }
-                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                    }
-                }
+                FetchError { error: e.clone() }
             },
             Some(Ok(r)) if !r.configured => rsx! {
                 div { class: "alert alert-info",

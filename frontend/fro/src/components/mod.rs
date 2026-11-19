@@ -1,3 +1,4 @@
+pub mod fetch_error;
 pub mod global_error_bar;
 pub mod header;
 pub mod health_dot;
@@ -12,6 +13,7 @@ pub mod stat_row;
 pub mod stat_tile;
 pub mod theme_toggle;
 
+pub use fetch_error::FetchError;
 pub use global_error_bar::GlobalErrorBar;
 pub use header::Header;
 pub use health_dot::HealthDot;

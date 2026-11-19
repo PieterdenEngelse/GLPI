@@ -1,6 +1,6 @@
 //! The one page that answers the question: which agents have gone quiet?
 use crate::api::{self, AgentStatus};
-use crate::components::{InfoLink, Panel, RefreshControl, ScopeNote, StatRow};
+use crate::components::{FetchError, InfoLink, Panel, RefreshControl, ScopeNote, StatRow};
 use dioxus::prelude::*;
 
 /// How often the table re-reads the backend.
@@ -34,12 +34,7 @@ pub fn Agents() -> Element {
             // An unreachable backend must not look like an empty fleet. The
             // two mean opposite things and the page says which it is.
             Some(Err(e)) => rsx! {
-                div { class: "alert alert-error",
-                    div {
-                        div { class: "font-semibold", "Could not reach the backend." }
-                        pre { class: "mt-1 text-xs whitespace-pre-wrap break-all", "{e}" }
-                    }
-                }
+                FetchError { error: e.clone() }
             },
 
             Some(Ok(list)) => rsx! {

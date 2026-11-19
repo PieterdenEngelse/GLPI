@@ -4,6 +4,7 @@
 //! the response shapes, so a backend change lands in one file rather than in
 //! whichever component happened to be fetching.
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Mirrors the backend's AgentStatus.
 ///
@@ -67,13 +68,158 @@ pub fn api_url(path: &str) -> String {
 /// The error is a String because the only thing the UI does with it is show
 /// it. It carries GLPI's own message through the backend's 502, which is the
 /// difference between "GLPI refused the token" and "no agents exist".
-pub async fn fetch_agents() -> Result<Vec<AgentStatus>, String> {
-    reqwest::get(api_url("/api/agents"))
+/// Every GET goes through here, so the three outcomes are decided once.
+///
+/// STATUS BEFORE BODY, and that order is the whole point. Calling `.json()`
+/// straight on the response - which all 21 of these did until 2026-11-18 -
+/// makes every non-2xx a decode failure, because an error envelope is never
+/// the struct the caller wanted. That labelled two unrelated things as
+/// version skew: a 404 for a path this build calls and the backend does not
+/// have, which is roughly right, and a 502 because GLPI is down, which sends
+/// the reader off to rebuild the wrong thing entirely.
+async fn get_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, ApiError> {
+    let r = reqwest::get(api_url(path))
         .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<AgentStatus>>()
-        .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| ApiError::Unreachable(e.to_string()))?;
+
+    let status = r.status();
+    if !status.is_success() {
+        let body = r.text().await.unwrap_or_default();
+        return Err(ApiError::upstream(status, body));
+    }
+
+    let v = r.json::<T>().await.map_err(ApiError::unreadable)?;
+    SKEW.store(false, Ordering::Relaxed);
+    Ok(v)
+}
+
+/// Whether the LAST decode outcome was a failure. Set on one, cleared by any
+/// success.
+///
+/// It latched until 2026-11-18 and the argument for that was wrong in one
+/// direction: when the stale half is the deployed backend, a redeploy fixes
+/// the mismatch under a page that is still open, and a latch goes on
+/// accusing it for ever. Clearing on success makes the banner say what is
+/// true now rather than what was ever true, and a skew that is still real
+/// re-arms within a poll because the failing endpoint keeps failing.
+///
+/// Checking status before decoding (see `get_json`) is what makes this safe:
+/// without it a 502 from GLPI being down also landed here, and flapping a
+/// *wrong* label is worse than latching it.
+static SKEW: AtomicBool = AtomicBool::new(false);
+
+/// True once any fetch anywhere has failed to decode.
+///
+/// A plain atomic rather than a `GlobalSignal`, and that is not a style
+/// choice: a signal write from inside a fetch future runs outside the Dioxus
+/// runtime, which kills the task. The first attempt did exactly that and left
+/// every page stuck on "Loading..." for ever - a worse failure than the one
+/// being reported, and invisible to the type system.
+///
+/// The cost is that this is not reactive: a dot already on screen picks it up
+/// on its next render rather than the instant it flips. That is enough. The
+/// page whose own fetch failed re-renders immediately and says so itself, and
+/// the status light re-renders on its 30-second poll and whenever its panel
+/// is opened.
+pub fn skew_seen() -> bool {
+    SKEW.load(Ordering::Relaxed)
+}
+
+/// Why a fetch failed, because the two reasons are opposite news.
+///
+/// `Unreachable` is the backend: the request never got out, or nothing
+/// answered it. `Unreadable` is THIS APP: the backend answered, the status
+/// was accepted, and the body did not fit the struct waiting for it. That is
+/// version skew between the bundle in the browser and the binary serving it -
+/// every upstream is healthy.
+///
+/// WHICH OF THE TWO IS OLDER IS NOT KNOWABLE FROM HERE, and pretending
+/// otherwise cost a wrong instruction on the day this was written: the text
+/// told the reader to reload while the stale half was the deployed backend,
+/// where reloading can never help. A backend older than the bundle answers a
+/// path it does not have with the SPA fallback - index.html, 200 - and
+/// parsing a web page as JSON lands here. So the wording names the
+/// disagreement and gives both remedies rather than guessing a direction.
+///
+/// They were one `String` until 2026-11-18, and the cost was not cosmetic.
+/// Every page rendered either as "Could not reach the backend", which is
+/// false when the backend just answered with 200; and the status light
+/// counted a decode failure as the DATABASE being degraded, so a stale
+/// bundle presented as a fault in MariaDB and sent the reader to the wrong
+/// system entirely. A skew is this app's fault and has to say so.
+#[derive(Clone, PartialEq, Debug)]
+pub enum ApiError {
+    /// Nothing answered.
+    Unreachable(String),
+    /// It answered with a status this app did not ask for, and said why.
+    /// Its own sentence, not a guess made from the number.
+    Upstream(u16, String),
+    /// It answered 2xx; this bundle could not read the reply.
+    Unreadable(String),
+}
+
+impl ApiError {
+    /// Build an `Unreadable` and record it app-wide.
+    ///
+    /// The recording is the point. The status light polls four endpoints of
+    /// its own, so a skew met by any OTHER fetch - an agent list, a perf
+    /// reading, the variables table - used to leave the dot green while the
+    /// page under it said the bundle and the backend disagree. Same
+    /// contradiction the two variants exist to end, one level up.
+    fn unreadable<E: std::fmt::Display>(e: E) -> Self {
+        SKEW.store(true, Ordering::Relaxed);
+        ApiError::Unreadable(e.to_string())
+    }
+
+    /// Build an `Upstream`, preferring the backend's own words over the
+    /// status number - "no such endpoint: /api/x" beats "404".
+    ///
+    /// Three fallbacks deep because a refusal can arrive with nothing in it:
+    /// this server answers a GET on a POST-only route with 405 and a body of
+    /// zero bytes, which would otherwise render as "405: " and say less than
+    /// the number alone.
+    fn upstream(status: reqwest::StatusCode, body: String) -> Self {
+        let msg = serde_json::from_str::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+            .filter(|m| !m.trim().is_empty())
+            .or_else(|| {
+                let t = body.trim();
+                (!t.is_empty()).then(|| t.chars().take(200).collect())
+            })
+            .unwrap_or_else(|| {
+                status
+                    .canonical_reason()
+                    .unwrap_or("no message")
+                    .to_string()
+            });
+        ApiError::Upstream(status.as_u16(), msg)
+    }
+
+    /// True when the fault is this app's, not an upstream's.
+    pub fn is_skew(&self) -> bool {
+        matches!(self, ApiError::Unreadable(_))
+    }
+
+    /// True when the backend answered and refused.
+    pub fn is_upstream(&self) -> bool {
+        matches!(self, ApiError::Upstream(..))
+    }
+}
+
+impl std::fmt::Display for ApiError {
+    /// The bare message. Callers own the framing, because what to say about
+    /// a skew depends on whether there is room to say "reload".
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ApiError::Unreachable(m) | ApiError::Unreadable(m) => write!(f, "{m}"),
+            ApiError::Upstream(status, m) => write!(f, "{status}: {m}"),
+        }
+    }
+}
+
+pub async fn fetch_agents() -> Result<Vec<AgentStatus>, ApiError> {
+    get_json::<Vec<AgentStatus>>("/api/agents").await
 }
 
 /// One entity this account may read. Mirrors the backend's Entity.
@@ -101,13 +247,8 @@ impl Entity {
 
 /// The entities this account can read. Everything else the app shows is
 /// filtered to these, invisibly - see components/scope_note.rs.
-pub async fn fetch_entities() -> Result<Vec<Entity>, String> {
-    reqwest::get(api_url("/api/entities"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<Entity>>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_entities() -> Result<Vec<Entity>, ApiError> {
+    get_json::<Vec<Entity>>("/api/entities").await
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -123,13 +264,8 @@ pub struct Health {
 /// The status dot and the error bar only care whether this succeeded; the
 /// body matters just enough to build links, and every field is read through
 /// serde so a shape change degrades rather than being treated as "down".
-pub async fn fetch_health() -> Result<Health, String> {
-    reqwest::get(api_url("/api/health"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Health>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_health() -> Result<Health, ApiError> {
+    get_json::<Health>("/api/health").await
 }
 
 /// GLPI returns related records as objects, not strings.
@@ -181,13 +317,8 @@ pub struct ComputerReport {
 /// come through: GLPI applies no default `is_deleted` restriction, and a
 /// deleted machine has no agent reporting for it, so it arrived flagged as
 /// orphaned - the one state this page exists to raise.
-pub async fn fetch_computers() -> Result<ComputerReport, String> {
-    reqwest::get(api_url("/api/computers"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<ComputerReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_computers() -> Result<ComputerReport, ApiError> {
+    get_json::<ComputerReport>("/api/computers").await
 }
 
 /// Mirrors the backend's SessionInfo.
@@ -202,13 +333,8 @@ pub struct SessionInfo {
 }
 
 /// The GLPI identity this app is using.
-pub async fn fetch_session() -> Result<SessionInfo, String> {
-    reqwest::get(api_url("/api/session"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<SessionInfo>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_session() -> Result<SessionInfo, ApiError> {
+    get_json::<SessionInfo>("/api/session").await
 }
 
 /// One permission bit of a right. Mirrors the backend's RightBit.
@@ -350,13 +476,8 @@ pub struct RightsReport {
 }
 
 /// Every right of every profile in GLPI.
-pub async fn fetch_rights() -> Result<RightsReport, String> {
-    reqwest::get(api_url("/api/rights"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<RightsReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_rights() -> Result<RightsReport, ApiError> {
+    get_json::<RightsReport>("/api/rights").await
 }
 
 /// One authorization: a profile this account may use, on one entity.
@@ -373,13 +494,8 @@ pub struct Authorization {
 }
 
 /// Every authorization the account holds, active one first.
-pub async fn fetch_authorizations() -> Result<Vec<Authorization>, String> {
-    reqwest::get(api_url("/api/authorizations"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<Authorization>>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_authorizations() -> Result<Vec<Authorization>, ApiError> {
+    get_json::<Vec<Authorization>>("/api/authorizations").await
 }
 
 /// One observation inside a posture tile.
@@ -405,13 +521,8 @@ pub struct PostureTile {
 }
 
 /// The four posture tiles.
-pub async fn fetch_posture() -> Result<Vec<PostureTile>, String> {
-    reqwest::get(api_url("/api/posture"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<PostureTile>>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_posture() -> Result<Vec<PostureTile>, ApiError> {
+    get_json::<Vec<PostureTile>>("/api/posture").await
 }
 
 /// One field the API's schema promised that the response did not carry, or
@@ -482,13 +593,8 @@ pub struct FieldGapReport {
 /// Slow by nature - the backend fetches GLPI's whole OpenAPI document, about
 /// 4.6 MB on 12.0.1 - so this is fetched on demand from the Api tab rather
 /// than with the rest of the page.
-pub async fn fetch_field_gaps() -> Result<FieldGapReport, String> {
-    reqwest::get(api_url("/api/field-gaps"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<FieldGapReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_field_gaps() -> Result<FieldGapReport, ApiError> {
+    get_json::<FieldGapReport>("/api/field-gaps").await
 }
 
 /// One service in GLPI's own status check. Mirrors the backend's Service.
@@ -525,13 +631,8 @@ pub struct SystemStatus {
 }
 
 /// GLPI's own health, including automatic actions that stopped running.
-pub async fn fetch_system_status() -> Result<SystemStatus, String> {
-    reqwest::get(api_url("/api/system-status"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<SystemStatus>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_system_status() -> Result<SystemStatus, ApiError> {
+    get_json::<SystemStatus>("/api/system-status").await
 }
 
 /// One login session. Mirrors the backend's sessions::LoginSession.
@@ -568,13 +669,8 @@ pub struct LoginSessionReport {
 }
 
 /// Who is inside GLPI, with the scope the answer was given under.
-pub async fn fetch_login_sessions() -> Result<LoginSessionReport, String> {
-    reqwest::get(api_url("/api/login-sessions"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<LoginSessionReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_login_sessions() -> Result<LoginSessionReport, ApiError> {
+    get_json::<LoginSessionReport>("/api/login-sessions").await
 }
 
 // No Infocom client here, deliberately. The backend serves
@@ -614,13 +710,8 @@ pub struct RefusedReport {
 }
 
 /// Submissions GLPI refused - the one thing neither API exposes.
-pub async fn fetch_refused() -> Result<RefusedReport, String> {
-    reqwest::get(api_url("/api/refused"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<RefusedReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_refused() -> Result<RefusedReport, ApiError> {
+    get_json::<RefusedReport>("/api/refused").await
 }
 
 // --------------------------------------------------------------- inventory
@@ -689,13 +780,8 @@ pub struct HardwareRow {
 }
 
 /// What the agents found inside each machine, fleet-wide.
-pub async fn fetch_hardware() -> Result<Vec<HardwareRow>, String> {
-    reqwest::get(api_url("/api/hardware"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<HardwareRow>>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_hardware() -> Result<Vec<HardwareRow>, ApiError> {
+    get_json::<Vec<HardwareRow>>("/api/hardware").await
 }
 
 /// One software title and how widely it is installed.
@@ -735,13 +821,8 @@ pub struct SoftwareReport {
 }
 
 /// Every software title installed across the fleet, most widely first.
-pub async fn fetch_software() -> Result<SoftwareReport, String> {
-    reqwest::get(api_url("/api/software"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<SoftwareReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_software() -> Result<SoftwareReport, ApiError> {
+    get_json::<SoftwareReport>("/api/software").await
 }
 
 /// One network port on a machine.
@@ -782,13 +863,8 @@ pub struct NetworkRow {
 }
 
 /// Every machine's network ports and addresses.
-pub async fn fetch_network() -> Result<Vec<NetworkRow>, String> {
-    reqwest::get(api_url("/api/network"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<Vec<NetworkRow>>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_network() -> Result<Vec<NetworkRow>, ApiError> {
+    get_json::<Vec<NetworkRow>>("/api/network").await
 }
 
 // -------------------------------------------------------------------- logs
@@ -832,13 +908,8 @@ pub struct LogTail {
 }
 
 /// The tail of one of GLPI's logs.
-pub async fn fetch_log(file: &str) -> Result<LogResponse, String> {
-    reqwest::get(api_url(&format!("/api/logs/{file}")))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<LogResponse>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_log(file: &str) -> Result<LogResponse, ApiError> {
+    get_json::<LogResponse>(&format!("/api/logs/{file}")).await
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -860,13 +931,8 @@ pub struct LogListResponse {
 }
 
 /// What logs GLPI's directory actually holds.
-pub async fn fetch_logs() -> Result<LogListResponse, String> {
-    reqwest::get(api_url("/api/logs"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<LogListResponse>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_logs() -> Result<LogListResponse, ApiError> {
+    get_json::<LogListResponse>("/api/logs").await
 }
 
 /// What the MariaDB instance behind GLPI reports about itself.
@@ -1014,6 +1080,12 @@ pub struct Variable {
     pub read_only: bool,
     #[serde(default)]
     pub tier: String,
+    /// What it is for, as against `tier`, which is what changing it costs.
+    /// The backend's opinion - see its `vargroup` module. Defaulted like the
+    /// rest, so a backend that has not got this field yet degrades to one
+    /// unnamed group rather than failing to parse.
+    #[serde(default)]
+    pub group: String,
 }
 
 /// Every system variable the server has, in one response.
@@ -1028,24 +1100,14 @@ pub struct VariablesReport {
 /// The whole variable space, about 700 rows. Its own request for the same
 /// reason the InnoDB one is: only the tier pages read it, and the panels
 /// that load with the page must not pay for it.
-pub async fn fetch_variables() -> Result<VariablesReport, String> {
-    reqwest::get(api_url("/api/mariadb/variables"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<VariablesReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_variables() -> Result<VariablesReport, ApiError> {
+    get_json::<VariablesReport>("/api/mariadb/variables").await
 }
 
 /// Every InnoDB setting the server has, grouped. Its own request rather than
 /// part of the facts: 137 rows that only one panel reads.
-pub async fn fetch_innodb() -> Result<InnodbReport, String> {
-    reqwest::get(api_url("/api/mariadb/innodb"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<InnodbReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_innodb() -> Result<InnodbReport, ApiError> {
+    get_json::<InnodbReport>("/api/mariadb/innodb").await
 }
 
 /// Set one InnoDB setting, and report what it became.
@@ -1243,20 +1305,10 @@ pub struct PerfReport {
 /// Measured on request, never cached: the page is for reloading after a
 /// change, and a cached number answers the question the reader asked before
 /// they made it.
-pub async fn fetch_perf() -> Result<PerfReport, String> {
-    reqwest::get(api_url("/api/perf"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<PerfReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_perf() -> Result<PerfReport, ApiError> {
+    get_json::<PerfReport>("/api/perf").await
 }
 
-pub async fn fetch_mariadb() -> Result<MariadbReport, String> {
-    reqwest::get(api_url("/api/mariadb"))
-        .await
-        .map_err(|e| e.to_string())?
-        .json::<MariadbReport>()
-        .await
-        .map_err(|e| e.to_string())
+pub async fn fetch_mariadb() -> Result<MariadbReport, ApiError> {
+    get_json::<MariadbReport>("/api/mariadb").await
 }

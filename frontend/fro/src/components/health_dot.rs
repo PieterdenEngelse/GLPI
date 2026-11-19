@@ -48,10 +48,10 @@ use dioxus::prelude::*;
 /// wrong; the modal says what the dot is.
 #[component]
 pub fn HealthDot() -> Element {
-    let mut health = use_signal(|| None::<Result<api::Health, String>>);
-    let mut session = use_signal(|| None::<Result<api::SessionInfo, String>>);
-    let mut db = use_signal(|| None::<Result<api::MariadbReport, String>>);
-    let mut logs = use_signal(|| None::<Result<api::LogListResponse, String>>);
+    let mut health = use_signal(|| None::<Result<api::Health, api::ApiError>>);
+    let mut session = use_signal(|| None::<Result<api::SessionInfo, api::ApiError>>);
+    let mut db = use_signal(|| None::<Result<api::MariadbReport, api::ApiError>>);
+    let mut logs = use_signal(|| None::<Result<api::LogListResponse, api::ApiError>>);
     let mut open = use_signal(|| false);
     let mut checking = use_signal(|| false);
 
@@ -78,20 +78,46 @@ pub fn HealthDot() -> Element {
     // Worst wins, and the order is the order of consequence: nothing to talk
     // to, then the API every page reads, then an optional source that was
     // configured and did not answer.
-    let backend_up = matches!(health(), Some(Ok(_)));
+    // A reply that arrived and could not be read is THIS APP's fault, so it
+    // is kept out of every "broken" below. Counting it as a failing upstream
+    // is what made a stale bundle present as a degraded database until
+    // 2026-11-18, which points whoever sees it at the wrong system.
+    // api::SKEW covers every OTHER fetch in the app. Without it the dot sat
+    // green while the page under it said the bundle and the backend
+    // disagree, because none of the four below is what failed.
+    let skew = api::skew_seen()
+        || matches!(health(), Some(Err(ref e)) if e.is_skew())
+        || matches!(session(), Some(Err(ref e)) if e.is_skew())
+        || matches!(db(), Some(Err(ref e)) if e.is_skew())
+        || matches!(logs(), Some(Err(ref e)) if e.is_skew());
+
+    // A decode failure still proves something answered, so the backend counts
+    // as up and the other three are asked rather than reported unknown.
+    let backend_up =
+        matches!(health(), Some(Ok(_))) || matches!(health(), Some(Err(ref e)) if e.is_skew());
     let glpi_up = matches!(session(), Some(Ok(_)));
-    let db_broken = matches!(db(), Some(Err(_)))
+    let db_broken = matches!(db(), Some(Err(ref e)) if !e.is_skew())
         || matches!(db(), Some(Ok(ref r)) if r.configured && r.facts.is_none());
-    let logs_broken = matches!(logs(), Some(Err(_)))
+    let logs_broken = matches!(logs(), Some(Err(ref e)) if !e.is_skew())
         || matches!(logs(), Some(Ok(ref r)) if r.configured && r.error.is_some());
 
     let (dot, ring, label) = match (health(), backend_up, glpi_up) {
+        // Before Checking: a skew is something already known, while Checking
+        // is the absence of an answer. Hiding a fact behind a pending request
+        // means the dot goes green-ish grey on the one page that just failed.
+        _ if skew => (
+            "bg-warning",
+            "ring-warning/40",
+            "Bundle and backend disagree",
+        ),
         (None, _, _) => (
             "bg-base-content/30 animate-pulse",
             "ring-base-300",
             "Checking",
         ),
-        (Some(Err(_)), _, _) => ("bg-error", "ring-error/40", "Backend unreachable"),
+        (Some(Err(ref e)), _, _) if !e.is_skew() => {
+            ("bg-error", "ring-error/40", "Backend unreachable")
+        }
         (_, true, false) if session().is_some() => {
             ("bg-warning", "ring-warning/40", "GLPI's API not answering")
         }
@@ -129,8 +155,15 @@ pub fn HealthDot() -> Element {
                 body: "Four things have to answer for this app to tell you anything, and the \
                        dot is the worst of the four. Green: all four answered. Amber: the \
                        backend is up but something it reads is not - GLPI's API refused, or \
-                       a source that was configured did not reply. Red: the backend itself \
-                       is unreachable, so the other three were never asked and the panel \
+                       a source that was configured did not reply. Amber also covers one \
+                       fault that is no upstream's: a reply that arrives and cannot be read \
+                       means the bundle in your browser and the backend serving it are \
+                       built from different code, so that line asks for a reload instead of \
+                       naming the source as broken - every upstream is healthy, and reading a \
+                       version skew as a broken database is the exact mistake this panel \
+                       exists to prevent. Which half is older is not knowable from here: if a \
+                       reload does not clear it, the deployed backend is the stale one. Red: the backend itself is unreachable, so the other three \
+                       were never asked and the panel \
                        says so rather than showing three stale lines. Grey and pulsing: the \
                        first check has not come back yet, which is deliberately not red - a \
                        slow start is not a failure. Click the dot for the four lines, each \
@@ -181,7 +214,8 @@ pub fn HealthDot() -> Element {
                             state: match health() {
                                 None => Check::Checking,
                                 Some(Ok(h)) => Check::Ok(format!("v{} - answering", h.version)),
-                                Some(Err(e)) => Check::Failed(e),
+                                Some(Err(e)) if e.is_skew() => Check::Unreadable(e.to_string()),
+                                Some(Err(e)) => Check::Failed(e.to_string()),
                             },
                         }
                         Line {
@@ -198,7 +232,10 @@ pub fn HealthDot() -> Element {
                                         ),
                                     )
                                 }
-                                (_, Some(Err(e))) => Check::Failed(e),
+                                (_, Some(Err(e))) if e.is_skew() => {
+                                    Check::Unreadable(e.to_string())
+                                }
+                                (_, Some(Err(e))) => Check::Failed(e.to_string()),
                             },
                         }
                         Line {
@@ -215,7 +252,10 @@ pub fn HealthDot() -> Element {
                                         None => Check::Failed("configured, but it reported nothing".into()),
                                     }
                                 }
-                                (_, Some(Err(e))) => Check::Failed(e),
+                                (_, Some(Err(e))) if e.is_skew() => {
+                                    Check::Unreadable(e.to_string())
+                                }
+                                (_, Some(Err(e))) => Check::Failed(e.to_string()),
                             },
                         }
                         Line {
@@ -240,8 +280,22 @@ pub fn HealthDot() -> Element {
                                         }
                                     }
                                 }
-                                (_, Some(Err(e))) => Check::Failed(e),
+                                (_, Some(Err(e))) if e.is_skew() => {
+                                    Check::Unreadable(e.to_string())
+                                }
+                                (_, Some(Err(e))) => Check::Failed(e.to_string()),
                             },
+                        }
+                    }
+
+                    if api::skew_seen() {
+                        p { class: "mt-3 border-t border-base-300 pt-2 text-xs text-warning",
+                            "Something on this page could not read a reply from the backend, so "
+                            "the bundle in your browser and the binary serving it were built "
+                            "from different code. The four lines above can all be healthy and "
+                            "this still be true - they are four endpoints, and the one that "
+                            "failed may be any other. Reload; if that does not clear it, the "
+                            "running backend is the older of the two."
                         }
                     }
 
@@ -265,6 +319,9 @@ enum Check {
     Ok(String),
     /// Configured and failing.
     Failed(String),
+    /// It answered, and this bundle could not read the reply. Not a fault in
+    /// the thing named on the line - the only honest remedy is a reload.
+    Unreadable(String),
     /// Deliberately absent. Not a fault, and not amber.
     Absent(String),
     /// The backend is down, so this was never asked.
@@ -281,6 +338,11 @@ fn Line(name: String, state: Check) -> Element {
         ),
         Check::Ok(d) => ("bg-success", d.clone(), ""),
         Check::Failed(d) => ("bg-error", d.clone(), "text-error"),
+        Check::Unreadable(d) => (
+            "bg-warning",
+            format!("answered, but this page could not read the reply - reload, and if that does not clear it the backend is the older of the two ({d})"),
+            "text-warning",
+        ),
         Check::Absent(d) => ("bg-base-content/30", d.clone(), "text-base-content/60"),
         Check::Unknown => (
             "bg-base-content/30",

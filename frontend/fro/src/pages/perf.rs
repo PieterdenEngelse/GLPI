@@ -13,7 +13,7 @@
 //! the database is not what to tune, however tempting its 137 settings are.
 //! If that ratio ever closes, this page is where it shows.
 use crate::api;
-use crate::components::{InfoButton, Panel};
+use crate::components::{FetchError, InfoButton, Panel};
 use dioxus::prelude::*;
 
 #[component]
@@ -58,12 +58,7 @@ pub fn Perf() -> Element {
                 }
             },
             Some(Err(e)) => rsx! {
-                div { class: "alert alert-error",
-                    div {
-                        div { class: "font-semibold", "Could not reach the backend." }
-                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                    }
-                }
+                FetchError { error: e.clone() }
             },
             Some(Ok(r)) => rsx! { Readings { report: r.clone() } },
         }

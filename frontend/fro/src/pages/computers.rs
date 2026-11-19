@@ -5,7 +5,7 @@
 //! orphaned asset does not go quiet, it simply never changes again, which
 //! looks exactly like hardware that has not changed.
 use crate::api::{self, ComputerStatus, Named};
-use crate::components::{InfoLink, Panel, RefreshControl, StatTile};
+use crate::components::{FetchError, InfoLink, Panel, RefreshControl, StatTile};
 use dioxus::prelude::*;
 
 const REFRESH_MS: u32 = 5 * 60 * 1000;
@@ -25,12 +25,7 @@ pub fn Computers() -> Element {
     rsx! {
         match &*rows.read_unchecked() {
             Some(Err(e)) => rsx! {
-                div { class: "alert alert-error",
-                    div {
-                        div { class: "font-semibold", "Could not reach the backend." }
-                        pre { class: "mt-1 text-xs break-all whitespace-pre-wrap", "{e}" }
-                    }
-                }
+                FetchError { error: e.clone() }
             },
             Some(Ok(report)) => {
                 let list = &report.computers;
