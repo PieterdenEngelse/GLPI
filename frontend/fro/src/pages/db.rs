@@ -957,6 +957,13 @@ fn Vars(sub: String) -> Element {
     // worth finding on top. See SORTS for why "editable" is offered at all
     // when it cannot reorder anything on these four pages.
     let mut sort_by = use_signal(|| "set");
+    // Which group headers are open. Every group starts closed, so the page
+    // opens as an index of the taxonomy rather than as a wall of rows: with
+    // 384 shown on live, whichever group sorted first used to fill the
+    // screen on its own and the page read as a list of that one subject.
+    // Names rather than indices, for the reason TABS gives - a reordered
+    // list cannot then change which group is open.
+    let mut expanded = use_signal(Vec::<String>::new);
 
     // live first, so a bare ?tab=vars lands on the cheapest tier rather than
     // on whichever name happens to sort first.
@@ -1014,10 +1021,8 @@ fn Vars(sub: String) -> Element {
             let chosen = shown.iter().filter(|v| v.origin != "COMPILE-TIME").count();
 
             // Grouped by what each variable is FOR - the backend's opinion,
-            // carried on the row so the two never drift. Largest group first
-            // because the reader is scanning for a subject rather than
-            // reading down, and Others pinned last however big it gets: it
-            // is the absence of an answer, not an answer.
+            // carried on the row so the two never drift. The order of the
+            // groups is decided below.
             //
             // Sorted WITHIN each group, so whichever key is chosen the rows
             // stay under the subject they belong to - the grouping answers
@@ -1042,11 +1047,27 @@ fn Vars(sub: String) -> Element {
                     None => groups.push((key, vec![v])),
                 }
             }
-            groups.sort_by(|a, b| {
-                (a.0 == "Others")
-                    .cmp(&(b.0 == "Others"))
-                    .then(b.1.len().cmp(&a.1.len()))
-            });
+            // Two groups are pinned after the rest, for two different
+            // reasons, and everything else is largest first because the
+            // reader is scanning for a subject.
+            //
+            // Others last however big it gets: it is the absence of an
+            // answer, not an answer. InnoDB second to last despite being the
+            // largest group on three of the four tiers - 106 of live's 384,
+            // 28 of restart's 106, 3 of install's 3 - because it is the one
+            // group with a panel of its own, which cuts the same 137 seven
+            // ways. Leading with it made these pages read as a list of InnoDB
+            // settings and buried the eighteen groups that have no panel of
+            // their own, which is the opposite of what vargroup says this cut
+            // is for. The header links there rather than competing with it.
+            fn rank(group: &str) -> u8 {
+                match group {
+                    "InnoDB" => 1,
+                    "Others" => 2,
+                    _ => 0,
+                }
+            }
+            groups.sort_by(|a, b| rank(&a.0).cmp(&rank(&b.0)).then(b.1.len().cmp(&a.1.len())));
 
             // The headline, so the table is evidence rather than the message.
             // The same move the settings tile makes: a page of rows that all
@@ -1093,6 +1114,19 @@ fn Vars(sub: String) -> Element {
                 "none editable"
             };
 
+            // Flattened to owned rows before the tree, because each header's
+            // click handler has to own its group name: a handler outlives the
+            // render that built it, so it cannot borrow the iteration it came
+            // from.
+            let open_now = expanded.read().clone();
+            let rendered: Vec<(String, Vec<api::Variable>, bool)> = groups
+                .into_iter()
+                .map(|(group, rows)| {
+                    let open = open_now.contains(&group);
+                    (group, rows, open)
+                })
+                .collect();
+
             rsx! {
                 p { class: "mt-3 text-sm", "{headline}" }
 
@@ -1134,28 +1168,68 @@ fn Vars(sub: String) -> Element {
                 div { class: "mt-3 overflow-x-auto",
                     table { class: "table table-sm",
                         tbody {
-                            for (group , rows) in groups.iter() {
+                            for (group , rows , open) in rendered {
                                 tr { key: "group-{group}",
-                                    td {
-                                        class: "bg-base-200 text-xs font-semibold",
-                                        colspan: "3",
-                                        "{group}"
-                                        span { class: "ml-2 font-normal text-base-content/60",
-                                            "{rows.len()}"
+                                    td { class: "bg-base-200 p-0", colspan: "3",
+                                        div { class: "flex flex-wrap items-baseline gap-x-2 px-2",
+                                            button {
+                                                class: "btn btn-ghost btn-xs font-semibold",
+                                                onclick: {
+                                                    let name = group.clone();
+                                                    move |_| {
+                                                        let mut names = expanded.write();
+                                                        match names.iter().position(|g| *g == name) {
+                                                            Some(at) => {
+                                                                names.remove(at);
+                                                            }
+                                                            None => names.push(name.clone()),
+                                                        }
+                                                    }
+                                                },
+                                                if open {
+                                                    "\u{25be} "
+                                                } else {
+                                                    "\u{25b8} "
+                                                }
+                                                "{group}"
+                                                span { class: "ml-1 font-normal text-base-content/60",
+                                                    "{rows.len()}"
+                                                }
+                                            }
+                                            // Only on InnoDB, and a pointer
+                                            // rather than a second copy: the
+                                            // panel it names cuts these 137
+                                            // seven ways and this page is not
+                                            // the place to repeat that.
+                                            if group == "InnoDB" {
+                                                span { class: "text-xs text-base-content/60",
+                                                    "its own panel is on "
+                                                    Link {
+                                                        class: "link link-primary",
+                                                        to: Route::Db {
+                                                            tab: "maria".to_string(),
+                                                            sub: "general".to_string(),
+                                                        },
+                                                        "Maria \u{00b7} general"
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
-                                for v in rows.iter() {
-                                    tr { key: "{v.name}",
-                                        td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
-                                        // Empty rather than absent, and left
-                                        // that way: a SESSION ONLY variable
-                                        // has no global value, and an em dash
-                                        // would read as the server declining
-                                        // to say.
-                                        td { class: "font-mono text-xs break-all", "{v.value}" }
-                                        td { class: "text-xs whitespace-nowrap text-base-content/60",
-                                            "{v.origin}"
+                                if open {
+                                    for v in rows.iter() {
+                                        tr { key: "{v.name}",
+                                            td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+                                            // Empty rather than absent, and
+                                            // left that way: a SESSION ONLY
+                                            // variable has no global value,
+                                            // and an em dash would read as
+                                            // the server declining to say.
+                                            td { class: "font-mono text-xs break-all", "{v.value}" }
+                                            td { class: "text-xs whitespace-nowrap text-base-content/60",
+                                                "{v.origin}"
+                                            }
                                         }
                                     }
                                 }
