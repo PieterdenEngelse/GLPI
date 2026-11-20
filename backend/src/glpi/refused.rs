@@ -521,6 +521,13 @@ pub struct Variable {
     /// `glpi::hazard` - valid values the server accepts and that break
     /// something the server cannot see.
     pub hazard: Option<&'static str>,
+    /// What the startup file asks for, when it names this variable. Filled in
+    /// by the handler, which is where the file is.
+    ///
+    /// Beside `value` rather than instead of it, because the two disagreeing
+    /// is the finding: a line in that file is what the NEXT start will apply,
+    /// and the running server can have been set to something else since.
+    pub persisted: Option<String>,
 }
 
 /// One row of the variables SELECT. Named for the reason `SettingRow` is:
@@ -675,6 +682,8 @@ impl Db {
                         min,
                         max,
                         default,
+                        // The handler fills this in; this module has no file.
+                        persisted: None,
                         name,
                         value,
                         origin,
@@ -1020,6 +1029,41 @@ impl Db {
     /// bool threaded down to here would put that policy in the layer that
     /// knows least about it. See `glpi::hazard`.
     pub async fn set_variable(&self, name: &str, value: &str) -> Result<String> {
+        let (var_name, literal) = self.variable_literal(name, value).await?;
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+        // The same rule the InnoDB write states: the name is the server's own
+        // spelling of a row it reported a line ago, and the literal was built
+        // from a parsed number or a matched enum entry. Neither is the text
+        // that arrived.
+        conn.query_drop(format!("SET GLOBAL {var_name} = {literal}"))
+            .await
+            .with_context(|| format!("setting {var_name}"))?;
+
+        let after: Option<String> =
+            "SELECT COALESCE(GLOBAL_VALUE, '') FROM information_schema.SYSTEM_VARIABLES \
+             WHERE VARIABLE_NAME = :name"
+                .with(params! { "name" => var_name.to_uppercase() })
+                .first(&mut conn)
+                .await
+                .with_context(|| format!("reading {var_name} back"))?;
+
+        Ok(after.unwrap_or_default())
+    }
+
+    /// -> (the server's spelling of the name, the SQL literal for the value),
+    /// or why this variable cannot be given that value.
+    ///
+    /// The general `innodb_literal`, and the single gate in front of both
+    /// things that can change a variable: setting it now, and writing it into
+    /// the startup file so it is set again at the next boot. They must agree
+    /// about what is allowed - a value the running server refuses must not be
+    /// persistable either, or the init file becomes a line that fails at
+    /// startup and silently drops every line below it.
+    pub async fn variable_literal(&self, name: &str, value: &str) -> Result<(String, String)> {
         let mut conn = self
             .pool
             .get_conn()
@@ -1051,24 +1095,7 @@ impl Db {
         }
 
         let literal = literal_for(&var, value)?;
-        let var_name = var.name;
-        // The same rule the InnoDB write states: the name is the server's own
-        // spelling of a row it reported a line ago, and the literal was built
-        // from a parsed number or a matched enum entry. Neither is the text
-        // that arrived.
-        conn.query_drop(format!("SET GLOBAL {var_name} = {literal}"))
-            .await
-            .with_context(|| format!("setting {var_name}"))?;
-
-        let after: Option<String> =
-            "SELECT COALESCE(GLOBAL_VALUE, '') FROM information_schema.SYSTEM_VARIABLES \
-             WHERE VARIABLE_NAME = :name"
-                .with(params! { "name" => var_name.to_uppercase() })
-                .first(&mut conn)
-                .await
-                .with_context(|| format!("reading {var_name} back"))?;
-
-        Ok(after.unwrap_or_default())
+        Ok((var.name, literal))
     }
 }
 

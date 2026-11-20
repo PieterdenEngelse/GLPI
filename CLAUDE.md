@@ -280,9 +280,46 @@ Three things about it worth not undoing:
   and "the server will not take that value" look identical at 400 and need
   opposite things from the reader.
 
-SET GLOBAL only, so a change is the running server and not the next one.
-Persisting is still the separate InnoDB-only mechanism, and `persist_path` is
-unset on this install.
+### Making a change outlive a restart
+
+`POST /api/mariadb/variables/{name}/persist` writes the variable into the file
+MariaDB replays at startup; a request with no body drops the line and leaves
+the running server alone, because what that changes is the next start. It goes
+through the same `variable_literal` gate as the write, and that is not
+tidiness: a line the server refuses at startup **silently drops every line
+below it** (measured — the server logs the error, startup continues, the file
+stops executing there), so a value that could not be set must not be
+persistable either.
+
+`glpi::init_file` — named `innodb_init` until 2026-11-20 — owns the file for
+both the InnoDB panel and the variables pages. There is one file and one
+format; only what `SET GLOBAL` can set may go in it.
+
+**Making it work is a one-time root step this app cannot do**, and until it is
+done `persist_path` is None and the pages say a change does not outlive a
+restart:
+
+```nix
+services.mysql.settings.mysqld.init_file = "/var/lib/glpi-inv-init/persist.sql";
+systemd.tmpfiles.rules = [
+  "d /var/lib/glpi-inv-init 0750 pde mysql -"
+  "f /var/lib/glpi-inv-init/persist.sql 0640 pde mysql -"
+];
+```
+
+then `GLPI_INV_INIT_FILE` (renamed from `GLPI_INV_INNODB_INIT_FILE`) pointing
+at the same path. Three things that bite:
+
+- **It cannot live under `/home`.** The mysql unit runs `ProtectHome=true`, so
+  the server cannot see it there.
+- **The file must exist before MariaDB is pointed at it.** An init-file mysqld
+  cannot open is not a setting that quietly fails: it logs `Can't
+  create/write to file … (Errcode: 2)`, then `Aborting`, and exits 1. Hence
+  the `f` tmpfiles rule and not just the `d`.
+- **A drop-in cannot be used instead.** mysqld runs
+  `--defaults-file=/etc/my.cnf`, which replaces the whole search path, so
+  `--defaults-extra-file` and `/etc/my.cnf.d` are both dead ends here. The
+  only routes are this file and `services.mysql.settings`.
 
 ### Restarting the database: the OS decides, and the script asks
 

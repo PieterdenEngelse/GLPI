@@ -1108,6 +1108,13 @@ pub struct Variable {
     /// and sends the text - duplicating the list here would be two lists.
     #[serde(default)]
     pub hazard: Option<String>,
+    /// What the startup file asks for, when it names this variable.
+    ///
+    /// Beside `value`, not instead of it: a line in that file is what the
+    /// NEXT start applies, and the running server can have been set to
+    /// something else since. The two disagreeing is the finding.
+    #[serde(default)]
+    pub persisted: Option<String>,
 }
 
 /// Every system variable the server has, in one response.
@@ -1120,8 +1127,41 @@ pub struct VariablesReport {
     /// that guess to be wrong.
     #[serde(default)]
     pub writes_enabled: bool,
+    /// Where a kept value is written, if anywhere. None means nothing can
+    /// outlive a restart, and the page says so rather than offering a Keep
+    /// control that writes to nothing.
+    #[serde(default)]
+    pub persist_path: Option<String>,
     #[serde(default)]
     pub variables: Vec<Variable>,
+}
+
+/// Keep a variable across restarts, or stop keeping it.
+///
+/// `Some(value)` writes it into the file MariaDB replays at startup; None
+/// drops the line and leaves the running server exactly as it is - what
+/// changes is the next start, not this one.
+pub async fn persist_variable(name: &str, value: Option<&str>) -> Result<(), String> {
+    let req =
+        reqwest::Client::new().post(api_url(&format!("/api/mariadb/variables/{name}/persist")));
+    let req = match value {
+        Some(v) => req.json(&serde_json::json!({ "value": v })),
+        None => req,
+    };
+
+    let r = req.send().await.map_err(|e| e.to_string())?;
+    if r.status().is_success() {
+        return Ok(());
+    }
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
 }
 
 /// What came back from trying to set a variable.

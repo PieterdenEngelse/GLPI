@@ -938,6 +938,22 @@ const DORMANT: [(&str, &str, &[&str]); 4] = [
 /// other three are 196 rows none of which are. The page annotates the key
 /// with which of the two it is looking at, so a dead control is at least an
 /// informative one.
+/// Everything a row's controls need from the page around them.
+///
+/// Grouped rather than passed one at a time: there are six, they travel
+/// together to every row, and a function taking eight positional arguments
+/// has call sites nobody can read. Copy, because every field already is -
+/// a Signal and a Resource are handles, not the data.
+#[derive(Clone, Copy)]
+struct Editing {
+    writes_enabled: bool,
+    can_persist: bool,
+    drafts: Signal<Vec<(String, String)>>,
+    pending: Signal<Option<(String, String)>>,
+    notice: Signal<Option<(String, String)>>,
+    report: Resource<Result<api::VariablesReport, api::ApiError>>,
+}
+
 /// One variable's row, with the confirm and result rows that belong under it.
 ///
 /// `dim` is the dormant case - the subsystem this belongs to is switched off,
@@ -945,15 +961,14 @@ const DORMANT: [(&str, &str, &[&str]); 4] = [
 /// is as settable as any other, and `wsrep_on` is both dormant here and one
 /// of the nine that needs confirming, so the confirm row has to reach these
 /// too.
-fn variable_rows(
-    v: &api::Variable,
-    dim: bool,
-    writes_enabled: bool,
-    drafts: Signal<Vec<(String, String)>>,
-    mut pending: Signal<Option<(String, String)>>,
-    mut notice: Signal<Option<(String, String)>>,
-    report: Resource<Result<api::VariablesReport, api::ApiError>>,
-) -> Element {
+fn variable_rows(v: &api::Variable, dim: bool, ed: Editing) -> Element {
+    let Editing {
+        drafts,
+        mut pending,
+        mut notice,
+        report,
+        ..
+    } = ed;
     let name = v.name.clone();
     let current = v.value.clone();
     rsx! {
@@ -967,7 +982,7 @@ fn variable_rows(
             td { class: "font-mono text-xs break-all", "{v.value}" }
             td { class: "text-xs whitespace-nowrap text-base-content/60", "{v.origin}" }
             td { class: "text-xs",
-                {control_cell(v, writes_enabled, drafts, pending, notice, report)}
+                {control_cell(v, ed)}
             }
         }
         // Under the row it is about rather than in a modal: what is being
@@ -1025,19 +1040,24 @@ fn variable_rows(
 /// belongs to a subsystem that is switched off, and giving it a control in
 /// one place and not the other would be a distinction the server does not
 /// make.
-fn control_cell(
-    v: &api::Variable,
-    writes_enabled: bool,
-    mut drafts: Signal<Vec<(String, String)>>,
-    pending: Signal<Option<(String, String)>>,
-    notice: Signal<Option<(String, String)>>,
-    report: Resource<Result<api::VariablesReport, api::ApiError>>,
-) -> Element {
+fn control_cell(v: &api::Variable, ed: Editing) -> Element {
+    let Editing {
+        writes_enabled,
+        can_persist,
+        mut drafts,
+        pending,
+        notice,
+        report,
+    } = ed;
     if !writes_enabled || !v.settable {
         return rsx! {};
     }
     let name = v.name.clone();
     let current = v.value.clone();
+    let keep_name = v.name.clone();
+    let keep_current = v.value.clone();
+    let kept = v.persisted.clone();
+    let disagrees = v.persisted.clone().filter(|k| *k != v.value);
     let shown = draft_for(&drafts(), &v.name, &v.value);
 
     // One closure for both controls: a select and a text box differ in what
@@ -1084,7 +1104,69 @@ fn control_cell(
                 },
                 "Set"
             }
+            if can_persist {
+                button {
+                    class: if kept.is_some() {
+                        "btn btn-xs btn-active"
+                    } else {
+                        "btn btn-ghost btn-xs"
+                    },
+                    onclick: {
+                        let name = keep_name.clone();
+                        let current = keep_current.clone();
+                        let already = kept.is_some();
+                        move |_| {
+                            let name = name.clone();
+                            // Dropping a line needs no value; adding one
+                            // keeps whatever the control is showing, which is
+                            // the draft if anything has been typed.
+                            let wanted = (!already)
+                                .then(|| draft_for(&drafts(), &name, &current));
+                            spawn(async move {
+                                keep_variable(name, wanted, notice, report).await;
+                            });
+                        }
+                    },
+                    if kept.is_some() { "Kept" } else { "Keep" }
+                }
+            }
+            // Only when they disagree, which is the whole reason the kept
+            // value is carried beside the running one: this row will become
+            // something else at the next start.
+            if let Some(k) = disagrees {
+                span { class: "text-warning whitespace-nowrap",
+                    "restart \u{2192} {k}"
+                }
+            }
         }
+    }
+}
+
+/// Keep a variable across restarts, or stop keeping it.
+///
+/// No confirm step even for the nine, and deliberately: a line in the startup
+/// file changes nothing until the next start and can be removed again before
+/// then. What needs the second look is the write that takes effect at once.
+async fn keep_variable(
+    name: String,
+    value: Option<String>,
+    mut notice: Signal<Option<(String, String)>>,
+    mut report: Resource<Result<api::VariablesReport, api::ApiError>>,
+) {
+    match api::persist_variable(&name, value.as_deref()).await {
+        Ok(()) => {
+            notice.set(Some((
+                name,
+                match value {
+                    Some(v) => format!("Kept as {v}. The next restart will set it again."),
+                    None => "No longer kept. The running server is unchanged - what \
+                             changed is the next restart."
+                        .to_string(),
+                },
+            )));
+            report.restart();
+        }
+        Err(e) => notice.set(Some((name, e))),
     }
 }
 
@@ -1241,6 +1323,15 @@ fn Vars(sub: String) -> Element {
 
             let chosen = shown.iter().filter(|v| v.origin != "COMPILE-TIME").count();
             let writes_enabled = r.writes_enabled;
+            let can_persist = writes_enabled && r.persist_path.is_some();
+            let ed = Editing {
+                writes_enabled,
+                can_persist,
+                drafts,
+                pending,
+                notice,
+                report,
+            };
             // Said once, above the table, rather than as 484 identical notes
             // in a column of disabled controls.
             let settable_here = shown.iter().filter(|v| v.settable).count();
@@ -1382,8 +1473,15 @@ fn Vars(sub: String) -> Element {
                 if settable_here > 0 {
                     div { class: "mt-2 text-sm text-base-content/70",
                         if writes_enabled {
-                            "{settable_here} of these can be set on the running server. "
-                            "A change takes effect at once and is gone at the next restart."
+                            "{settable_here} of these can be set on the running server, "
+                            "taking effect at once. "
+                            if can_persist {
+                                "Keep writes it into the startup file too, so the next "
+                                "restart sets it again."
+                            } else {
+                                "Nothing outlives a restart: no startup file is configured, "
+                                "so there is nowhere to keep a value."
+                            }
                         } else {
                             "{settable_here} of these could be set on the running server, but "
                             "writes are off in this backend. Start it with "
@@ -1465,13 +1563,13 @@ fn Vars(sub: String) -> Element {
                                 }
                                 if open {
                                     for v in rows.iter() {
-                                        {variable_rows(v, false, writes_enabled, drafts, pending, notice, report)}
+                                        {variable_rows(v, false, ed)}
                                     }
                                 }
                             }
                             if show_dormant() {
                                 for v in dormant.iter() {
-                                    {variable_rows(v, true, writes_enabled, drafts, pending, notice, report)}
+                                    {variable_rows(v, true, ed)}
                                 }
                             }
                         }

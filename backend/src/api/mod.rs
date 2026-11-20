@@ -70,9 +70,9 @@ pub struct AppState {
     pub db_restart: bool,
 
     /// The startup file, when one is configured. See
-    /// glpi::innodb_init - it is what makes a change outlive a restart, and
+    /// glpi::init_file - it is what makes a change outlive a restart, and
     /// its absence is why the panel otherwise says a change does not.
-    pub innodb_init: Option<crate::glpi::innodb_init::InitFile>,
+    pub init: Option<crate::glpi::init_file::InitFile>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -90,6 +90,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mariadb/innodb", get(innodb))
         .route("/api/mariadb/variables", get(variables))
         .route("/api/mariadb/variables/{name}", post(set_variable))
+        .route(
+            "/api/mariadb/variables/{name}/persist",
+            post(persist_variable),
+        )
         .route("/api/mariadb/innodb/{name}", post(set_innodb))
         .route("/api/mariadb/innodb/{name}/persist", post(persist_innodb))
         // The two restart links. One route, because what differs between
@@ -1188,6 +1192,10 @@ struct VariablesReport {
     /// can say why a row has no control, rather than rendering one that is
     /// refused on use.
     writes_enabled: bool,
+    /// Where a kept value is written, when anywhere. None means a change
+    /// cannot outlive a restart, which the page says plainly rather than
+    /// offering a Keep control that writes to nothing.
+    persist_path: Option<String>,
     variables: Vec<refused::Variable>,
 }
 
@@ -1203,18 +1211,38 @@ struct VariablesReport {
 /// second, informed request. The old reasoning is kept here because it is
 /// still the argument for every one of those guards.
 async fn variables(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
+    let persist_path = state.init.as_ref().map(|f| f.path().display().to_string());
+
     let Some(db) = state.db.as_ref() else {
         return Ok(Json(VariablesReport {
             configured: false,
             writes_enabled: state.variable_writes,
+            persist_path,
             variables: Vec::new(),
         }));
     };
 
+    // What the startup file asks for, folded into the rows it is about, so a
+    // row can show "this is what a restart will give you" beside what the
+    // server has now. An unreadable file reads as nothing persisted rather
+    // than failing the page: the variables are still worth seeing, and the
+    // disagreement is what the column is for.
+    let persisted = state
+        .init
+        .as_ref()
+        .map(|f| f.read().unwrap_or_default())
+        .unwrap_or_default();
+
+    let mut variables = db.variables().await?;
+    for v in &mut variables {
+        v.persisted = persisted.get(&v.name).cloned();
+    }
+
     Ok(Json(VariablesReport {
         configured: true,
         writes_enabled: state.variable_writes,
-        variables: db.variables().await?,
+        persist_path,
+        variables,
     }))
 }
 
@@ -1286,6 +1314,85 @@ async fn set_variable(
     }
 }
 
+/// Keep a variable across restarts, or stop keeping it.
+///
+/// The general case of `persist_innodb`, writing to the same file and under
+/// the same flag as the general write. `Some(body)` adds or replaces the
+/// line; no body drops it, which changes the next startup and deliberately
+/// leaves the running server exactly as it is - silently reverting a live
+/// value would be a second change nobody asked for.
+///
+/// Hazards are NOT re-confirmed here, and that is deliberate: a line in this
+/// file does nothing until the next restart, and it can be removed again
+/// before then. What needs the second look is `set_variable`, which takes
+/// effect at once. The one thing that cannot be allowed is persisting a value
+/// the running server would refuse - that line would fail at startup and, per
+/// `glpi::init_file`, silently drop every line below it - so it goes
+/// through the same `variable_literal` gate the write does.
+async fn persist_variable(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<VariableWrite>>,
+) -> axum::response::Response {
+    if !state.variable_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "System variables are read-only in this backend. Start it with \
+                          GLPI_INV_VARIABLE_WRITES=1 to allow changes.",
+            })),
+        )
+            .into_response();
+    }
+    let Some(init) = state.init.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No startup file is configured, so there is nowhere to keep this. \
+                          Set GLPI_INV_INIT_FILE, and point MariaDB's init-file at the same \
+                          path - it cannot be under /home, which the mysql unit cannot see.",
+            })),
+        )
+            .into_response();
+    };
+
+    let Some(Json(body)) = body else {
+        return match init.remove(&name) {
+            Ok(()) => {
+                tracing::info!("no longer persisting {name}");
+                Json(serde_json::json!({ "name": name, "persisted": null })).into_response()
+            }
+            Err(e) => bad_request(e),
+        };
+    };
+
+    let Some(db) = state.db.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No database connection is configured, so nothing can be checked \
+                          against the server.",
+            })),
+        )
+            .into_response();
+    };
+
+    match db.variable_literal(&name, &body.value).await {
+        Ok((canonical, literal)) => match init.upsert(&canonical, &literal) {
+            Ok(()) => {
+                tracing::info!("persisting {canonical} = {:?}", body.value);
+                Json(serde_json::json!({
+                    "name": canonical,
+                    "persisted": body.value,
+                }))
+                .into_response()
+            }
+            Err(e) => bad_request(e),
+        },
+        Err(e) => bad_request(e),
+    }
+}
+
 #[derive(serde::Deserialize)]
 struct VariableWrite {
     value: String,
@@ -1335,7 +1442,7 @@ async fn innodb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
     // persisted rather than failing the whole panel: the settings are still
     // worth seeing, and the mismatch column is where the problem shows.
     let persisted = state
-        .innodb_init
+        .init
         .as_ref()
         .map(|f| f.read().unwrap_or_default())
         .unwrap_or_default();
@@ -1350,10 +1457,7 @@ async fn innodb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
     Ok(Json(InnodbReport {
         configured: true,
         writes_enabled: state.innodb_writes,
-        persist_path: state
-            .innodb_init
-            .as_ref()
-            .map(|f| f.path().display().to_string()),
+        persist_path: state.init.as_ref().map(|f| f.path().display().to_string()),
         groups,
     }))
 }
@@ -1372,7 +1476,7 @@ async fn persist_innodb(
     if !state.innodb_writes {
         return refused_write();
     }
-    let Some(init) = state.innodb_init.as_ref() else {
+    let Some(init) = state.init.as_ref() else {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({

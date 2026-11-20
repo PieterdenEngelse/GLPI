@@ -1,4 +1,10 @@
-//! The startup file MariaDB replays, so a setting outlives a restart.
+//! The startup file MariaDB replays, so a variable outlives a restart.
+//!
+//! Named `innodb_init` until 2026-11-20, when the variables pages gained a
+//! write and this stopped being about InnoDB. Nothing in the mechanism
+//! changed with it: the file was always just `SET GLOBAL` statements, and
+//! what may go in it was always the server's boundary rather than this
+//! app's.
 //!
 //! WHY A FILE AT ALL. Nothing in MariaDB persists `SET GLOBAL`: there is no
 //! `SET PERSIST` (that is MySQL 8), no `mysqld-auto.cnf`, and `mariadbd
@@ -15,9 +21,13 @@
 //!
 //! WHAT IT COVERS, AND WHY THAT LINE IS WHERE IT IS. SQL can only set what
 //! `SET GLOBAL` can set, which is exactly the settings this app lets you
-//! edit - 106 of this server's 137. The other 31 are taken at startup before
-//! any SQL runs and still need my.cnf. The boundary is the server's, not a
-//! decision made here.
+//! edit. That was 106 of this server's 137 InnoDB settings when this module
+//! was written; since the variables pages gained a write it is 484 of its
+//! 693, and this file holds any of them. The rest are taken at startup
+//! before any SQL runs and still need my.cnf - on NixOS,
+//! `services.mysql.settings`. The boundary is the server's, not a decision
+//! made here, which is why widening the app's write widened this with no
+//! change to the rule.
 //!
 //! THE FAILURE MODE, MEASURED RATHER THAN ASSUMED. On MariaDB 11.4.12, a
 //! statement in an init file that fails does NOT stop the server: it logs
@@ -57,15 +67,20 @@ const HEADER: &str = "\
 -- Written by glpi-inv. Do not hand-edit: this file is rewritten whole.
 --
 -- MariaDB replays these with --init-file at startup, before any client can
--- connect. They are the InnoDB settings this app was told to keep across
+-- connect. They are the system variables this app was told to keep across
 -- restarts; everything else returns to what my.cnf and the compiled defaults
 -- give it.
+--
+-- Only variables SET GLOBAL can set appear here, which is what an init file
+-- can do and nothing more. A setting the server reads at startup still
+-- belongs in my.cnf - on NixOS, in services.mysql.settings.
 --
 -- A statement that fails here does not stop the server - it logs the error
 -- and startup continues - but the rest of THIS FILE is then skipped. A line
 -- a later MariaDB no longer understands therefore drops every line below it.
--- The app's InnoDB panel compares this file against the running server and
--- says so when they disagree.
+-- That is why every value was checked against the running server before it
+-- was written, and why the app shows what this file asks for beside what the
+-- server actually has.
 ";
 
 /// One app-owned file of `SET GLOBAL` statements.

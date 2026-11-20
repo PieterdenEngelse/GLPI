@@ -45,10 +45,7 @@ async fn main() -> Result<()> {
         db_restart: cfg.db_restart,
         // A path, not an open file: it is read and rewritten per request,
         // because it is also whatever someone edited on the server since.
-        innodb_init: cfg
-            .innodb_init_file
-            .as_deref()
-            .map(glpi::innodb_init::InitFile::new),
+        init: cfg.init_file.as_deref().map(glpi::init_file::InitFile::new),
         glpi_url: cfg.glpi_url.clone(),
         bind: cfg.bind.clone(),
         // A bad URL disables the feature with a warning rather than refusing

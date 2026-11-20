@@ -105,7 +105,7 @@ pub struct Config {
     /// a directory this service can write. It cannot live under /home - the
     /// mysql unit runs with ProtectHome=true, so the server cannot see it
     /// there.
-    pub innodb_init_file: Option<String>,
+    pub init_file: Option<String>,
 }
 
 /// Whether a flag that permits a write is set, by one rule for all of them.
@@ -150,7 +150,7 @@ impl Config {
             log_dir: std::env::var("GLPI_INV_LOG_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
-            innodb_init_file: std::env::var("GLPI_INV_INNODB_INIT_FILE")
+            init_file: std::env::var("GLPI_INV_INIT_FILE")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
             innodb_writes: enabled("GLPI_INV_INNODB_WRITES"),
