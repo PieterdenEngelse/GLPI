@@ -282,10 +282,25 @@ Three things about it worth not undoing:
 
 ### Making a change outlive a restart
 
-`POST /api/mariadb/variables/{name}/persist` writes the variable into the file
-MariaDB replays at startup; a request with no body drops the line and leaves
-the running server alone, because what that changes is the next start. It goes
-through the same `variable_literal` gate as the write, and that is not
+**Setting a variable keeps it.** `POST /api/mariadb/variables/{name}` writes
+the running value *and* the startup-file line, in that order. The two were
+separate endpoints at first and the split was wrong in practice: a value set
+and not kept reverts at the next restart with nothing on the row saying it
+will, so the control that appeared to work was the one that silently did not
+last. Un-keeping is now the deliberate act, which is the right way round —
+it is the reversible one.
+
+A failure to keep does **not** fail the request. The server has already taken
+the value, and answering with an error would describe a write that happened as
+one that did not. It comes back as `kept: false` and the row says so. (The
+InnoDB panel's `set_innodb` is deliberately unchanged — it has its own flag and
+its own panel, and widening its behaviour is not what that flag was granted
+for.)
+
+`POST /api/mariadb/variables/{name}/persist` remains, for the two things
+setting cannot express: keeping a value you did not change, and dropping a
+line without touching the running server. A request with no body drops it. It
+goes through the same `variable_literal` gate as the write, and that is not
 tidiness: a line the server refuses at startup **silently drops every line
 below it** (measured — the server logs the error, startup continues, the file
 stops executing there), so a value that could not be set must not be

@@ -1301,17 +1301,64 @@ async fn set_variable(
     }
 
     match db.set_variable(&name, &body.value).await {
-        Ok(value) => {
-            tracing::info!("SET GLOBAL {name} = {:?}, now {value:?}", body.value);
-            Json(InnodbChange {
-                name,
+        Ok(done) => {
+            tracing::info!(
+                "SET GLOBAL {} = {:?}, now {:?}",
+                done.name,
+                body.value,
+                done.value
+            );
+            // Setting keeps, unless there is nowhere to keep it.
+            //
+            // The two were separate endpoints at first and the split was
+            // wrong in practice: a value set and not kept reverts at the next
+            // restart with nothing on the row saying it will, so the control
+            // that appeared to work was the one that silently did not last.
+            // Making the common case the default leaves un-keeping as the
+            // deliberate act, which is the right way round - it is the
+            // reversible one.
+            //
+            // A failure to keep does NOT fail the request. The server has
+            // already taken the value; reporting an error now would describe
+            // a write that happened as one that did not. It comes back as
+            // `kept`, and the page says which.
+            let kept = match state.init.as_ref() {
+                Some(init) => match init.upsert(&done.name, &done.literal) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        tracing::warn!("set {} but could not keep it: {e:#}", done.name);
+                        false
+                    }
+                },
+                None => false,
+            };
+
+            Json(VariableChange {
+                name: done.name,
                 requested: body.value,
-                value,
+                value: done.value,
+                kept,
             })
             .into_response()
         }
         Err(e) => bad_request(e),
     }
+}
+
+/// What a write did, and whether it will still be true after a restart.
+#[derive(Serialize)]
+struct VariableChange {
+    name: String,
+    /// What was asked for.
+    requested: String,
+    /// What the server reports now. Not the same thing: a numeric value is
+    /// rounded to the setting's block size, and a buffer pool resize is
+    /// asynchronous, so this can lag or differ.
+    value: String,
+    /// Whether the startup file now carries it. False means the change is
+    /// real but lasts only until the next restart - either because no
+    /// startup file is configured, or because writing it failed.
+    kept: bool,
 }
 
 /// Keep a variable across restarts, or stop keeping it.

@@ -1187,10 +1187,21 @@ async fn write_variable(
             pending.set(None);
             notice.set(Some((
                 name,
-                format!(
-                    "The server now reports {}. It lasts until the next restart.",
-                    change.value
-                ),
+                if change.kept {
+                    format!(
+                        "The server now reports {}, and the startup file carries it, so a \
+                         restart sets it again.",
+                        change.value
+                    )
+                } else {
+                    // The write happened; only the keeping did not. Saying
+                    // "failed" here would describe the wrong half.
+                    format!(
+                        "The server now reports {}. It was NOT kept - there is no startup \
+                         file configured - so the next restart undoes it.",
+                        change.value
+                    )
+                },
             )));
             // The row's value, its origin, and the headline counting what was
             // set by someone all come from this one fetch. Re-reading is what
@@ -1476,8 +1487,9 @@ fn Vars(sub: String) -> Element {
                             "{settable_here} of these can be set on the running server, "
                             "taking effect at once. "
                             if can_persist {
-                                "Keep writes it into the startup file too, so the next "
-                                "restart sets it again."
+                                "Setting one keeps it: the value goes into the startup file "
+                                "as well, so a restart sets it again. Kept drops that line "
+                                "again without touching the running server."
                             } else {
                                 "Nothing outlives a restart: no startup file is configured, "
                                 "so there is nowhere to keep a value."

@@ -1170,8 +1170,20 @@ pub async fn persist_variable(name: &str, value: Option<&str>) -> Result<(), Str
 /// gone wrong, the server is intact, and what is being asked for is a second
 /// press with the consequence in view.
 pub enum SetOutcome {
-    Done(InnodbChange),
+    Done(VariableChange),
     NeedsConfirmation(String),
+}
+
+/// What a write did, and whether it survives a restart.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct VariableChange {
+    #[serde(default)]
+    pub value: String,
+    /// Whether the startup file now carries it too. Setting keeps by
+    /// default, so false means there was nowhere to keep it - which the row
+    /// has to say, because the change itself did happen.
+    #[serde(default)]
+    pub kept: bool,
 }
 
 /// Set one system variable on the running server.
@@ -1190,7 +1202,7 @@ pub async fn set_variable(name: &str, value: &str, confirm: bool) -> Result<SetO
 
     if r.status().is_success() {
         return r
-            .json::<InnodbChange>()
+            .json::<VariableChange>()
             .await
             .map(SetOutcome::Done)
             .map_err(|e| e.to_string());

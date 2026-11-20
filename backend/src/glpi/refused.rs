@@ -530,6 +530,21 @@ pub struct Variable {
     pub persisted: Option<String>,
 }
 
+/// What a completed write knows, which is more than the new value.
+///
+/// The literal rides back out because keeping the change needs exactly the
+/// same string the SET GLOBAL used, and rebuilding it would mean validating
+/// the value a second time against a server that may have moved underneath.
+/// The name is the server's own spelling rather than whatever was submitted.
+pub struct VariableSet {
+    /// What the server reports now - not what was asked for. A number is
+    /// rounded to its block size and a buffer pool resize is asynchronous,
+    /// so the two differ routinely.
+    pub value: String,
+    pub name: String,
+    pub literal: String,
+}
+
 /// One row of the variables SELECT. Named for the reason `SettingRow` is:
 /// the column order is the contract between the query and the mapping.
 type VariableRow = (
@@ -1028,7 +1043,7 @@ impl Db {
     /// informed visit from the caller, which is an HTTP concern; a `confirmed`
     /// bool threaded down to here would put that policy in the layer that
     /// knows least about it. See `glpi::hazard`.
-    pub async fn set_variable(&self, name: &str, value: &str) -> Result<String> {
+    pub async fn set_variable(&self, name: &str, value: &str) -> Result<VariableSet> {
         let (var_name, literal) = self.variable_literal(name, value).await?;
         let mut conn = self
             .pool
@@ -1051,7 +1066,11 @@ impl Db {
                 .await
                 .with_context(|| format!("reading {var_name} back"))?;
 
-        Ok(after.unwrap_or_default())
+        Ok(VariableSet {
+            value: after.unwrap_or_default(),
+            name: var_name,
+            literal,
+        })
     }
 
     /// -> (the server's spelling of the name, the SQL literal for the value),
