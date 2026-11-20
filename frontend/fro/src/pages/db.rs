@@ -1221,6 +1221,30 @@ async fn write_variable(
     }
 }
 
+/// Where a value came from, ranked most deliberate first.
+///
+/// The server's own vocabulary, not one invented here: GLOBAL_VALUE_ORIGIN
+/// has exactly these five and a variable carries exactly one, whichever won.
+/// SQL leads because it is both the most deliberate and the most volatile -
+/// it is the only origin that does not survive a restart on its own, which
+/// is the thing worth seeing first. COMPILE-TIME sorts last because it is
+/// the absence of a decision rather than one.
+///
+/// The init file does NOT get an origin of its own: it replays SET GLOBAL
+/// before any client connects, so its values arrive as SQL, indistinguishable
+/// from someone typing the statement. Whether a value survives a restart is
+/// answered by `persisted`, never by this.
+fn origin_rank(origin: &str) -> u8 {
+    match origin {
+        "SQL" => 0,
+        "CONFIG" => 1,
+        "COMMAND-LINE" => 2,
+        "AUTO" => 3,
+        // COMPILE-TIME, and anything a later MariaDB adds.
+        _ => 4,
+    }
+}
+
 /// What a row's control should show: whatever has been typed into it, or the
 /// server's current value when nothing has.
 fn draft_for(drafts: &[(String, String)], name: &str, current: &str) -> String {
@@ -1240,8 +1264,9 @@ fn is_numeric(kind: &str) -> bool {
     kind.contains("INT") || kind == "DOUBLE"
 }
 
-const SORTS: [(&str, &str); 3] = [
+const SORTS: [(&str, &str); 4] = [
     ("set", "set by someone"),
+    ("method", "method"),
     ("name", "name"),
     ("editable", "editable"),
 ];
@@ -1359,10 +1384,23 @@ fn Vars(sub: String) -> Element {
             // backend's order survives underneath.
             match sort_by() {
                 "name" => shown.sort_by(|a, b| a.name.cmp(&b.name)),
+                "method" => shown.sort_by_key(|v| origin_rank(&v.origin)),
                 "editable" => shown.sort_by_key(|v| v.read_only),
                 // "set", the default.
                 _ => shown.sort_by_key(|v| v.origin == "COMPILE-TIME"),
             }
+            // Said out loud when the key cannot reorder anything, for the same
+            // reason the editable one is - but computed rather than asserted.
+            // Editable is uniform by construction: the tier IS that cut. This
+            // is uniform only as a fact about this server today - install and
+            // reports happen to be all COMPILE-TIME, and a future MariaDB
+            // that ships one of them as AUTO would make the key work without
+            // anything here changing.
+            let mut origins: Vec<&str> = shown.iter().map(|v| v.origin.as_str()).collect();
+            origins.sort_unstable();
+            origins.dedup();
+            let one_origin = (origins.len() == 1).then(|| origins[0].to_string());
+
             let mut groups: Vec<(String, Vec<api::Variable>)> = Vec::new();
             for v in shown {
                 let key = if v.group.is_empty() {
@@ -1475,6 +1513,13 @@ fn Vars(sub: String) -> Element {
                     if sort_by() == "editable" {
                         span { class: "text-base-content/50",
                             "- every row in this tier is the same here: {editable_note}."
+                        }
+                    }
+                    if sort_by() == "method" {
+                        if let Some(only) = one_origin.clone() {
+                            span { class: "text-base-content/50",
+                                "- every row in this tier came the same way: {only}."
+                            }
                         }
                     }
                 }
