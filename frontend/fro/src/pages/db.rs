@@ -705,6 +705,18 @@ const TIERS: [(&str, &str, &str); 4] = [
 fn Tiers() -> Element {
     let report = use_resource(|| async move { api::fetch_variables().await });
 
+    // Finding one variable without first knowing which tier it is in.
+    //
+    // The four links answer "show me everything that costs this much"; this
+    // answers "what does THIS one cost, and can I change it" - which is the
+    // question someone arrives with, and the one the four links cannot take.
+    // Results carry their tier, because a row with no control is read-only
+    // rather than broken and the tier is what says which.
+    let mut query = use_signal(String::new);
+    let drafts = use_signal(Vec::<(String, String)>::new);
+    let pending = use_signal(|| None::<(String, String)>);
+    let notice = use_signal(|| None::<(String, String)>);
+
     // Only the figures need the server. The four links and what each costs
     // are in the header, where they are true before any read lands and stay
     // true when one fails - which is why the loading and error states below
@@ -757,6 +769,42 @@ fn Tiers() -> Element {
         _ => None,
     };
     let total: Option<usize> = rows.as_ref().map(|r| r.iter().map(|(n, _)| n).sum());
+
+    // Substring and case-insensitive, over the name only. Searching the
+    // value would match 378 rows on OFF and tell a reader nothing.
+    let needle = query().trim().to_ascii_lowercase();
+    let found: Vec<api::Variable> = match &*report.read_unchecked() {
+        Some(Ok(r)) if !needle.is_empty() => r
+            .variables
+            .iter()
+            .filter(|v| v.name.to_ascii_lowercase().contains(&needle))
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    // A prefix like "innodb" matches 137. Showing all of them would bury the
+    // panel this search sits in, so the list is capped and says what it cut
+    // rather than silently truncating.
+    const HITS: usize = 12;
+    let cut = found.len().saturating_sub(HITS);
+    let editing = match &*report.read_unchecked() {
+        Some(Ok(r)) => Editing {
+            writes_enabled: r.writes_enabled,
+            can_persist: r.writes_enabled && r.persist_path.is_some(),
+            drafts,
+            pending,
+            notice,
+            report,
+        },
+        _ => Editing {
+            writes_enabled: false,
+            can_persist: false,
+            drafts,
+            pending,
+            notice,
+            report,
+        },
+    };
 
     rsx! {
         Panel {
@@ -864,6 +912,52 @@ fn Tiers() -> Element {
                             }
                         }
                     }
+
+                    div { class: "mt-4",
+                        div { class: "flex flex-wrap items-baseline gap-2",
+                            input {
+                                class: "input input-sm w-72 font-mono",
+                                r#type: "search",
+                                placeholder: "find a variable by name\u{2026}",
+                                value: "{query}",
+                                oninput: move |e: Event<FormData>| query.set(e.value()),
+                            }
+                            if !needle.is_empty() {
+                                span { class: "text-sm text-base-content/60",
+                                    "{found.len()} of {total.unwrap_or(0)} match"
+                                }
+                                button {
+                                    class: "btn btn-ghost btn-xs",
+                                    onclick: move |_| query.set(String::new()),
+                                    "Clear"
+                                }
+                            }
+                        }
+
+                        if !needle.is_empty() {
+                            if found.is_empty() {
+                                p { class: "mt-2 text-sm text-base-content/60",
+                                    "Nothing here is called that. The name is the server's own "
+                                    "spelling - innodb_buffer_pool_size, not innodb buffer pool."
+                                }
+                            } else {
+                                div { class: "mt-2 overflow-x-auto",
+                                    table { class: "table table-sm",
+                                        tbody {
+                                            for v in found.iter().take(HITS) {
+                                                {variable_rows(v, false, true, editing)}
+                                            }
+                                        }
+                                    }
+                                }
+                                if cut > 0 {
+                                    p { class: "mt-1 text-sm text-base-content/60",
+                                        "{cut} more match. Narrow the name to see them."
+                                    }
+                                }
+                            }
+                        }
+                    }
                 },
                 // Three states rather than an empty row, and none of them
                 // takes the header down with it: a blank line here would read
@@ -961,7 +1055,12 @@ struct Editing {
 /// is as settable as any other, and `wsrep_on` is both dormant here and one
 /// of the nine that needs confirming, so the confirm row has to reach these
 /// too.
-fn variable_rows(v: &api::Variable, dim: bool, ed: Editing) -> Element {
+fn variable_rows(v: &api::Variable, dim: bool, show_tier: bool, ed: Editing) -> Element {
+    // The search on the tiers panel reaches every tier at once, so a row
+    // there has to say which one it is in - that is the panel's whole
+    // subject, and without it a row with no control looks broken rather
+    // than read-only. The tier pages already say it in their heading.
+    let cols = if show_tier { "5" } else { "4" };
     let Editing {
         drafts,
         mut pending,
@@ -975,6 +1074,9 @@ fn variable_rows(v: &api::Variable, dim: bool, ed: Editing) -> Element {
         tr {
             key: "{v.name}",
             class: if dim { "opacity-60" } else { "" },
+            if show_tier {
+                td { class: "font-mono text-xs whitespace-nowrap text-base-content/60", "{v.tier}" }
+            }
             td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
             // Empty rather than absent, and left that way: a variable with no
             // global value has nothing to show, and an em dash would read as
@@ -990,7 +1092,7 @@ fn variable_rows(v: &api::Variable, dim: bool, ed: Editing) -> Element {
         // both off the screen to ask about them.
         if pending().is_some_and(|(n, _)| n == v.name) {
             tr { key: "confirm-{v.name}",
-                td { class: "p-0", colspan: "4",
+                td { class: "p-0", colspan: "{cols}",
                     div { class: "flex flex-wrap items-baseline gap-2 bg-warning/20 px-2 py-1 text-xs",
                         span { class: "font-semibold", "Setting this breaks something:" }
                         span { "{pending().map(|(_, why)| why).unwrap_or_default()}" }
@@ -1016,7 +1118,7 @@ fn variable_rows(v: &api::Variable, dim: bool, ed: Editing) -> Element {
         }
         if notice().is_some_and(|(n, _)| n == v.name) {
             tr { key: "notice-{v.name}",
-                td { class: "p-0", colspan: "4",
+                td { class: "p-0", colspan: "{cols}",
                     div { class: "flex flex-wrap items-baseline gap-2 bg-base-300 px-2 py-1 text-xs",
                         span { "{notice().map(|(_, what)| what).unwrap_or_default()}" }
                         button {
@@ -1620,13 +1722,13 @@ fn Vars(sub: String) -> Element {
                                 }
                                 if open {
                                     for v in rows.iter() {
-                                        {variable_rows(v, false, ed)}
+                                        {variable_rows(v, false, false, ed)}
                                     }
                                 }
                             }
                             if show_dormant() {
                                 for v in dormant.iter() {
-                                    {variable_rows(v, true, ed)}
+                                    {variable_rows(v, true, false, ed)}
                                 }
                             }
                         }
