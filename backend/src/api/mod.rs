@@ -75,6 +75,25 @@ pub struct AppState {
     pub init: Option<crate::glpi::init_file::InitFile>,
 }
 
+impl AppState {
+    /// Whether the InnoDB panel may write.
+    ///
+    /// EITHER flag, and that is not a widening of the narrow one. The InnoDB
+    /// routes reach exactly the dynamic settings under `innodb%` - 106 on
+    /// this server. `variable_writes` reaches all 484 dynamic variables,
+    /// which strictly contains them: with it set, every one of those 106 is
+    /// already writable through `/api/mariadb/variables/{name}`. Refusing
+    /// them here therefore bought no safety at all - it only made the same
+    /// variable editable on one page and read-only on another, which reads
+    /// as a broken panel rather than as a permission.
+    ///
+    /// The reverse does NOT hold and must never be added: `innodb_writes`
+    /// says nothing about the other 378 and is not consent for them.
+    pub fn innodb_writes_allowed(&self) -> bool {
+        self.innodb_writes || self.variable_writes
+    }
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/api/health", get(health))
@@ -1503,7 +1522,7 @@ async fn innodb(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse,
 
     Ok(Json(InnodbReport {
         configured: true,
-        writes_enabled: state.innodb_writes,
+        writes_enabled: state.innodb_writes_allowed(),
         persist_path: state.init.as_ref().map(|f| f.path().display().to_string()),
         groups,
     }))
@@ -1520,7 +1539,7 @@ async fn persist_innodb(
     Path(name): Path<String>,
     body: Option<Json<InnodbWrite>>,
 ) -> axum::response::Response {
-    if !state.innodb_writes {
+    if !state.innodb_writes_allowed() {
         return refused_write();
     }
     let Some(init) = state.init.as_ref() else {
@@ -1646,7 +1665,9 @@ fn refused_write() -> axum::response::Response {
     (
         StatusCode::FORBIDDEN,
         Json(serde_json::json!({
-            "error": "Engine settings are read-only in this backend. Start it with                       GLPI_INV_INNODB_WRITES=1 to allow changes."
+            "error": "Engine settings are read-only in this backend. Start it with \
+                      GLPI_INV_INNODB_WRITES=1 for these settings alone, or \
+                      GLPI_INV_VARIABLE_WRITES=1, which already covers them."
         })),
     )
         .into_response()
@@ -1679,7 +1700,7 @@ async fn set_innodb(
     Path(name): Path<String>,
     Json(body): Json<InnodbWrite>,
 ) -> axum::response::Response {
-    if !state.innodb_writes {
+    if !state.innodb_writes_allowed() {
         return refused_write();
     }
     let Some(db) = state.db.as_ref() else {

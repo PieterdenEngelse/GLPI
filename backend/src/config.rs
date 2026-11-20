@@ -77,6 +77,11 @@ pub struct Config {
     /// It gates the endpoint, not just the button. A page is a thing anyone
     /// who can reach the port can forge a request against, so the check that
     /// matters is the one in the handler.
+    ///
+    /// Not the only way in since 2026-11-20: `variable_writes` reaches every
+    /// dynamic variable, which strictly contains these, so the InnoDB routes
+    /// accept either - see `AppState::innodb_writes_allowed`. This flag is
+    /// still the narrow one and still the right thing to set alone.
     pub innodb_writes: bool,
 
     /// Whether the variables pages may write. Off unless
