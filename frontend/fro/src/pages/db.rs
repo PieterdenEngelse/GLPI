@@ -938,6 +938,215 @@ const DORMANT: [(&str, &str, &[&str]); 4] = [
 /// other three are 196 rows none of which are. The page annotates the key
 /// with which of the two it is looking at, so a dead control is at least an
 /// informative one.
+/// One variable's row, with the confirm and result rows that belong under it.
+///
+/// `dim` is the dormant case - the subsystem this belongs to is switched off,
+/// so the row is quieter. It keeps its control regardless: a dormant variable
+/// is as settable as any other, and `wsrep_on` is both dormant here and one
+/// of the nine that needs confirming, so the confirm row has to reach these
+/// too.
+fn variable_rows(
+    v: &api::Variable,
+    dim: bool,
+    writes_enabled: bool,
+    drafts: Signal<Vec<(String, String)>>,
+    mut pending: Signal<Option<(String, String)>>,
+    mut notice: Signal<Option<(String, String)>>,
+    report: Resource<Result<api::VariablesReport, api::ApiError>>,
+) -> Element {
+    let name = v.name.clone();
+    let current = v.value.clone();
+    rsx! {
+        tr {
+            key: "{v.name}",
+            class: if dim { "opacity-60" } else { "" },
+            td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
+            // Empty rather than absent, and left that way: a variable with no
+            // global value has nothing to show, and an em dash would read as
+            // the server declining to say.
+            td { class: "font-mono text-xs break-all", "{v.value}" }
+            td { class: "text-xs whitespace-nowrap text-base-content/60", "{v.origin}" }
+            td { class: "text-xs",
+                {control_cell(v, writes_enabled, drafts, pending, notice, report)}
+            }
+        }
+        // Under the row it is about rather than in a modal: what is being
+        // confirmed is this variable at this value, and a dialog would take
+        // both off the screen to ask about them.
+        if pending().is_some_and(|(n, _)| n == v.name) {
+            tr { key: "confirm-{v.name}",
+                td { class: "p-0", colspan: "4",
+                    div { class: "flex flex-wrap items-baseline gap-2 bg-warning/20 px-2 py-1 text-xs",
+                        span { class: "font-semibold", "Setting this breaks something:" }
+                        span { "{pending().map(|(_, why)| why).unwrap_or_default()}" }
+                        button {
+                            class: "btn btn-warning btn-xs",
+                            onclick: move |_| {
+                                let name = name.clone();
+                                let wanted = draft_for(&drafts(), &name, &current);
+                                spawn(async move {
+                                    write_variable(name, wanted, true, pending, notice, report).await;
+                                });
+                            },
+                            "Set it anyway"
+                        }
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            onclick: move |_| pending.set(None),
+                            "Leave it"
+                        }
+                    }
+                }
+            }
+        }
+        if notice().is_some_and(|(n, _)| n == v.name) {
+            tr { key: "notice-{v.name}",
+                td { class: "p-0", colspan: "4",
+                    div { class: "flex flex-wrap items-baseline gap-2 bg-base-300 px-2 py-1 text-xs",
+                        span { "{notice().map(|(_, what)| what).unwrap_or_default()}" }
+                        button {
+                            class: "btn btn-ghost btn-xs",
+                            onclick: move |_| notice.set(None),
+                            "Dismiss"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The control one row gets, or nothing where a control cannot work.
+///
+/// A plain function rather than a component: it needs five pieces of the
+/// caller's state and gives nothing back, so props would be ceremony around
+/// a block of markup. Shared by the grouped rows and the dormant ones, which
+/// is the point - a dormant variable is as settable as any other, it just
+/// belongs to a subsystem that is switched off, and giving it a control in
+/// one place and not the other would be a distinction the server does not
+/// make.
+fn control_cell(
+    v: &api::Variable,
+    writes_enabled: bool,
+    mut drafts: Signal<Vec<(String, String)>>,
+    pending: Signal<Option<(String, String)>>,
+    notice: Signal<Option<(String, String)>>,
+    report: Resource<Result<api::VariablesReport, api::ApiError>>,
+) -> Element {
+    if !writes_enabled || !v.settable {
+        return rsx! {};
+    }
+    let name = v.name.clone();
+    let current = v.value.clone();
+    let shown = draft_for(&drafts(), &v.name, &v.value);
+
+    // One closure for both controls: a select and a text box differ in what
+    // they offer, not in what they record.
+    let mut remember = {
+        let name = v.name.clone();
+        move |typed: String| {
+            let mut d = drafts.write();
+            match d.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, slot)) => *slot = typed,
+                None => d.push((name.clone(), typed)),
+            }
+        }
+    };
+
+    rsx! {
+        div { class: "flex items-center gap-1",
+            if v.options.is_empty() {
+                input {
+                    class: "input input-xs w-32",
+                    r#type: if is_numeric(&v.kind) { "number" } else { "text" },
+                    value: "{shown}",
+                    oninput: move |e: Event<FormData>| remember(e.value()),
+                }
+            } else {
+                // The server's own enum list, so the control cannot propose a
+                // value the server would refuse.
+                select {
+                    class: "select select-xs",
+                    onchange: move |e: Event<FormData>| remember(e.value()),
+                    for o in v.options.iter() {
+                        option { key: "{o}", value: "{o}", selected: shown == *o, "{o}" }
+                    }
+                }
+            }
+            button {
+                class: "btn btn-xs",
+                onclick: move |_| {
+                    let name = name.clone();
+                    let wanted = draft_for(&drafts(), &name, &current);
+                    spawn(async move {
+                        write_variable(name, wanted, false, pending, notice, report).await;
+                    });
+                },
+                "Set"
+            }
+        }
+    }
+}
+
+/// One write, and what it does to the three signals that report its outcome.
+///
+/// Out of the tree because Set and "Set it anyway" differ by one bool, and
+/// two copies inline would be two places for the success path to drift.
+async fn write_variable(
+    name: String,
+    value: String,
+    confirm: bool,
+    mut pending: Signal<Option<(String, String)>>,
+    mut notice: Signal<Option<(String, String)>>,
+    mut report: Resource<Result<api::VariablesReport, api::ApiError>>,
+) {
+    match api::set_variable(&name, &value, confirm).await {
+        Ok(api::SetOutcome::Done(change)) => {
+            pending.set(None);
+            notice.set(Some((
+                name,
+                format!(
+                    "The server now reports {}. It lasts until the next restart.",
+                    change.value
+                ),
+            )));
+            // The row's value, its origin, and the headline counting what was
+            // set by someone all come from this one fetch. Re-reading is what
+            // makes the page agree with the server rather than with what was
+            // asked of it - they differ whenever the server rounds a value to
+            // a block size.
+            report.restart();
+        }
+        Ok(api::SetOutcome::NeedsConfirmation(why)) => {
+            notice.set(None);
+            pending.set(Some((name, why)));
+        }
+        Err(e) => {
+            pending.set(None);
+            notice.set(Some((name, e)));
+        }
+    }
+}
+
+/// What a row's control should show: whatever has been typed into it, or the
+/// server's current value when nothing has.
+fn draft_for(drafts: &[(String, String)], name: &str, current: &str) -> String {
+    drafts
+        .iter()
+        .find(|(n, _)| n == name)
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| current.to_string())
+}
+
+/// Whether to offer a number box or a text box.
+///
+/// The server's own VARIABLE_TYPE decides, and this is a presentation choice
+/// only - what a value is allowed to be is checked by the backend against the
+/// same column, so a text box cannot smuggle anything past it.
+fn is_numeric(kind: &str) -> bool {
+    kind.contains("INT") || kind == "DOUBLE"
+}
+
 const SORTS: [(&str, &str); 3] = [
     ("set", "set by someone"),
     ("name", "name"),
@@ -952,6 +1161,8 @@ const SORTS: [(&str, &str); 3] = [
 #[component]
 fn Vars(sub: String) -> Element {
     let report = use_resource(|| async move { api::fetch_variables().await });
+    // Copy, and passed to write_variable so a successful write can re-read
+    // rather than patch the row it changed.
     let mut show_dormant = use_signal(|| false);
     // "set" is the default because it is the only key that puts the few rows
     // worth finding on top. See SORTS for why "editable" is offered at all
@@ -964,6 +1175,16 @@ fn Vars(sub: String) -> Element {
     // Names rather than indices, for the reason TABS gives - a reordered
     // list cannot then change which group is open.
     let mut expanded = use_signal(Vec::<String>::new);
+    // Edits in progress, keyed by name. A row with no entry shows the
+    // server's current value, so typing in one row cannot disturb another and
+    // nothing has to be seeded for 484 rows that will never be touched.
+    let drafts = use_signal(Vec::<(String, String)>::new);
+    // (name, why) for a hazardous variable that has been asked for once and
+    // not yet confirmed. One at a time: this is a question being put to the
+    // reader, and two of them at once is two unanswered questions.
+    let pending = use_signal(|| None::<(String, String)>);
+    // (name, what happened) for the last write, successful or refused.
+    let notice = use_signal(|| None::<(String, String)>);
 
     // live first, so a bare ?tab=vars lands on the cheapest tier rather than
     // on whichever name happens to sort first.
@@ -1019,6 +1240,11 @@ fn Vars(sub: String) -> Element {
             }
 
             let chosen = shown.iter().filter(|v| v.origin != "COMPILE-TIME").count();
+            let writes_enabled = r.writes_enabled;
+            // Said once, above the table, rather than as 484 identical notes
+            // in a column of disabled controls.
+            let settable_here = shown.iter().filter(|v| v.settable).count();
+            let unsettable_here = shown.len() - settable_here;
 
             // Grouped by what each variable is FOR - the backend's opinion,
             // carried on the row so the two never drift. The order of the
@@ -1151,6 +1377,26 @@ fn Vars(sub: String) -> Element {
                     }
                 }
 
+                // Once, above the table. The alternative is 484 rows each
+                // carrying the same note beside a control that is not there.
+                if settable_here > 0 {
+                    div { class: "mt-2 text-sm text-base-content/70",
+                        if writes_enabled {
+                            "{settable_here} of these can be set on the running server. "
+                            "A change takes effect at once and is gone at the next restart."
+                        } else {
+                            "{settable_here} of these could be set on the running server, but "
+                            "writes are off in this backend. Start it with "
+                            span { class: "font-mono text-xs", "GLPI_INV_VARIABLE_WRITES=1" }
+                            " to turn the controls on."
+                        }
+                        if unsettable_here > 0 {
+                            " {unsettable_here} exist per connection and have no global value, "
+                            "so there is nothing server-wide to set."
+                        }
+                    }
+                }
+
                 if !dormant.is_empty() {
                     div { class: "mt-2 flex flex-wrap items-baseline gap-2 text-sm text-base-content/70",
                         span { "{dormant.len()} are from subsystems this server has switched off - {fold_summary}." }
@@ -1170,7 +1416,7 @@ fn Vars(sub: String) -> Element {
                         tbody {
                             for (group , rows , open) in rendered {
                                 tr { key: "group-{group}",
-                                    td { class: "bg-base-200 p-0", colspan: "3",
+                                    td { class: "bg-base-200 p-0", colspan: "4",
                                         div { class: "flex flex-wrap items-baseline gap-x-2 px-2",
                                             button {
                                                 class: "btn btn-ghost btn-xs font-semibold",
@@ -1219,30 +1465,13 @@ fn Vars(sub: String) -> Element {
                                 }
                                 if open {
                                     for v in rows.iter() {
-                                        tr { key: "{v.name}",
-                                            td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
-                                            // Empty rather than absent, and
-                                            // left that way: a SESSION ONLY
-                                            // variable has no global value,
-                                            // and an em dash would read as
-                                            // the server declining to say.
-                                            td { class: "font-mono text-xs break-all", "{v.value}" }
-                                            td { class: "text-xs whitespace-nowrap text-base-content/60",
-                                                "{v.origin}"
-                                            }
-                                        }
+                                        {variable_rows(v, false, writes_enabled, drafts, pending, notice, report)}
                                     }
                                 }
                             }
                             if show_dormant() {
                                 for v in dormant.iter() {
-                                    tr { key: "{v.name}", class: "opacity-60",
-                                        td { class: "font-mono text-xs whitespace-nowrap", "{v.name}" }
-                                        td { class: "font-mono text-xs break-all", "{v.value}" }
-                                        td { class: "text-xs whitespace-nowrap text-base-content/60",
-                                            "{v.origin}"
-                                        }
-                                    }
+                                    {variable_rows(v, true, writes_enabled, drafts, pending, notice, report)}
                                 }
                             }
                         }

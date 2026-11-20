@@ -500,7 +500,43 @@ pub struct Variable {
     /// What the variable is FOR, as against `tier`, which is what changing
     /// it costs. An opinion, and `vargroup` says so at length.
     pub group: &'static str,
+    /// Whether SET GLOBAL can touch this at all.
+    ///
+    /// NOT the same as `!read_only`, and the difference is 13 rows on this
+    /// server: a SESSION ONLY variable reports READ_ONLY = NO and still has
+    /// no global value to set. The tier says live for those, because the tier
+    /// is cut on READ_ONLY alone, so a page that offered a control wherever
+    /// the tier said live would offer 13 that cannot work.
+    pub settable: bool,
+    /// The server's own word for the type - BOOLEAN, ENUM, BIGINT UNSIGNED,
+    /// VARCHAR - which is what decides the control a row gets.
+    pub kind: String,
+    /// Every value an enum or boolean accepts, from the server. Empty for
+    /// everything else.
+    pub options: Vec<String>,
+    pub min: Option<String>,
+    pub max: Option<String>,
+    pub default: Option<String>,
+    /// Why this one needs confirming before it is set, if it does. See
+    /// `glpi::hazard` - valid values the server accepts and that break
+    /// something the server cannot see.
+    pub hazard: Option<&'static str>,
 }
+
+/// One row of the variables SELECT. Named for the reason `SettingRow` is:
+/// the column order is the contract between the query and the mapping.
+type VariableRow = (
+    String,         // name, lowercased
+    String,         // global value
+    String,         // where the running value came from
+    bool,           // read_only
+    String,         // variable type
+    String,         // enum values, comma separated
+    Option<String>, // numeric min
+    Option<String>, // numeric max
+    Option<String>, // default value
+    String,         // GLOBAL, SESSION, or SESSION ONLY
+);
 
 /// One InnoDB setting: what it is called, what it is set to, and what the
 /// server's own binary says it does.
@@ -607,24 +643,45 @@ impl Db {
             .await
             .context("connecting to MariaDB")?;
 
-        let rows: Vec<(String, String, String, bool)> =
-            "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), \
-             COALESCE(GLOBAL_VALUE_ORIGIN, ''), READ_ONLY = 'YES' \
+        // The same columns the InnoDB panel reads, for every row rather than
+        // for innodb_ only: what each row may be set to is the server's to
+        // say, and asking it once here is what lets the page offer a control
+        // that cannot propose an invalid value.
+        let rows: Vec<VariableRow> = "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), \
+             COALESCE(GLOBAL_VALUE_ORIGIN, ''), READ_ONLY = 'YES', \
+             VARIABLE_TYPE, COALESCE(ENUM_VALUE_LIST, ''), NUMERIC_MIN_VALUE, \
+             NUMERIC_MAX_VALUE, DEFAULT_VALUE, VARIABLE_SCOPE \
              FROM information_schema.SYSTEM_VARIABLES ORDER BY VARIABLE_NAME"
-                .fetch(&mut conn)
-                .await
-                .context("reading the server's variables")?;
+            .fetch(&mut conn)
+            .await
+            .context("reading the server's variables")?;
 
         Ok(rows
             .into_iter()
-            .map(|(name, value, origin, read_only)| Variable {
-                tier: variable_tier(&name, read_only),
-                group: crate::glpi::vargroup::variable_group(&name),
-                name,
-                value,
-                origin,
-                read_only,
-            })
+            .map(
+                |(name, value, origin, read_only, kind, options, min, max, default, scope)| {
+                    Variable {
+                        tier: variable_tier(&name, read_only),
+                        group: crate::glpi::vargroup::variable_group(&name),
+                        settable: !read_only && !scope.eq_ignore_ascii_case("SESSION ONLY"),
+                        hazard: crate::glpi::hazard::hazard(&name),
+                        kind,
+                        options: options
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|o| !o.is_empty())
+                            .map(str::to_string)
+                            .collect(),
+                        min,
+                        max,
+                        default,
+                        name,
+                        value,
+                        origin,
+                        read_only,
+                    }
+                },
+            )
             .collect())
     }
 
@@ -943,7 +1000,142 @@ impl Db {
         }
         Ok((var.name.clone(), literal_for(var, value)?))
     }
+
+    /// Set ANY system variable on the running server, and report what it
+    /// became.
+    ///
+    /// The generalisation of `set_innodb_setting`, and almost the same
+    /// function, because the validation underneath was never InnoDB-specific:
+    /// `literal_for` builds its literal out of VARIABLE_TYPE, ENUM_VALUE_LIST
+    /// and the numeric bounds that SYSTEM_VARIABLES publishes for every row
+    /// alike. The only thing that made the InnoDB write InnoDB-shaped was the
+    /// WHERE clause feeding it.
+    ///
+    /// SET GLOBAL only, so this changes the running server and not the next
+    /// one - the same limit the InnoDB panel has, and why `origin` reads SQL
+    /// afterwards. Persisting is a separate mechanism and still InnoDB-only.
+    ///
+    /// Hazards are deliberately NOT checked here. What they need is a second,
+    /// informed visit from the caller, which is an HTTP concern; a `confirmed`
+    /// bool threaded down to here would put that policy in the layer that
+    /// knows least about it. See `glpi::hazard`.
+    pub async fn set_variable(&self, name: &str, value: &str) -> Result<String> {
+        let mut conn = self
+            .pool
+            .get_conn()
+            .await
+            .context("connecting to MariaDB")?;
+
+        let (var, scope) = variable_meta(&mut conn, name)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("{name} is not a system variable on this server"))?;
+
+        if var.read_only {
+            anyhow::bail!(
+                "{} is read-only: the server reads it at startup, before any SQL runs, so \
+                 nothing sent to a running server can change it - only a config file and a \
+                 restart",
+                var.name
+            );
+        }
+        // 13 of this server's 497 dynamic variables, and a category error
+        // rather than a permission one: identity, timestamp, the rand_seed
+        // pair and the rest exist per connection and have no global value to
+        // set. The server's own refusal explains neither half.
+        if scope.eq_ignore_ascii_case("SESSION ONLY") {
+            anyhow::bail!(
+                "{} exists per connection and has no global value, so there is nothing \
+                 server-wide to set",
+                var.name
+            );
+        }
+
+        let literal = literal_for(&var, value)?;
+        let var_name = var.name;
+        // The same rule the InnoDB write states: the name is the server's own
+        // spelling of a row it reported a line ago, and the literal was built
+        // from a parsed number or a matched enum entry. Neither is the text
+        // that arrived.
+        conn.query_drop(format!("SET GLOBAL {var_name} = {literal}"))
+            .await
+            .with_context(|| format!("setting {var_name}"))?;
+
+        let after: Option<String> =
+            "SELECT COALESCE(GLOBAL_VALUE, '') FROM information_schema.SYSTEM_VARIABLES \
+             WHERE VARIABLE_NAME = :name"
+                .with(params! { "name" => var_name.to_uppercase() })
+                .first(&mut conn)
+                .await
+                .with_context(|| format!("reading {var_name} back"))?;
+
+        Ok(after.unwrap_or_default())
+    }
 }
+
+/// Everything the server will say about ONE variable, whatever subject it
+/// belongs to, in the shape `literal_for` already reads.
+///
+/// `help` comes back None even for an innodb_ row that has text: this feeds
+/// the write, which renders nothing. The scope rides beside the struct rather
+/// than on it because only the write has any use for it, and this table is
+/// the only place that knows.
+async fn variable_meta(
+    conn: &mut mysql_async::Conn,
+    name: &str,
+) -> Result<Option<(InnodbSetting, String)>> {
+    let row: Option<ScopedSettingRow> =
+        "SELECT LOWER(VARIABLE_NAME), COALESCE(GLOBAL_VALUE, ''), READ_ONLY = 'YES', \
+          VARIABLE_TYPE, COALESCE(ENUM_VALUE_LIST, ''), NUMERIC_MIN_VALUE, \
+          NUMERIC_MAX_VALUE, NUMERIC_BLOCK_SIZE, DEFAULT_VALUE, \
+          COALESCE(GLOBAL_VALUE_ORIGIN, ''), VARIABLE_SCOPE \
+          FROM information_schema.SYSTEM_VARIABLES WHERE VARIABLE_NAME = :name"
+            .with(params! { "name" => name.to_uppercase() })
+            .first(&mut *conn)
+            .await
+            .with_context(|| format!("reading {name}"))?;
+
+    Ok(row.map(
+        |(name, value, read_only, kind, options, min, max, block, default, origin, scope)| {
+            (
+                InnodbSetting {
+                    name,
+                    value,
+                    help: None,
+                    read_only,
+                    kind,
+                    options: options
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|o| !o.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                    min,
+                    max,
+                    block,
+                    default,
+                    origin,
+                    persisted: None,
+                },
+                scope,
+            )
+        },
+    ))
+}
+
+/// `SettingRow` plus VARIABLE_SCOPE, for the one query that needs it.
+type ScopedSettingRow = (
+    String,         // name, lowercased
+    String,         // global value
+    bool,           // read_only
+    String,         // variable type
+    String,         // enum values, comma separated
+    Option<String>, // numeric min
+    Option<String>, // numeric max
+    Option<String>, // numeric block size
+    Option<String>, // default value
+    String,         // where the running value came from
+    String,         // GLOBAL, SESSION, or SESSION ONLY
+);
 
 /// Every InnoDB setting with everything the server will say about it.
 ///

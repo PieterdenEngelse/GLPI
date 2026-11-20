@@ -31,6 +31,7 @@ use serde::Deserialize;
 pub mod agents;
 pub mod computers;
 pub mod entities;
+pub mod hazard;
 pub mod infocom;
 pub mod innodb_help;
 pub mod innodb_init;

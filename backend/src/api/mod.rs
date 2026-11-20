@@ -60,6 +60,11 @@ pub struct AppState {
     /// handler rather than only in the UI.
     pub innodb_writes: bool,
 
+    /// Whether SET GLOBAL on ANY dynamic variable is permitted. See
+    /// config::Config::variable_writes - a separate and much wider flag than
+    /// innodb_writes, off by default, and checked in the handler.
+    pub variable_writes: bool,
+
     /// Whether the restart links may run scripts/db-restart.sh. A separate
     /// flag from innodb_writes, and a bigger one: see config::Config.
     pub db_restart: bool,
@@ -84,6 +89,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mariadb", get(mariadb))
         .route("/api/mariadb/innodb", get(innodb))
         .route("/api/mariadb/variables", get(variables))
+        .route("/api/mariadb/variables/{name}", post(set_variable))
         .route("/api/mariadb/innodb/{name}", post(set_innodb))
         .route("/api/mariadb/innodb/{name}/persist", post(persist_innodb))
         // The two restart links. One route, because what differs between
@@ -1178,28 +1184,115 @@ struct InnodbReport {
 #[derive(Serialize)]
 struct VariablesReport {
     configured: bool,
+    /// Whether this backend will accept a write at all. The page asks so it
+    /// can say why a row has no control, rather than rendering one that is
+    /// refused on use.
+    writes_enabled: bool,
     variables: Vec<refused::Variable>,
 }
 
-/// The whole variable space, each row tagged with what changing it costs.
+/// The whole variable space, each row tagged with what changing it costs and
+/// with what the server will accept for it.
 ///
-/// No write path, deliberately. The InnoDB panel's writes are guarded by
-/// matching the submitted name against a row the server reports under
-/// `innodb%`; serving 700 names here does not widen that guard, and should
-/// not - a SET GLOBAL reachable for any variable the server has is a
-/// different decision from the one that was made for 137.
+/// This used to say "no write path, deliberately", on the grounds that a SET
+/// GLOBAL reachable for any variable the server has is a different decision
+/// from the one made for InnoDB's 137. That was right, and the decision has
+/// since been taken rather than drifted into: `set_variable` below is that
+/// write, it has a flag of its own rather than inheriting the InnoDB one, and
+/// the nine names that can take the server or GLPI down are set only on a
+/// second, informed request. The old reasoning is kept here because it is
+/// still the argument for every one of those guards.
 async fn variables(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     let Some(db) = state.db.as_ref() else {
         return Ok(Json(VariablesReport {
             configured: false,
+            writes_enabled: state.variable_writes,
             variables: Vec::new(),
         }));
     };
 
     Ok(Json(VariablesReport {
         configured: true,
+        writes_enabled: state.variable_writes,
         variables: db.variables().await?,
     }))
+}
+
+/// Set one system variable on the running server.
+///
+/// The general case of `set_innodb`, behind its own flag, and with one step
+/// that write does not have: a variable named in `glpi::hazard` is answered
+/// 409 with the reason the first time and only set when the caller comes back
+/// with `confirm`. The two-visit shape is the restart links' - preview, then
+/// commit - because the cost is invisible in the control that performs it.
+///
+/// 409 rather than 400 so the page can tell "come back and mean it" from "the
+/// server will not take that value", which look identical at 400 and need
+/// opposite things from the reader.
+async fn set_variable(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    Json(body): Json<VariableWrite>,
+) -> axum::response::Response {
+    if !state.variable_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "System variables are read-only in this backend. Start it with \
+                          GLPI_INV_VARIABLE_WRITES=1 to allow changes.",
+            })),
+        )
+            .into_response();
+    }
+    let Some(db) = state.db.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No database connection is configured, so there is no server to set."
+            })),
+        )
+            .into_response();
+    };
+
+    // Before the write and before any validation: what this asks the reader
+    // is whether they want the consequence, which does not depend on whether
+    // the value parses.
+    if let Some(why) = crate::glpi::hazard::hazard(&name) {
+        if !body.confirm {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "confirm_required": true,
+                    "name": name,
+                    "warning": why,
+                })),
+            )
+                .into_response();
+        }
+        tracing::warn!("confirmed hazard: SET GLOBAL {name} = {:?}", body.value);
+    }
+
+    match db.set_variable(&name, &body.value).await {
+        Ok(value) => {
+            tracing::info!("SET GLOBAL {name} = {:?}, now {value:?}", body.value);
+            Json(InnodbChange {
+                name,
+                requested: body.value,
+                value,
+            })
+            .into_response()
+        }
+        Err(e) => bad_request(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct VariableWrite {
+    value: String,
+    /// Absent means no. Only consulted for a name `glpi::hazard` knows; for
+    /// every other variable the first request is the only one.
+    #[serde(default)]
+    confirm: bool,
 }
 
 /// What a write did, in the server's terms rather than the page's.

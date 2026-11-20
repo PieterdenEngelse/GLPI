@@ -250,6 +250,40 @@ runs `scripts/db-restart.sh` behind `GLPI_INV_DB_RESTART`. Both are off by
 default. The findings below are what the deleted engine page established and
 are unaffected.)
 
+A third write landed on 2026-11-20: `POST /api/mariadb/variables/{name}`, the
+general case of the InnoDB one, behind its own `GLPI_INV_VARIABLE_WRITES`.
+**It is not a widening of the InnoDB flag and must not be folded into it.**
+That one admits 106 settings of one subsystem; this one admits every dynamic
+variable the server has — 484 of this server's 693, the other 209 being 196
+the server refuses at runtime and 13 that are SESSION ONLY and have no global
+value at all. `settable` on each row is what says which, and it is **not**
+`!read_only`: the live tier is cut on `READ_ONLY` alone, so those 13 sit in it
+and cannot be written.
+
+Three things about it worth not undoing:
+
+- **The validation was never InnoDB-specific.** `literal_for` builds its
+  literal from `VARIABLE_TYPE`, `ENUM_VALUE_LIST` and the numeric bounds that
+  `SYSTEM_VARIABLES` publishes for every row, and the name used in the SQL is
+  the server's own spelling of a row it just reported. Only the `LIKE
+  'INNODB%'` filter made the old write InnoDB-shaped. Keep the literal built
+  from a parsed number or a matched enum entry; never from submitted text.
+- **`glpi::hazard` is nine names that are valid to set and break something
+  else** — the connection limit that locks everyone out, the buffer pool this
+  host has not the memory for, the character set GLPI's tables are created
+  with. They are answered `409` with the reason and set only on a second
+  request carrying `confirm`. It is deliberately **not** a deny list; the deny
+  list is `db-restart.sh`'s `DENIED`, and the distinction is recoverability —
+  nothing in `hazard` leaves a server that cannot start, and everything in it
+  is recoverable only *from* a running one.
+- **`409` rather than `400` for the confirm case.** "Come back and mean it"
+  and "the server will not take that value" look identical at 400 and need
+  opposite things from the reader.
+
+SET GLOBAL only, so a change is the running server and not the next one.
+Persisting is still the separate InnoDB-only mechanism, and `persist_path` is
+unset on this install.
+
 ### Restarting the database: the OS decides, and the script asks
 
 `scripts/db-restart.sh` is the only thing that knows how. It detects the OS

@@ -79,6 +79,21 @@ pub struct Config {
     /// matters is the one in the handler.
     pub innodb_writes: bool,
 
+    /// Whether the variables pages may write. Off unless
+    /// GLPI_INV_VARIABLE_WRITES is set.
+    ///
+    /// Deliberately NOT the same flag as GLPI_INV_INNODB_WRITES, and not a
+    /// widening of it. That one admits 106 settings belonging to one
+    /// subsystem, each with help text the server itself supplies; this one
+    /// admits 484, which is every dynamic variable the server has - the
+    /// character set GLPI's tables are created with, the connection limit
+    /// that locks everyone out, the buffer pool this host has not got the
+    /// memory for. Reusing the InnoDB flag would have silently turned an
+    /// already-granted permission into a much larger one.
+    ///
+    /// It gates the endpoint, not just the control, for the reason above.
+    pub variable_writes: bool,
+
     /// The file MariaDB replays at startup, when one is configured.
     ///
     /// Absent by default, and the panel then says a change lasts until the
@@ -139,6 +154,7 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
             innodb_writes: enabled("GLPI_INV_INNODB_WRITES"),
+            variable_writes: enabled("GLPI_INV_VARIABLE_WRITES"),
         })
     }
 }

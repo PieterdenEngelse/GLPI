@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(api::AppState {
         static_dir,
         innodb_writes: cfg.innodb_writes,
+        variable_writes: cfg.variable_writes,
         db_restart: cfg.db_restart,
         // A path, not an open file: it is read and rewritten per request,
         // because it is also whatever someone edited on the server since.

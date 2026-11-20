@@ -1086,6 +1086,28 @@ pub struct Variable {
     /// unnamed group rather than failing to parse.
     #[serde(default)]
     pub group: String,
+    /// Whether SET GLOBAL can touch this at all, which is NOT `!read_only`:
+    /// a SESSION ONLY variable reports READ_ONLY = NO and still has no global
+    /// value. 13 rows on this server sit in the live tier and cannot be set.
+    #[serde(default)]
+    pub settable: bool,
+    /// The server's own word for the type, which decides the control.
+    #[serde(default)]
+    pub kind: String,
+    /// Everything an enum or boolean accepts. Empty for everything else, and
+    /// the reason a select can never propose a value the server refuses.
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub min: Option<String>,
+    #[serde(default)]
+    pub max: Option<String>,
+    #[serde(default)]
+    pub default: Option<String>,
+    /// Why this one needs confirming first, when it does. The backend decides
+    /// and sends the text - duplicating the list here would be two lists.
+    #[serde(default)]
+    pub hazard: Option<String>,
 }
 
 /// Every system variable the server has, in one response.
@@ -1093,8 +1115,61 @@ pub struct Variable {
 pub struct VariablesReport {
     #[serde(default)]
     pub configured: bool,
+    /// Whether this backend accepts writes at all. False is the default, so a
+    /// backend too old to say anything is read as refusing - the safe way for
+    /// that guess to be wrong.
+    #[serde(default)]
+    pub writes_enabled: bool,
     #[serde(default)]
     pub variables: Vec<Variable>,
+}
+
+/// What came back from trying to set a variable.
+///
+/// The confirm case is not an error and must not render as one: nothing has
+/// gone wrong, the server is intact, and what is being asked for is a second
+/// press with the consequence in view.
+pub enum SetOutcome {
+    Done(InnodbChange),
+    NeedsConfirmation(String),
+}
+
+/// Set one system variable on the running server.
+///
+/// `confirm` is only consulted for the nine names the backend guards; for
+/// everything else the first request is the only one. The 409 that asks for
+/// it is deliberately distinguished from the 400 that means the value itself
+/// is wrong, because they need opposite things from the reader.
+pub async fn set_variable(name: &str, value: &str, confirm: bool) -> Result<SetOutcome, String> {
+    let r = reqwest::Client::new()
+        .post(api_url(&format!("/api/mariadb/variables/{name}")))
+        .json(&serde_json::json!({ "value": value, "confirm": confirm }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if r.status().is_success() {
+        return r
+            .json::<InnodbChange>()
+            .await
+            .map(SetOutcome::Done)
+            .map_err(|e| e.to_string());
+    }
+
+    let status = r.status();
+    let body = r.json::<serde_json::Value>().await.ok();
+    if status == reqwest::StatusCode::CONFLICT {
+        if let Some(w) = body
+            .as_ref()
+            .and_then(|v| v.get("warning"))
+            .and_then(|w| w.as_str())
+        {
+            return Ok(SetOutcome::NeedsConfirmation(w.to_string()));
+        }
+    }
+    Err(body
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_string))
+        .unwrap_or_else(|| status.to_string()))
 }
 
 /// The whole variable space, about 700 rows. Its own request for the same
