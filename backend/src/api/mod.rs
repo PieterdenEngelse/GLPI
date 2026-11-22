@@ -26,6 +26,12 @@ use crate::glpi::{
 };
 
 pub struct AppState {
+    /// The Nix file the nginx page writes, when one is configured. Absent
+    /// means the page shows its settings and explains that nothing can be
+    /// changed until the one-time setup is done.
+    pub nginx_tuning: Option<crate::glpi::nginx_tuning::TuningFile>,
+    pub nginx_writes: bool,
+
     /// How long this process took to answer each of its own routes. Written
     /// by the middleware below on every /api request, read by one endpoint.
     pub timings: timing::Timings,
@@ -125,6 +131,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mariadb/history", get(status_history))
         .route("/api/php/history", get(php_history))
         .route("/api/nginx", get(nginx))
+        .route("/api/nginx/tuning", get(nginx_tuning))
+        .route("/api/nginx/tuning/{name}", post(set_nginx_tuning))
         .route("/api/self-timing", get(self_timing))
         .route("/api/mariadb/variables", get(variables))
         .route("/api/mariadb/variables/{name}", post(set_variable))
@@ -1520,6 +1528,139 @@ async fn rules(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, 
 /// whichever table is in front of you. `table_attributes` takes the name, so
 /// a picker is a UI away rather than a rewrite.
 const HEIDI_TABLE: &str = "glpi_alerts";
+
+/// One nginx setting as the page needs it: where it goes, what it is now,
+/// and whether it can be changed at all.
+#[derive(Serialize)]
+struct NginxTunable {
+    name: &'static str,
+    /// "append", "option" or "generated" - which of the three groups this is
+    /// in, and the only thing deciding whether the page draws a field.
+    group: &'static str,
+    /// For append and option, the NixOS attribute it sets. For generated,
+    /// the `recommended*` flag that already emits it.
+    via: &'static str,
+    /// What the tuning file currently asks for, if anything.
+    wanted: Option<String>,
+    /// What a value has to look like, for the field's own help.
+    accepts: &'static str,
+}
+
+#[derive(Serialize)]
+struct NginxTuningReport {
+    /// False when GLPI_INV_NGINX_TUNING names no file - the one-time root
+    /// step has not been done, so there is nowhere to write.
+    configured: bool,
+    /// False when the backend may read the file but not write it.
+    writable: bool,
+    path: Option<String>,
+    settings: Vec<NginxTunable>,
+}
+
+fn describe(wanted: &[(String, String)]) -> Vec<NginxTunable> {
+    use crate::glpi::nginx_tuning::{Kind, Route, TUNABLES};
+    TUNABLES
+        .iter()
+        .map(|t| {
+            let (group, via) = match t.route {
+                Route::Append(o) => ("append", o),
+                Route::Option_(o) => ("option", o),
+                Route::Generated(f) => ("generated", f),
+            };
+            NginxTunable {
+                name: t.name,
+                group,
+                via,
+                wanted: wanted
+                    .iter()
+                    .find(|(n, _)| n == t.name)
+                    .map(|(_, v)| v.clone()),
+                accepts: match t.kind {
+                    Kind::Count => "a whole number, or auto",
+                    Kind::Size => "a number with an optional k, m or g",
+                    Kind::Toggle => "on or off",
+                    Kind::Duration => "a number with an optional s, m or h",
+                    Kind::FileCache => "off, or max=N with an optional inactive=<time>",
+                    Kind::TlsProtocols => "TLSv1.2 and TLSv1.3, space separated",
+                },
+            }
+        })
+        .collect()
+}
+
+async fn nginx_tuning(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let wanted = state
+        .nginx_tuning
+        .as_ref()
+        .map(|f| f.current())
+        .unwrap_or_default();
+
+    Json(NginxTuningReport {
+        configured: state.nginx_tuning.is_some(),
+        writable: state.nginx_tuning.is_some() && state.nginx_writes,
+        path: state
+            .nginx_tuning
+            .as_ref()
+            .map(|f| f.path().display().to_string()),
+        settings: describe(&wanted),
+    })
+}
+
+/// Writes one setting into the tuning file. Applies nothing.
+///
+/// A rebuild is what makes this real, and the page says so - there is no
+/// endpoint here that runs one. That is not caution about the command; it is
+/// that `nixos-rebuild switch` needs root, rebuilds the whole system closure,
+/// and restarts whatever changed, none of which belongs behind a dashboard
+/// field.
+async fn set_nginx_tuning(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<VariableWrite>>,
+) -> axum::response::Response {
+    let Some(file) = state.nginx_tuning.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No tuning file is configured, so there is nowhere to keep this. \
+                          Set GLPI_INV_NGINX_TUNING, import the same path from the system \
+                          config, and git add it - /etc/nixos is a git repo and a flake \
+                          cannot see an untracked file.",
+            })),
+        )
+            .into_response();
+    };
+
+    if !state.nginx_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "nginx settings are read-only in this backend. Start it with \
+                          GLPI_INV_NGINX_WRITES=1 to allow changes.",
+            })),
+        )
+            .into_response();
+    }
+
+    // No body clears the setting, exactly as the variables endpoint does.
+    let value = body.map(|Json(b)| b.value);
+    match file.set(&name, value.as_deref()) {
+        Ok(set) => {
+            tracing::info!("nginx tuning: {name} -> {value:?} ({} set)", set.len());
+            Json(serde_json::json!({
+                "name": name,
+                "wanted": value,
+                "note": "Written. A nixos-rebuild switch is what applies it.",
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
 
 /// GLPI's own response times over a window, for the PHP history page.
 ///

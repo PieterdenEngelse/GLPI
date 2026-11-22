@@ -40,6 +40,11 @@ async fn main() -> Result<()> {
 
     let state = Arc::new(api::AppState {
         timings: Default::default(),
+        nginx_tuning: cfg
+            .nginx_tuning
+            .as_deref()
+            .map(crate::glpi::nginx_tuning::TuningFile::new),
+        nginx_writes: cfg.nginx_writes,
         started: std::time::Instant::now(),
         static_dir,
         innodb_writes: cfg.innodb_writes,

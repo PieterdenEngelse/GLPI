@@ -779,6 +779,186 @@ fn PhpHistoryPanel(window: String) -> Element {
     }
 }
 
+/// The settings this page can change, and the ones it cannot.
+///
+/// It writes a Nix file and nothing else. nginx's running config is a store
+/// path on a read-only mount and nginx has no runtime settings interface, so
+/// unlike the MariaDB variables page there is no "apply it now" at any
+/// price - the rebuild is the apply, and it is the reader's to run.
+///
+/// Three groups, and the third is the point. A directive already emitted by
+/// one of the recommended* flags cannot be written here: nginx refuses to
+/// start on a duplicate, so offering a field for it would hand the reader a
+/// control whose only effect is a web server that will not come back.
+#[component]
+fn NginxTuning() -> Element {
+    let report = use_resource(|| async move { api::fetch_nginx_tuning().await });
+    // The last refusal, which is where the useful text is: which flag owns
+    // the directive, or what the value should have looked like.
+    let notice = use_signal(|| None::<String>);
+
+    rsx! {
+        match &*report.read_unchecked() {
+            None | Some(Err(_)) => rsx! {},
+            Some(Ok(r)) => {
+                let r = r.clone();
+                rsx! {
+                    Panel {
+                        title: "Settings".to_string(),
+                        subtitle: if r.writable {
+                            "editable - a rebuild applies them".to_string()
+                        } else if r.configured {
+                            "read-only in this backend".to_string()
+                        } else {
+                            "no tuning file configured".to_string()
+                        },
+                        info: "nginx's running config is a Nix store path, mode 444 on a \
+                               read-only mount, and nginx has no runtime settings interface - \
+                               no equivalent of SET GLOBAL. So nothing here is applied by this \
+                               app. What a field does is write one line into a Nix file the \
+                               system config imports; nixos-rebuild switch is what makes it \
+                               real, and that is deliberately not a button.\n\n\
+                               WHY SOME HAVE NO FIELD. A directive the generated config \
+                               already contains cannot be added again - nginx refuses to \
+                               start on a duplicate, so the field would produce a web server \
+                               that does not come back. Those come from recommendedGzipSettings, \
+                               recommendedOptimisation and recommendedTlsSettings, and the row \
+                               names which. Changing one means turning its flag off and owning \
+                               the whole block it generates, which is a bigger decision than a \
+                               text field.\n\n\
+                               THE OTHERS DIVIDE IN TWO. Five directives are absent from the \
+                               generated config - measured, not assumed - so a tuning file may \
+                               add them. Three more are present but have a NixOS option that \
+                               REPLACES the generated line rather than repeating it.\n\n\
+                               VALUES ARE REBUILT, NOT ECHOED. What reaches the file is \
+                               assembled from the parts that matched a per-setting shape, so a \
+                               value is either one of the forms that setting takes or it is \
+                               refused by name."
+                            .to_string(),
+
+                        if !r.configured {
+                            div { class: "mb-3 alert alert-info text-sm",
+                                "No tuning file. Set GLPI_INV_NGINX_TUNING to a path the system \
+                                 config imports - and git add it, because /etc/nixos is a git \
+                                 repo and a flake cannot see an untracked file."
+                            }
+                        }
+                        if let Some(n) = notice() {
+                            div { class: "mb-3 alert alert-warning text-sm", "{n}" }
+                        }
+
+                        div { class: "overflow-x-auto",
+                            table { class: "table table-xs",
+                                thead {
+                                    tr {
+                                        th { "setting" }
+                                        th { "wanted" }
+                                        th { "goes to" }
+                                    }
+                                }
+                                tbody {
+                                    for t in r.settings.iter() {
+                                        tr { key: "{t.name}",
+                                            td { class: "font-mono text-xs whitespace-nowrap", "{t.name}" }
+                                            td {
+                                                if t.group == "generated" {
+                                                    span { class: "text-xs text-base-content/50", "set by the flag" }
+                                                } else {
+                                                    TuningField {
+                                                        name: t.name.clone(),
+                                                        wanted: t.wanted.clone().unwrap_or_default(),
+                                                        accepts: t.accepts.clone(),
+                                                        enabled: r.writable,
+                                                        notice,
+                                                        report,
+                                                    }
+                                                }
+                                            }
+                                            td {
+                                                class: if t.group == "generated" { "text-xs text-base-content/50" } else { "text-xs text-base-content/70" },
+                                                if t.group == "generated" {
+                                                    "{t.via}"
+                                                } else {
+                                                    "services.nginx.{t.via}"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(path) = r.path.as_ref() {
+                            p { class: "mt-2 text-xs text-base-content/60",
+                                "Written to {path}. Nothing above is in effect until:"
+                                code { class: "ml-1", "sudo nixos-rebuild switch" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One editable setting: a box, and a save that reports its own refusal.
+#[component]
+fn TuningField(
+    name: String,
+    wanted: String,
+    accepts: String,
+    enabled: bool,
+    notice: Signal<Option<String>>,
+    report: Resource<Result<api::NginxTuningReport, api::ApiError>>,
+) -> Element {
+    let mut draft = use_signal(|| wanted.clone());
+    let busy = use_signal(|| false);
+    // Compared against what the file says rather than against the last
+    // keystroke, so the control only offers to act when there is something
+    // to do.
+    let changed = draft() != wanted;
+
+    rsx! {
+        div { class: "flex items-center gap-1",
+            input {
+                class: "input input-xs input-bordered w-36 font-mono",
+                r#type: "text",
+                value: "{draft}",
+                disabled: !enabled || busy(),
+                placeholder: "{accepts}",
+                title: "{accepts}",
+                oninput: move |e| draft.set(e.value()),
+            }
+            if changed && enabled {
+                button {
+                    class: "btn btn-xs btn-primary",
+                    disabled: busy(),
+                    onclick: move |_| {
+                        let name = name.clone();
+                        let v = draft();
+                        let mut busy = busy;
+                        let mut notice = notice;
+                        let mut report = report;
+                        busy.set(true);
+                        notice.set(None);
+                        spawn(async move {
+                            // Empty clears the setting, which is how a value
+                            // is removed rather than set to nothing.
+                            let v = if v.trim().is_empty() { None } else { Some(v) };
+                            match api::set_nginx_tuning(&name, v.as_deref()).await {
+                                Ok(()) => report.restart(),
+                                Err(e) => notice.set(Some(format!("{name}: {e}"))),
+                            }
+                            busy.set(false);
+                        });
+                    },
+                    if busy() { "..." } else { "save" }
+                }
+            }
+        }
+    }
+}
+
 /// What this dashboard costs to answer its own requests.
 ///
 /// THE EXCEPTION TO THIS PAGE'S RULE, and the rule still holds everywhere
@@ -1988,6 +2168,8 @@ pub fn PerfNginx() -> Element {
             Some(Err(e)) => rsx! { FetchError { error: e.clone() } },
             Some(Ok(r)) => rsx! { NginxBody { report: r.clone() } },
         }
+
+        div { class: "mt-4", NginxTuning {} }
     }
 }
 
@@ -1995,17 +2177,110 @@ pub fn PerfNginx() -> Element {
 #[component]
 fn NginxBody(report: api::NginxReport) -> Element {
     // The pair the page exists for, when both were taken: nginx alone against
-    // nginx plus everything behind it.
+    // nginx plus everything behind it. By name, because a third probe landed
+    // between them and an index would have quietly compared the wrong two.
     let overhead = match (
-        report.probes.first().and_then(|p| p.median_ms),
-        report.probes.get(1).and_then(|p| p.median_ms),
+        report.probe("static file").and_then(|p| p.median_ms),
+        report.probe("through php-fpm").and_then(|p| p.median_ms),
     ) {
         (Some(a), Some(b)) if a > 0.0 && b > a => Some((a, b, b - a)),
         _ => None,
     };
+    // The third reading, which is a finding rather than a measurement of
+    // nginx: what a path nginx cannot serve costs once try_files has handed
+    // it to PHP.
+    let missing = report
+        .probe("a path that is not there")
+        .and_then(|p| p.median_ms.map(|ms| (ms, p.bytes.unwrap_or(0))));
 
     rsx! {
-        div { class: "grid gap-4 items-start lg:grid-cols-2",
+        // Capacity first and across the width: it is the only figure here that
+        // says what the server can take rather than what it is doing, and it
+        // is the one a reader checks before a load test.
+        if let Some(c) = report.capacity.clone() {
+            div { class: "mb-4",
+                Panel {
+                    title: "What it can take".to_string(),
+                    subtitle: match c.concurrent_requests {
+                        Some(n) => format!("about {n} proxied requests in flight"),
+                        None => "connection ceiling unknown".to_string(),
+                    },
+                    info: "The arithmetic, which is easy to get wrong in one direction: \
+                           capacity is worker_processes times worker_connections, and a \
+                           PROXIED request uses two of them - one to the client and one to \
+                           php-fpm - so the number of GLPI requests in flight is half the \
+                           total. Halved here rather than left to the reader, because the \
+                           halving is the part everyone forgets. Where the config does not \
+                           set a directive, nginx's own default is used and named below: an \
+                           unset directive still has a value, and a blank reading would read \
+                           as unlimited. somaxconn is the kernel's ceiling on a listen \
+                           backlog - a backlog above it is silently clamped, so the two are \
+                           worth seeing together."
+                        .to_string(),
+
+                    div { class: "flex flex-wrap items-baseline gap-x-8 gap-y-2",
+                        div {
+                            div { class: "text-2xl font-semibold", "{c.workers}" }
+                            div { class: "text-xs text-base-content/60",
+                                if c.workers_auto {
+                                    "workers (auto)"
+                                } else {
+                                    "worker process(es)"
+                                }
+                            }
+                        }
+                        div {
+                            div { class: "text-2xl font-semibold",
+                                if let Some(n) = c.connections_per_worker { "{n}" } else { "?" }
+                            }
+                            div { class: "text-xs text-base-content/60", "connections per worker" }
+                        }
+                        div {
+                            div { class: "text-2xl font-semibold",
+                                if let Some(n) = c.concurrent_requests { "{n}" } else { "?" }
+                            }
+                            div { class: "text-xs text-base-content/60",
+                                "proxied requests, at most"
+                            }
+                        }
+                        div {
+                            div { class: "text-2xl font-semibold",
+                                if let Some(n) = c.somaxconn { "{n}" } else { "?" }
+                            }
+                            div { class: "text-xs text-base-content/60", "somaxconn" }
+                        }
+                    }
+
+                    if !c.defaults_used.is_empty() {
+                        {
+                            let defaults = c.defaults_used.join(", ");
+                            rsx! {
+                                p { class: "mt-3 max-w-prose text-xs text-base-content/60",
+                                    "From nginx's defaults rather than from the config: "
+                                    span { class: "font-mono", "{defaults}" }
+                                    ". Worth knowing before changing either - a value nobody \
+                                     chose is a different thing from one somebody did."
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // The counters, when they exist at all. Full width above the rest for
+        // the same reason: accepts against handled is the one reading here
+        // that nothing else in this app can substitute for.
+        if let Some(st) = report.status.clone() {
+            div { class: "mb-4", NginxCounters { status: st } }
+        }
+
+        // Stacked, each across the full width. The timings are three rows and
+        // the settings are sixteen, so side by side meant one short panel
+        // beside a tall one and a column of white space under the short one.
+        // Full width also lets each panel lay its own content out
+        // horizontally, which is where the room actually goes.
+        div { class: "space-y-4",
             Panel {
                 title: "What a request costs before PHP".to_string(),
                 subtitle: "Taken now, five samples each".to_string(),
@@ -2014,50 +2289,85 @@ fn NginxBody(report: api::NginxReport) -> Element {
                        The static reading is the whole of what nginx costs: accept, resolve a \
                        path, read a file, write it out."
                     .to_string(),
-                div { class: "overflow-x-auto",
-                    table { class: "table table-sm",
-                        tbody {
-                            for p in report.probes.iter() {
-                                tr { key: "{p.url}",
-                                    td { class: "align-top",
-                                        div { class: "font-medium", "{p.what}" }
-                                        div { class: "mt-1 max-w-sm text-xs text-base-content/60",
-                                            "{p.detail}"
-                                        }
-                                        div { class: "mt-1 font-mono text-xs text-base-content/50",
-                                            "{p.url}"
-                                        }
-                                    }
-                                    td { class: "whitespace-nowrap align-top text-right",
-                                        if let Some(e) = p.error.clone() {
-                                            div { class: "text-xs text-error", "{e}" }
+                // Three cards across rather than three table rows: the rows
+                // were a narrow column of text with the whole right-hand side
+                // of a full-width panel empty beside them, and the three
+                // readings are meant to be compared with each other - side by
+                // side is how a comparison reads.
+                div { class: "grid gap-3 sm:grid-cols-2 lg:grid-cols-3",
+                    for p in report.probes.iter() {
+                        div {
+                            key: "{p.url}",
+                            class: "flex flex-col rounded-box border border-base-300 p-3",
+                            div { class: "flex flex-wrap items-baseline justify-between gap-x-2",
+                                span { class: "font-medium", "{p.what}" }
+                                if let Some(code) = p.status {
+                                    span {
+                                        class: if code == 200 {
+                                            "font-mono text-xs text-base-content/50"
                                         } else {
-                                            div { class: "font-mono text-sm",
-                                                if let Some(ms) = p.median_ms {
-                                                    "{ms:.2} ms"
-                                                } else {
-                                                    "no reading"
-                                                }
-                                            }
-                                            div { class: "text-xs text-base-content/60",
-                                                if let Some(ms) = p.best_ms {
-                                                    "best {ms:.2}"
-                                                }
-                                                if let Some(code) = p.status {
-                                                    " \u{b7} HTTP {code}"
-                                                }
-                                            }
-                                        }
+                                            // Not an error - the 404 is
+                                            // deliberate - but it is the
+                                            // reason that row is slow, so it
+                                            // should not read as an aside.
+                                            "font-mono text-xs text-warning"
+                                        },
+                                        "HTTP {code}"
                                     }
                                 }
+                            }
+
+                            if let Some(e) = p.error.clone() {
+                                div { class: "mt-2 text-xs text-error", "{e}" }
+                            } else {
+                                div { class: "mt-1 font-mono text-2xl",
+                                    if let Some(ms) = p.median_ms {
+                                        "{ms:.2} ms"
+                                    } else {
+                                        "no reading"
+                                    }
+                                }
+                                div { class: "text-xs text-base-content/60",
+                                    if let Some(ms) = p.best_ms {
+                                        "best {ms:.2}"
+                                    }
+                                    if let Some(n) = p.bytes {
+                                        " \u{b7} {n} B"
+                                    }
+                                    // The type is what decides whether
+                                    // gzip_types matched the response, so it
+                                    // belongs beside the encoding rather than
+                                    // in a column of its own.
+                                    match p.encoding.clone() {
+                                        Some(enc) => rsx! { " \u{b7} {enc}" },
+                                        None => rsx! {
+                                            span { class: "text-warning", " \u{b7} not compressed" }
+                                        },
+                                    }
+                                }
+                                if let Some(ct) = p.content_type.clone() {
+                                    div { class: "font-mono text-xs text-base-content/40", "{ct}" }
+                                }
+                            }
+
+                            // Pushed to the bottom so the figures line up
+                            // across the three cards whatever the detail
+                            // wraps to.
+                            p { class: "mt-2 grow text-xs text-base-content/60", "{p.detail}" }
+                            div { class: "mt-1 truncate font-mono text-xs text-base-content/40",
+                                "{p.url}"
                             }
                         }
                     }
                 }
 
-                if let Some((static_ms, php_ms, diff)) = overhead {
-                    div { class: "mt-4 border-t border-base-300 pt-3",
-                        p { class: "max-w-prose text-sm",
+                // The two readings-about-the-readings, side by side: both are
+                // short prose, and stacked they left the same right-hand gap
+                // the table did.
+                div { class: "mt-4 grid gap-x-6 gap-y-3 border-t border-base-300 pt-3 lg:grid-cols-2",
+                    if let Some((static_ms, php_ms, diff)) = overhead {
+                        div {
+                            p { class: "max-w-prose text-sm",
                             "nginx answers a file in "
                             span { class: "font-semibold", "{static_ms:.2} ms" }
                             " and a PHP page in "
@@ -2069,6 +2379,24 @@ fn NginxBody(report: api::NginxReport) -> Element {
                              is the same shape of comparison the DB page makes underneath."
                         }
                     }
+                }
+
+                if let Some((ms, bytes)) = missing {
+                    div {
+                        p { class: "max-w-prose text-sm",
+                            span { class: "font-medium", "A path that is not there costs " }
+                            span { class: "font-semibold", "{ms:.1} ms" }
+                            " and "
+                            span { class: "font-semibold", "{bytes} bytes" }
+                            ". That is not nginx refusing it: GLPI's vhost ends in \
+                             try_files $uri /index.php, so anything that is not a file on \
+                             disk is routed to PHP, which renders a full error page. One \
+                             mistyped asset reference in a theme or plugin therefore costs \
+                             a GLPI bootstrap on every page view that includes it - and it \
+                             shows up in nginx's access log as a 404, not as a slow page."
+                        }
+                    }
+                }
                 }
             }
 
@@ -2105,32 +2433,63 @@ fn NginxBody(report: api::NginxReport) -> Element {
                         }
                     }
                 } else {
-                    div { class: "overflow-x-auto",
-                        table { class: "table table-sm",
-                            tbody {
-                                for st in report.settings.iter() {
-                                    tr { key: "{st.name}",
-                                        td { class: "align-top",
-                                            div { class: "font-mono text-xs", "{st.name}" }
-                                            div { class: "mt-1 max-w-md text-xs text-base-content/60",
-                                                "{st.note}"
-                                            }
-                                        }
-                                        td { class: "whitespace-nowrap align-top font-mono text-sm",
-                                            if let Some(v) = st.value.clone() {
-                                                "{v}"
-                                            } else {
-                                                span { class: "text-base-content/40", "not set" }
-                                            }
+                    // Across the width rather than down it: sixteen directives
+                    // as table rows is a column of mostly empty space on any
+                    // screen wide enough to read this page on, and the
+                    // directives are independent of each other - nothing is
+                    // being compared down the column, so nothing is lost by
+                    // wrapping them.
+                    div { class: "grid gap-3 sm:grid-cols-2 xl:grid-cols-3",
+                        for st in report.settings.iter() {
+                            div {
+                                key: "{st.name}",
+                                class: "rounded-box border border-base-300 p-3",
+                                div { class: "flex flex-wrap items-baseline justify-between gap-x-3",
+                                    span { class: "font-mono text-xs", "{st.name}" }
+                                    span { class: "font-mono text-sm",
+                                        if let Some(v) = st.value.clone() {
+                                            "{v}"
+                                        } else {
+                                            span { class: "text-base-content/40", "not set" }
                                         }
                                     }
                                 }
+                                p { class: "mt-1 text-xs text-base-content/60", "{st.note}" }
                             }
                         }
                     }
 
                     if let Some(path) = report.config_path.clone() {
                         p { class: "mt-3 font-mono text-xs text-base-content/50", "{path}" }
+                    }
+                }
+
+                if !report.modules.is_empty() {
+                    div { class: "mt-4 border-t border-base-300 pt-3",
+                        div { class: "mb-2 text-xs font-medium text-base-content/70",
+                            "What this build can do"
+                        }
+                        ul { class: "grid gap-1 text-xs sm:grid-cols-2",
+                            for m in report.modules.iter() {
+                                li { key: "{m.flag}", class: "flex gap-2",
+                                    span {
+                                        class: if m.present {
+                                            "font-mono text-success"
+                                        } else {
+                                            "font-mono text-base-content/40"
+                                        },
+                                        if m.present { "yes" } else { "no" }
+                                    }
+                                    span {
+                                        span { class: "font-mono", "{m.flag}" }
+                                        span { class: "text-base-content/60", " - {m.note}" }
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(b) = report.binary.clone() {
+                            p { class: "mt-2 font-mono text-xs text-base-content/40", "{b}" }
+                        }
                     }
                 }
 
@@ -2141,6 +2500,105 @@ fn NginxBody(report: api::NginxReport) -> Element {
                          read - no request rate, no active connections, no accept backlog. \
                          Adding one to the vhost, bound to localhost, is what would turn \
                          this page from two timings into a history like the other two."
+                    }
+                }
+            }
+        }
+    }
+}
+/// nginx's own counters, and the two comparisons that matter in them.
+///
+/// Its own component because it renders only when a stub_status location
+/// exists - the minority case, and the page says how to create one when it
+/// does not.
+#[component]
+fn NginxCounters(status: api::NginxStatus) -> Element {
+    let dropped = status.dropped.unwrap_or(0);
+    let thin_keepalive = status.per_connection.is_some_and(|r| r < 1.5);
+
+    rsx! {
+        Panel {
+            title: "What it has been doing".to_string(),
+            subtitle: "Counters since the master started, not a rate now".to_string(),
+            info: "stub_status is the only thing nginx counts, and it counts since the \
+                   master process started - so a rate taken from it is an average over that \
+                   whole period rather than what is happening at this moment. Two \
+                   comparisons carry almost all of the value. ACCEPTS AGAINST HANDLED: if \
+                   they differ, nginx DROPPED connections, which happens when it runs out \
+                   of worker connections or file descriptors, and nothing else on this \
+                   install records that it happened. REQUESTS PER CONNECTION: at one, every \
+                   request paid its own connection setup and keepalive is buying nothing - \
+                   over TLS that is a handshake each time. Reading and Writing are \
+                   instantaneous rather than cumulative, and Writing includes time spent \
+                   waiting on php-fpm, which is why it rises when PHP is the bottleneck \
+                   rather than nginx."
+                .to_string(),
+
+            if let Some(e) = status.error.clone() {
+                div { class: "alert alert-warning text-sm",
+                    "The config has a stub_status location but it could not be read: {e}"
+                }
+            } else {
+                div { class: "flex flex-wrap items-baseline gap-x-8 gap-y-2",
+                    div {
+                        div { class: "text-2xl font-semibold",
+                            if let Some(n) = status.active { "{n}" } else { "?" }
+                        }
+                        div { class: "text-xs text-base-content/60", "active connections" }
+                    }
+                    div {
+                        div {
+                            class: if dropped > 0 {
+                                "text-2xl font-semibold text-error"
+                            } else {
+                                "text-2xl font-semibold"
+                            },
+                            "{dropped}"
+                        }
+                        div { class: "text-xs text-base-content/60",
+                            "dropped (accepts \u{2212} handled)"
+                        }
+                    }
+                    div {
+                        div { class: "text-2xl font-semibold",
+                            if let Some(n) = status.per_connection { "{n:.1}" } else { "?" }
+                        }
+                        div { class: "text-xs text-base-content/60",
+                            "requests per connection"
+                        }
+                    }
+                    div {
+                        div { class: "text-2xl font-semibold",
+                            if let Some(n) = status.requests { "{n}" } else { "?" }
+                        }
+                        div { class: "text-xs text-base-content/60", "requests served" }
+                    }
+                }
+
+                div { class: "mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-base-content/60",
+                    if let Some(n) = status.reading {
+                        span { "reading {n}" }
+                    }
+                    if let Some(n) = status.writing {
+                        span { "writing {n}" }
+                    }
+                    if let Some(n) = status.waiting {
+                        span { "waiting {n}" }
+                    }
+                    span { class: "font-mono text-base-content/40", "{status.url}" }
+                }
+
+                if dropped > 0 {
+                    p { class: "mt-3 max-w-prose text-sm text-error",
+                        "nginx dropped {dropped} connection(s). That is a connection or \
+                         file-descriptor limit rather than a slow page, and the capacity \
+                         figures above are where to look first."
+                    }
+                } else if thin_keepalive {
+                    p { class: "mt-3 max-w-prose text-sm",
+                        "About one request per connection, so keepalive is buying nothing: \
+                         every request is paying its own setup, and over TLS that is a \
+                         handshake each time."
                     }
                 }
             }

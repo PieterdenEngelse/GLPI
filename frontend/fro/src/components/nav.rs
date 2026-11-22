@@ -304,6 +304,40 @@ pub fn children(current: &Route) -> Vec<Node> {
                 matches!(current, Route::InvRefused {}),
             ),
         ],
+        // The three kept-readings pages that hang off /perf. Leaves rather
+        // than tabs because they are sibling routes, not tab state - and
+        // labelled for the system each one reads rather than for the shape of
+        // the data, matching the row of links on /perf itself: a reader
+        // choosing between them is choosing which layer to look at.
+        //
+        // Each carries the default window, so following one from the sidebar
+        // lands on the day. The window strip is on the page; putting four more
+        // entries in here would be a third level for state the page already
+        // shows.
+        Route::Perf {}
+        | Route::PerfHistory { .. }
+        | Route::PerfPhp { .. }
+        | Route::PerfNginx {} => vec![
+            leaf(
+                Route::PerfHistory {
+                    window: String::new(),
+                },
+                "MariaDB",
+                matches!(current, Route::PerfHistory { .. }),
+            ),
+            leaf(
+                Route::PerfPhp {
+                    window: String::new(),
+                },
+                "PHP",
+                matches!(current, Route::PerfPhp { .. }),
+            ),
+            leaf(
+                Route::PerfNginx {},
+                "nginx",
+                matches!(current, Route::PerfNginx {}),
+            ),
+        ],
         Route::TemplateRow {}
         | Route::TemplateValues {}
         | Route::TemplateForm {}

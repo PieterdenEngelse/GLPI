@@ -1872,6 +1872,108 @@ pub struct NginxProbe {
     pub status: Option<u16>,
     #[serde(default)]
     pub error: Option<String>,
+    /// What the server said it was sending, read rather than inferred from
+    /// the path.
+    #[serde(default)]
+    pub content_type: Option<String>,
+    /// `Content-Encoding` for a request made with `Accept-Encoding: gzip`.
+    /// None means it was sent whole.
+    #[serde(default)]
+    pub encoding: Option<String>,
+    #[serde(default)]
+    pub bytes: Option<usize>,
+}
+
+/// nginx's own counters, when a stub_status location exists.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxStatus {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub active: Option<u64>,
+    #[serde(default)]
+    pub accepts: Option<u64>,
+    #[serde(default)]
+    pub handled: Option<u64>,
+    #[serde(default)]
+    pub requests: Option<u64>,
+    /// accepts - handled: connections nginx dropped. The finding this
+    /// endpoint exists for.
+    #[serde(default)]
+    pub dropped: Option<u64>,
+    /// Requests per connection. At 1, keepalive is buying nothing.
+    #[serde(default)]
+    pub per_connection: Option<f64>,
+    #[serde(default)]
+    pub reading: Option<u64>,
+    #[serde(default)]
+    pub writing: Option<u64>,
+    #[serde(default)]
+    pub waiting: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// The connection ceiling, computed by the backend.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxCapacity {
+    #[serde(default)]
+    pub workers: usize,
+    #[serde(default)]
+    pub workers_auto: bool,
+    /// Inputs that came from nginx's defaults rather than from the config.
+    #[serde(default)]
+    pub defaults_used: Vec<String>,
+    #[serde(default)]
+    pub connections_per_worker: Option<usize>,
+    #[serde(default)]
+    pub connections: Option<usize>,
+    #[serde(default)]
+    pub concurrent_requests: Option<usize>,
+    #[serde(default)]
+    pub somaxconn: Option<usize>,
+}
+
+/// One build-time module, and whether this nginx has it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxModule {
+    #[serde(default)]
+    pub flag: String,
+    #[serde(default)]
+    pub present: bool,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// One nginx setting, and whether this page can change it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxTunable {
+    #[serde(default)]
+    pub name: String,
+    /// "append", "option" or "generated". Only the first two get a field.
+    #[serde(default)]
+    pub group: String,
+    /// The NixOS attribute it sets, or the recommended* flag that already
+    /// emits it.
+    #[serde(default)]
+    pub via: String,
+    /// What the tuning file currently asks for, if anything.
+    #[serde(default)]
+    pub wanted: Option<String>,
+    #[serde(default)]
+    pub accepts: String,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxTuningReport {
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub writable: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub settings: Vec<NginxTunable>,
 }
 
 /// The web server in front of GLPI, as far as it can be read.
@@ -1895,6 +1997,27 @@ pub struct NginxReport {
     pub settings: Vec<NginxSetting>,
     #[serde(default)]
     pub probes: Vec<NginxProbe>,
+    /// Empty when the binary could not be run, which is not the same as every
+    /// module being absent.
+    #[serde(default)]
+    pub modules: Vec<NginxModule>,
+    #[serde(default)]
+    pub binary: Option<String>,
+    #[serde(default)]
+    pub capacity: Option<NginxCapacity>,
+    /// None when the config has no stub_status location, which is the usual
+    /// case and is why the page reports its absence separately.
+    #[serde(default)]
+    pub status: Option<NginxStatus>,
+}
+
+impl NginxReport {
+    /// One probe by the name the backend gave it. By name rather than by
+    /// position: the probe list grew once already, and an index would have
+    /// silently pointed the comparison at a different reading.
+    pub fn probe(&self, what: &str) -> Option<&NginxProbe> {
+        self.probes.iter().find(|p| p.what == what)
+    }
 }
 
 pub async fn fetch_nginx() -> Result<NginxReport, ApiError> {
@@ -1904,6 +2027,39 @@ pub async fn fetch_nginx() -> Result<NginxReport, ApiError> {
 pub async fn fetch_php_history(window: &str) -> Result<StatusHistoryReport, ApiError> {
     let window = history_window(window);
     get_json::<StatusHistoryReport>(&format!("/api/php/history?window={window}")).await
+}
+
+pub async fn fetch_nginx_tuning() -> Result<NginxTuningReport, ApiError> {
+    get_json::<NginxTuningReport>("/api/nginx/tuning").await
+}
+
+/// Writes one nginx setting into the tuning file, or clears it with None.
+///
+/// Applies nothing - a rebuild does, and the page says so. Same shape as
+/// persist_variable above, including lifting the backend's own `error` out
+/// of the body: a refusal here explains itself (which recommended* flag
+/// already sets the directive, or what the value should look like) and a
+/// bare status code would throw that away.
+pub async fn set_nginx_tuning(name: &str, value: Option<&str>) -> Result<(), String> {
+    let req = reqwest::Client::new().post(api_url(&format!("/api/nginx/tuning/{name}")));
+    let req = match value {
+        Some(v) => req.json(&serde_json::json!({ "value": v })),
+        None => req,
+    };
+
+    let r = req.send().await.map_err(|e| e.to_string())?;
+    if r.status().is_success() {
+        return Ok(());
+    }
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
 }
 
 pub async fn fetch_self_timing() -> Result<SelfTimingReport, ApiError> {

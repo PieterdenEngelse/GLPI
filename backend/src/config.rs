@@ -60,6 +60,23 @@ pub struct Config {
     /// unattended install from offering it at all.
     pub db_restart: bool,
 
+    /// The Nix file the nginx page writes, or None when none is configured.
+    ///
+    /// Must be a path the system config IMPORTS, and - because /etc/nixos is
+    /// a git repo here and a flake only copies tracked files - one that has
+    /// been `git add`ed once. An untracked file is invisible to
+    /// nixos-rebuild and the import fails with "file not found", which reads
+    /// like a typo rather than like git.
+    pub nginx_tuning: Option<String>,
+
+    /// Whether the nginx page may write that file at all.
+    ///
+    /// Flagged, unlike the history sampler, because this one writes SYSTEM
+    /// configuration. It still applies nothing - a rebuild does - but a file
+    /// that changes what nginx is on the next rebuild is a different thing
+    /// from a table of readings.
+    pub nginx_writes: bool,
+
     /// Seconds between PHP timing samples, or None to take none.
     ///
     /// The ONE thing this app does that adds load to what it measures, which
@@ -162,6 +179,10 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
             db_restart: enabled("GLPI_INV_DB_RESTART"),
+            nginx_tuning: std::env::var("GLPI_INV_NGINX_TUNING")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            nginx_writes: enabled("GLPI_INV_NGINX_WRITES"),
             // Default on, unlike the write flags: this records into this
             // app's own schema and the page it feeds is useless without it.
             // Clamped at the bottom because a one-second interval would be
