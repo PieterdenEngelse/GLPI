@@ -39,6 +39,8 @@ async fn main() -> Result<()> {
     }
 
     let state = Arc::new(api::AppState {
+        timings: Default::default(),
+        started: std::time::Instant::now(),
         static_dir,
         innodb_writes: cfg.innodb_writes,
         variable_writes: cfg.variable_writes,
@@ -86,6 +88,39 @@ async fn main() -> Result<()> {
             logs::LogDir::new(d)
         }),
     });
+
+    // The app's own storage, created before it serves: the history panels
+    // read a schema that exists only because this ran. Deliberately NOT
+    // fatal - the account may not hold CREATE, or this may be a server the
+    // app only reads, and six of the seven pages do not care. The panel has
+    // a truthful "nothing is sampling" state for exactly this.
+    //
+    // Touches `glpi_inv` and nothing in `glpi`. See glpi::sampler.
+    if let Some(db) = state.db.as_ref() {
+        match db.ensure_sampler().await {
+            Ok(()) => tracing::info!(
+                "history sampler ready: {}.status_samples, one sample a minute",
+                glpi::sampler::SCHEMA
+            ),
+            Err(e) => tracing::warn!("history sampler unavailable, perf history disabled: {e:#}"),
+        }
+    }
+
+    // After ensure_sampler, which creates the table it writes into. Spawned
+    // only when there is both a database to record to and an interval
+    // configured - with neither, the PHP history page says nothing is being
+    // sampled, which is true and is a state it renders.
+    match (state.db.as_ref(), cfg.php_sample_seconds) {
+        (Some(db), Some(secs)) => glpi::php_sampler::spawn(
+            db.clone(),
+            cfg.glpi_url.clone(),
+            std::time::Duration::from_secs(secs),
+        ),
+        (None, Some(_)) => {
+            tracing::warn!("no database, so PHP timings are measured but cannot be kept")
+        }
+        (_, None) => tracing::info!("PHP sampling is off (GLPI_INV_PHP_SAMPLE_SECONDS=0)"),
+    }
 
     let app = api::router(state).layer(tower_http::trace::TraceLayer::new_for_http());
 

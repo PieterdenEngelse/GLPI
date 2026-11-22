@@ -20,6 +20,15 @@ pub fn StatTile(
     /// does not register.
     #[props(default = false)]
     alarm: bool,
+    /// A control belonging to this figure, rendered under the description.
+    ///
+    /// Distinct from `links`, which live inside the info modal and leave the
+    /// app for GLPI's own screens. This is for showing what the figure counts
+    /// without going anywhere - the rules tab unfolds its rule list with it.
+    /// Under the description rather than beside the title, so the figure
+    /// stays the thing the eye lands on.
+    #[props(default = None)]
+    action: Option<Element>,
 ) -> Element {
     rsx! {
         div { class: "stat",
@@ -32,6 +41,11 @@ pub fn StatTile(
                 "{value}"
             }
             div { class: "stat-desc", "{desc}" }
+            if let Some(a) = action {
+                // whitespace-normal: .stat-desc is nowrap, which would push a
+                // link of any length out past the tile instead of wrapping.
+                div { class: "stat-desc mt-1 whitespace-normal", {a} }
+            }
         }
     }
 }

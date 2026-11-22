@@ -21,7 +21,7 @@ pub use inv::{Inv, InvHardware, InvNetwork, InvRefused, InvSoftware};
 pub use logs::Logs;
 pub use netw::Netw;
 pub use not_found::PageNotFound;
-pub use perf::Perf;
+pub use perf::{Perf, PerfHistory, PerfNginx, PerfPhp};
 pub use rights::Rights;
 pub use screens::Screens;
 pub use sec::Sec;

@@ -37,11 +37,14 @@ pub mod init_file;
 pub mod innodb_help;
 pub mod inventory;
 pub mod legacy;
+pub mod nginx;
 pub mod perf;
+pub mod php_sampler;
 pub mod posture;
 pub mod refused;
 pub mod rights;
 pub mod rsql;
+pub mod sampler;
 pub mod schema_check;
 pub mod session;
 pub mod sessions;
@@ -214,6 +217,36 @@ impl Client {
             .map(str::to_string);
         let body = res.text().await.unwrap_or_default();
         Ok((status, content_range, body))
+    }
+
+    /// Whether GLPI will serve this path to this account at all.
+    ///
+    /// One request, one row, body discarded: the question is not what the
+    /// collection holds but whether asking would be refused. 403 is the only
+    /// answer treated as a no - it means GLPI served the route and declined,
+    /// which on a rule collection means the account's profile lacks READ on
+    /// that rule type. A 404 or a network failure is not a refusal and comes
+    /// back as an error, because "no such route" and "not for you" are
+    /// different findings and a page that merges them cannot say which to fix.
+    ///
+    /// Separate from `get_optional_at`, which is about a missing record. This
+    /// is about a permission, and the caller renders it rather than reporting
+    /// a failure.
+    pub async fn permits(&self, path: &str) -> Result<bool> {
+        let url = format!(
+            "{}/api.php/{}/{}?start=0&limit=1",
+            self.base,
+            HL_DEFAULT.trim_matches('/'),
+            path.trim_start_matches('/')
+        );
+        let (status, _, body) = self.fetch(&url).await?;
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Ok(false);
+        }
+        if !status.is_success() {
+            bail!("GLPI {url} returned {status}: {body}");
+        }
+        Ok(true)
     }
 
     /// GET a v2.3 path, e.g. "Inventory/Agent", walking it to the end.

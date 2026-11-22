@@ -67,6 +67,32 @@
   color: oklch(50% 0.18 45);
 }
 
+/* Chart ink for the perf page's history panels.
+
+   Declared the same way as .text-red-orange above and for the same reason:
+   the bare rule carries the DARK value because dark applies when no
+   data-theme is set, and light is the explicit override.
+
+   Two values rather than one because a hue that passes against #1a1a19 does
+   not pass against #fcfcfb - the dark step is lighter so it clears the dark
+   surface, and the light step is darker so it clears the light one. Both were
+   checked against their own surface rather than picked to look similar:
+   lightness band, chroma floor and 3:1 contrast, all PASS. A single hue that
+   "works in both" is the thing that check exists to refuse.
+
+   The grid is deliberately not a daisyUI token: base-300 is tuned to be a
+   visible border, and a gridline must sit one step off the surface and stay
+   recessive behind the line it is under. */
+:root {
+  --viz-line: #3987e5;
+  --viz-grid: #2e2e2c;
+}
+
+[data-theme="light"] {
+  --viz-line: #2a78d6;
+  --viz-grid: #e8e8e4;
+}
+
 /* Freeze the page while an info panel is open.
 
    Set as an attribute on the root element by components/info.rs, for the same

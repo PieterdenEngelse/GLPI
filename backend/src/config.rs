@@ -60,6 +60,16 @@ pub struct Config {
     /// unattended install from offering it at all.
     pub db_restart: bool,
 
+    /// Seconds between PHP timing samples, or None to take none.
+    ///
+    /// The ONE thing this app does that adds load to what it measures, which
+    /// is why it is the one sampler with a dial. Two unauthenticated GETs
+    /// per interval against GLPI - status.php and index.php - so at the
+    /// default that is 2880 requests a day against a local install. Set
+    /// GLPI_INV_PHP_SAMPLE_SECONDS=0 to stop sampling; the history page then
+    /// says nothing is being recorded rather than showing an empty chart.
+    pub php_sample_seconds: Option<u64>,
+
     /// Optional read of two of GLPI's own log files, for the Logs page.
     ///
     /// Absent by default and the page says so rather than showing empty
@@ -152,6 +162,18 @@ impl Config {
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
             db_restart: enabled("GLPI_INV_DB_RESTART"),
+            // Default on, unlike the write flags: this records into this
+            // app's own schema and the page it feeds is useless without it.
+            // Clamped at the bottom because a one-second interval would be
+            // a load generator rather than a sampler.
+            php_sample_seconds: match std::env::var("GLPI_INV_PHP_SAMPLE_SECONDS") {
+                Ok(v) => match v.trim().parse::<u64>() {
+                    Ok(0) => None,
+                    Ok(n) => Some(n.max(10)),
+                    Err(_) => Some(60),
+                },
+                Err(_) => Some(60),
+            },
             log_dir: std::env::var("GLPI_INV_LOG_DIR")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),

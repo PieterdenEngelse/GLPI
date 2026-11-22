@@ -57,19 +57,21 @@ pub const INSTRUCT_SUBS: [(&str, &str); 2] = [("general", "General"), ("template
 
 pub const RIGHTS_TABS: [(&str, &str); 3] =
     [("profiles", "Profiles"), ("api", "API"), ("db", "Database")];
-pub const DB_TABS: [(&str, &str); 4] = [
+pub const DB_TABS: [(&str, &str); 5] = [
     ("overview", "Overview"),
     ("db-read", "db-read"),
     ("api-read", "api-read"),
     ("maria", "Maria"),
+    ("rules", "rules"),
 ];
 
 /// Third-level names: the sub-tabs two of the DB tabs carry, as they appear in
 /// the URL's `sub`.
-pub const MARIA_SUBS: [(&str, &str); 3] = [
+pub const MARIA_SUBS: [(&str, &str); 4] = [
     ("general", "general"),
     ("storage", "storage"),
     ("databases", "db\u{2019}s"),
+    ("heidi", "heidi"),
 ];
 pub const API_SUBS: [(&str, &str); 3] =
     [("fields", "fields"), ("schema", "schema"), ("rsql", "rsql")];
@@ -184,6 +186,16 @@ pub fn destinations() -> Vec<Dest> {
 /// would light nothing at all.
 pub fn is_active(dest: &Route, current: &Route) -> bool {
     match dest {
+        // Perf lights for its history page too, which is reachable only
+        // from /perf - without this, following that link leaves the nav
+        // with nothing highlighted.
+        Route::Perf {} => matches!(
+            current,
+            Route::Perf {}
+                | Route::PerfHistory { .. }
+                | Route::PerfPhp { .. }
+                | Route::PerfNginx {}
+        ),
         Route::Inv {} => matches!(
             current,
             Route::Inv {}

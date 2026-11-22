@@ -987,6 +987,363 @@ pub struct MariadbReport {
     pub facts: Option<ServerFacts>,
 }
 
+/// One of GLPI's rule collections, counted.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct RuleCollection {
+    #[serde(default)]
+    pub rule_type: String,
+    /// GLPI's own label, translated by the install rather than by this app.
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub total: usize,
+    #[serde(default)]
+    pub active: usize,
+    /// Rules that refuse an import rather than letting it through. Zero for
+    /// every collection but the import one, where it is the whole point.
+    #[serde(default)]
+    pub denies: usize,
+    /// Rules carrying GLPI's "Skip remaining rules" action. Structurally zero
+    /// for a collection that already stops at the first match, which is why
+    /// the import tile does not report it.
+    #[serde(default)]
+    pub stops: usize,
+    /// The rules themselves, in GLPI's ranking order. Empty from a backend
+    /// that does not send them yet, which renders as a link with nothing
+    /// under it rather than as a failed page.
+    #[serde(default)]
+    pub rules: Vec<RuleSummary>,
+}
+
+/// One rule, as much of it as can be read without interpreting it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct RuleSummary {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub ranking: i64,
+    #[serde(default)]
+    pub is_active: bool,
+    /// Sets `_ignore_import`: this one can refuse a submission outright.
+    #[serde(default)]
+    pub denies: bool,
+    #[serde(default)]
+    pub criteria: usize,
+    #[serde(default)]
+    pub actions: usize,
+}
+
+/// The rule collections the rules tab tiles.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct RulesReport {
+    /// False when GLPI served no rule collections at all. Not the same as
+    /// empty collections, which is an answer.
+    #[serde(default)]
+    pub available: bool,
+    #[serde(default)]
+    pub collections: Vec<RuleCollection>,
+    /// Rule types GLPI declined to serve - a 403, meaning the account's
+    /// profile lacks READ on them. Their rules exist and are not in the counts
+    /// above, which is why this is rendered rather than ignored.
+    #[serde(default)]
+    pub refused: Vec<String>,
+}
+
+impl RulesReport {
+    /// One collection by GLPI's identifier. The tiles ask by name rather than
+    /// by position: the order is GLPI's and is not promised to anyone.
+    pub fn collection(&self, rule_type: &str) -> Option<&RuleCollection> {
+        self.collections.iter().find(|c| c.rule_type == rule_type)
+    }
+}
+
+/// One plugin as the server describes it. Every field defaulted, like the
+/// rest of this module: a backend that stops sending one degrades to a blank
+/// cell instead of failing the whole panel.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct Plugin {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub maturity: String,
+    /// None for a plugin compiled into the server binary, which is all of
+    /// them on this install.
+    #[serde(default)]
+    pub library: Option<String>,
+    #[serde(default)]
+    pub load_option: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// The plugins of one type, grouped and ordered by the backend.
+///
+/// The page does not sort these: largest group first is the backend's
+/// decision and re-sorting here would be two orders of the same list.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct PluginType {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub plugins: Vec<Plugin>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct PluginsReport {
+    /// False when the app has no database URL, exactly as MariadbReport uses
+    /// it: six empty groups and "cannot look" are opposite answers.
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub types: Vec<PluginType>,
+}
+
+/// One plotted point.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct StatusPoint {
+    #[serde(default)]
+    pub at: String,
+    #[serde(default)]
+    pub value: f64,
+}
+
+/// One counter over the window, already a rate where it needed to become one.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct StatusSeries {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub label: String,
+    /// This app's explanation, for the panel's info button. None for a
+    /// counter it has no note on.
+    #[serde(default)]
+    pub note: Option<String>,
+    #[serde(default)]
+    pub gauge: bool,
+    #[serde(default)]
+    pub unit: String,
+    #[serde(default)]
+    pub latest: f64,
+    #[serde(default)]
+    pub peak: f64,
+    #[serde(default)]
+    pub readings: usize,
+    #[serde(default)]
+    pub points: Vec<StatusPoint>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct StatusHistory {
+    #[serde(default)]
+    pub hours: u32,
+    /// The oldest sample found, which is not the window start: a sampler
+    /// started an hour ago has an hour of history.
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default)]
+    pub samples: usize,
+    /// Seconds from the oldest sample to the newest. None with fewer than
+    /// two samples.
+    #[serde(default)]
+    pub span_seconds: Option<u64>,
+    /// Counters the backend expects that the sampler is not writing.
+    #[serde(default)]
+    pub missing: Vec<String>,
+    #[serde(default)]
+    pub series: Vec<StatusSeries>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct StatusHistoryReport {
+    #[serde(default)]
+    pub configured: bool,
+    /// The window the backend actually served, by name. The page labels from
+    /// this rather than from what it requested, so an unknown name in the URL
+    /// shows as the day it was answered with.
+    #[serde(default)]
+    pub window: String,
+    /// How many days the sampler keeps. Why a year-long window can hold two
+    /// weeks of data, which is a fact about the sampler and not about the
+    /// server having been quiet.
+    #[serde(default)]
+    pub kept_days: u32,
+    /// False when nothing is sampling yet - no schema, no event, or the
+    /// scheduler off. Not the same as a window with no samples in it.
+    #[serde(default)]
+    pub sampling: bool,
+    #[serde(default)]
+    pub history: Option<StatusHistory>,
+}
+
+/// One of this backend's own routes, and what it costs to answer.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct RouteTiming {
+    /// The matched route, so a parameterised path stays one row.
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub count: u64,
+    #[serde(default)]
+    pub sampled: usize,
+    #[serde(default)]
+    pub median_ms: f64,
+    #[serde(default)]
+    pub p95_ms: f64,
+    #[serde(default)]
+    pub max_ms: f64,
+    #[serde(default)]
+    pub last_ms: f64,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SelfTimingReport {
+    #[serde(default)]
+    pub uptime_seconds: u64,
+    #[serde(default)]
+    pub routes: Vec<RouteTiming>,
+}
+
+/// Whether the slow query log is on and where it writes.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SlowLogSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub threshold_seconds: f64,
+    #[serde(default)]
+    pub log_output: String,
+    /// Readable over SQL. Without it there is nothing for the button to run.
+    #[serde(default)]
+    pub to_table: bool,
+    #[serde(default)]
+    pub to_file: bool,
+    #[serde(default)]
+    pub file: String,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SlowLogReport {
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub settings: Option<SlowLogSettings>,
+}
+
+/// One logged query. `rows_examined` against `rows_sent` is the field pair
+/// worth reading - the duration says it was slow, the ratio says why.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SlowQuery {
+    #[serde(default)]
+    pub start_time: String,
+    #[serde(default)]
+    pub seconds: f64,
+    #[serde(default)]
+    pub lock_seconds: f64,
+    #[serde(default)]
+    pub rows_sent: u64,
+    #[serde(default)]
+    pub rows_examined: u64,
+    #[serde(default)]
+    pub db: String,
+    #[serde(default)]
+    pub sql_text: String,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SlowLogEntries {
+    #[serde(default)]
+    pub total: u64,
+    #[serde(default)]
+    pub entries: Vec<SlowQuery>,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct SlowLogEntriesReport {
+    #[serde(default)]
+    pub configured: bool,
+    /// False when log_output omits TABLE: the table is then empty by design,
+    /// which is not the same as nothing being slow.
+    #[serde(default)]
+    pub to_table: bool,
+    #[serde(default)]
+    pub limit: u32,
+    #[serde(default)]
+    pub entries: Option<SlowLogEntries>,
+}
+
+/// One attribute of a GLPI table, carrying each property a client shows for
+/// it.
+///
+/// Duplicates the backend's struct deliberately, as every type here does, and
+/// every field is `Option` or defaulted for the same reason: a backend that
+/// drops a field should blank one cell rather than fail the whole page.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct Attribute {
+    #[serde(default)]
+    pub position: u32,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub datatype: String,
+    /// None where the type takes no parenthesised part, as `timestamp` does.
+    #[serde(default)]
+    pub length_set: Option<String>,
+    #[serde(default)]
+    pub unsigned: bool,
+    #[serde(default)]
+    pub allow_null: bool,
+    #[serde(default)]
+    pub zerofill: bool,
+    /// None is the designer's "No default" - nothing to fall back on, so the
+    /// attribute must be given a value. Distinct from a default of NULL.
+    #[serde(default)]
+    pub default: Option<String>,
+    #[serde(default)]
+    pub comment: String,
+    #[serde(default)]
+    pub collation: Option<String>,
+    #[serde(default)]
+    pub expression: Option<String>,
+    #[serde(default)]
+    pub virtuality: Option<String>,
+    #[serde(default)]
+    pub invisible: bool,
+    #[serde(default)]
+    pub compressed: bool,
+    /// PRI, MUL, UNI or empty - what the designer draws as key icons.
+    #[serde(default)]
+    pub key: String,
+}
+
+/// One property, as the backend sends it: heading, where its value is read
+/// from, and what it means.
+///
+/// A tuple rather than a struct because that is the shape the backend's const
+/// is in, and naming it twice would be two places to keep in step.
+pub type AttributeProperty = (String, String, String);
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct AttributesReport {
+    /// False when the app has no database URL. Applies to `attributes` only -
+    /// `properties` is the app's own list and arrives either way.
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub table: String,
+    /// How many tables the schema holds, so the page can say what this one is
+    /// one of. None when the database cannot be read.
+    #[serde(default)]
+    pub tables_total: Option<usize>,
+    #[serde(default)]
+    pub attributes: Vec<Attribute>,
+    #[serde(default)]
+    pub properties: Vec<AttributeProperty>,
+}
+
 /// One group of InnoDB settings. The grouping is the backend's, and the
 /// order of the groups is the order they are rendered in - the panel does
 /// not sort them, because the order is a reading order rather than
@@ -1438,4 +1795,123 @@ pub async fn fetch_perf() -> Result<PerfReport, ApiError> {
 
 pub async fn fetch_mariadb() -> Result<MariadbReport, ApiError> {
     get_json::<MariadbReport>("/api/mariadb").await
+}
+
+pub async fn fetch_plugins() -> Result<PluginsReport, ApiError> {
+    get_json::<PluginsReport>("/api/mariadb/plugins").await
+}
+
+pub async fn fetch_rules() -> Result<RulesReport, ApiError> {
+    get_json::<RulesReport>("/api/rules").await
+}
+
+pub async fn fetch_attributes() -> Result<AttributesReport, ApiError> {
+    get_json::<AttributesReport>("/api/mariadb/attributes").await
+}
+
+pub async fn fetch_slow_log() -> Result<SlowLogReport, ApiError> {
+    get_json::<SlowLogReport>("/api/mariadb/slow-log").await
+}
+
+/// The windows the history page offers, matching the backend's own list.
+///
+/// Duplicated deliberately, like every other type in this module: the pair
+/// drifting apart degrades to the backend serving its default, which the page
+/// then draws and labels from the response rather than from what it asked for.
+pub const HISTORY_WINDOWS: [&str; 4] = ["day", "week", "month", "year"];
+
+/// One window by name, or the default.
+///
+/// The name reaches this from the URL, so it is matched against the list
+/// rather than interpolated: a window is one of four words, and anything else
+/// is a stale bookmark to answer with the day rather than a string to pass on
+/// into a query parameter.
+pub fn history_window(asked: &str) -> &'static str {
+    let asked = asked.trim().to_ascii_lowercase();
+    HISTORY_WINDOWS
+        .iter()
+        .find(|w| **w == asked)
+        .copied()
+        .unwrap_or(HISTORY_WINDOWS[0])
+}
+
+pub async fn fetch_status_history(window: &str) -> Result<StatusHistoryReport, ApiError> {
+    let window = history_window(window);
+    get_json::<StatusHistoryReport>(&format!("/api/mariadb/history?window={window}")).await
+}
+
+/// GLPI's own response times, in the same shape as the MariaDB counters so
+/// the two pages share every chart component between them.
+/// One nginx directive as the running config has it.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxSetting {
+    #[serde(default)]
+    pub name: String,
+    /// None where the directive is absent, which is a reading rather than a
+    /// gap: nginx then uses its own default.
+    #[serde(default)]
+    pub value: Option<String>,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// One timing taken through nginx.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxProbe {
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub median_ms: Option<f64>,
+    #[serde(default)]
+    pub best_ms: Option<f64>,
+    #[serde(default)]
+    pub status: Option<u16>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+/// The web server in front of GLPI, as far as it can be read.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxReport {
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub config_path: Option<String>,
+    #[serde(default)]
+    pub config_readable: bool,
+    #[serde(default)]
+    pub workers: usize,
+    /// Whether a stub_status location exists. The difference between this
+    /// page having live counters and having none.
+    #[serde(default)]
+    pub stub_status: bool,
+    #[serde(default)]
+    pub settings: Vec<NginxSetting>,
+    #[serde(default)]
+    pub probes: Vec<NginxProbe>,
+}
+
+pub async fn fetch_nginx() -> Result<NginxReport, ApiError> {
+    get_json::<NginxReport>("/api/nginx").await
+}
+
+pub async fn fetch_php_history(window: &str) -> Result<StatusHistoryReport, ApiError> {
+    let window = history_window(window);
+    get_json::<StatusHistoryReport>(&format!("/api/php/history?window={window}")).await
+}
+
+pub async fn fetch_self_timing() -> Result<SelfTimingReport, ApiError> {
+    get_json::<SelfTimingReport>("/api/self-timing").await
+}
+
+/// The query behind the perf tile's button. Separate from the settings
+/// because it costs a full scan of a CSV table and the settings do not.
+pub async fn fetch_slow_log_entries() -> Result<SlowLogEntriesReport, ApiError> {
+    get_json::<SlowLogEntriesReport>("/api/mariadb/slow-log/entries").await
 }

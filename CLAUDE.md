@@ -250,6 +250,41 @@ runs `scripts/db-restart.sh` behind `GLPI_INV_DB_RESTART`. Both are off by
 default. The findings below are what the deleted engine page established and
 are unaffected.)
 
+A fourth write landed on 2026-11-21, and it is the only one that is **not**
+behind a flag: the backend creates `glpi_inv` - its own schema - at startup,
+with a `status_samples` table and a `sample_status` EVENT that snapshots 16
+`GLOBAL_STATUS` counters a minute and prunes past 14 days. It also sets
+`event_scheduler = ON`, because an event that exists and never fires leaves
+an empty table and reports nothing.
+
+**Why no flag, when the other three have one.** Those gate changes to
+something someone else owns - the server's running configuration, its startup
+file, its lifecycle - where the blast radius is the whole install. This
+creates one schema belonging to this app and writes rows to it. A flag would
+also defeat it: off by default leaves every fresh install with no sampler,
+which is the thing it exists to fix.
+
+**What has not moved**: nothing here touches `glpi`. A history table inside
+GLPI's schema would have broken that rule for a dashboard's convenience, and
+`glpi::sampler` has a test asserting the generated SQL never qualifies
+anything with `glpi.`.
+
+Three things worth not undoing:
+
+- **It never fails startup.** The account may not hold CREATE, or this may be
+  a server the app only reads. Six of the seven pages do not care, so a
+  failure is logged and the history panel renders its "nothing is sampling"
+  state, which is already a state it has and a truthful one.
+- **The event is generated from `SAMPLED_COUNTERS`**, not written out beside
+  it. The counter list existed in two places for a day - an `IN` list on the
+  server and the Rust const - and they drift silently. `StatusHistory::missing`
+  was built to report that drift and is kept for the case it still catches: an
+  event edited by hand on the server.
+- **`IF NOT EXISTS` on the schema and table, `CREATE OR REPLACE` on the
+  event.** Existing samples are never dropped; the event holds no state, only
+  a schedule, so replacing it costs nothing and lets a changed counter list
+  take effect on the next start without a migration.
+
 A third write landed on 2026-11-20: `POST /api/mariadb/variables/{name}`, the
 general case of the InnoDB one, behind its own `GLPI_INV_VARIABLE_WRITES`.
 **It is not a widening of the InnoDB flag and must not be folded into it.**
@@ -310,9 +345,11 @@ persistable either.
 both the InnoDB panel and the variables pages. There is one file and one
 format; only what `SET GLOBAL` can set may go in it.
 
-**Making it work is a one-time root step this app cannot do**, and until it is
-done `persist_path` is None and the pages say a change does not outlive a
-restart:
+**This was a one-time root step, and it has been done** - on this machine the
+directory, the file, the `my.cnf` entry and `GLPI_INV_INIT_FILE` all exist, so
+`persist_path` is set and the pages say a change outlives a restart. The setup
+is kept here because it is what a new machine needs, and because the three
+traps below are what made it take two attempts:
 
 ```nix
 services.mysql.settings.mysqld.init_file = "/var/lib/glpi-inv-init/persist.sql";

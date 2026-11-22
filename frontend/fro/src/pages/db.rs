@@ -35,7 +35,7 @@ pub fn Db(tab: String, sub: String) -> Element {
 
     // Names, not indices, so a reordered strip cannot change what an existing
     // link points at. Unknown or absent is Overview, never an error.
-    const TABS: [&str; 5] = ["overview", "db-read", "api-read", "maria", "vars"];
+    const TABS: [&str; 6] = ["overview", "db-read", "api-read", "maria", "vars", "rules"];
     let at = TABS.iter().position(|t| *t == tab).unwrap_or(0);
 
     rsx! {
@@ -92,7 +92,9 @@ pub fn Db(tab: String, sub: String) -> Element {
             }
         }
 
-        if at == 4 {
+        if at == 5 {
+            Rules {}
+        } else if at == 4 {
             Vars { sub: sub.clone() }
         } else if at == 3 {
             Maria { sub: sub.clone() }
@@ -262,8 +264,9 @@ not arrive.";
 /// What the server is and what GLPI asks of it, as distinct from what GLPI
 /// puts in it.
 ///
-/// A container for three sub-tabs: general for the server itself, storage for
-/// the choices GLPI's installer makes, db's for what else is on the server.
+/// A container for four sub-tabs: general for the server itself, storage for
+/// the choices GLPI's installer makes, db's for what else is on the server,
+/// heidi for the client that connects to it.
 /// There was a fourth, engine, carrying a tab per storage engine and a
 /// control that could move a GLPI table between them. It is gone: GLPI wraps
 /// each inventory import in one transaction (Inventory.php:328), so a GLPI
@@ -283,12 +286,894 @@ fn Maria(sub: String) -> Element {
 
     rsx! {
 
-        if at == 2 {
+        if at == 3 {
+            Heidi {}
+        } else if at == 2 {
             Databases {}
         } else if at == 1 {
             MariaStorage {}
         } else {
             MariaGeneral {}
+        }
+    }
+}
+
+/// What GLPI does on its own - the rules tab.
+///
+/// On this page rather than a page of its own because it is the same question
+/// the rest of the page asks: which of GLPI's behaviours are data you can read
+/// and which are program. A rule is the awkward middle - it is a row, so it
+/// looks readable, but what it DOES is a criteria tree and an action list
+/// interpreted by PHP, and nothing about its effect follows from counting it.
+#[component]
+fn Rules() -> Element {
+    let report = use_resource(|| async move { api::fetch_rules().await });
+
+    rsx! {
+        match &*report.read_unchecked() {
+            None => rsx! {
+                div { class: "flex items-center gap-2 text-sm text-base-content/60",
+                    span { class: "loading loading-spinner loading-sm" }
+                    "Asking GLPI for its rule collections\u{2026}"
+                }
+            },
+            Some(Err(e)) => rsx! { FetchError { error: e.clone() } },
+            Some(Ok(r)) if !r.available => rsx! {
+                div { class: "alert alert-info text-sm",
+                    "GLPI served no rule collections. That is not an install without rules - \
+                     it is this profile being unable to read them, or a GLPI without the \
+                     Rule controller, and the difference matters enough not to render it as \
+                     a zero."
+                }
+            },
+            Some(Ok(r)) => rsx! { RuleTiles { report: r.clone() } },
+        }
+    }
+}
+
+/// One tile's rules, as a table under the stats row rather than inside the
+/// tile.
+///
+/// The tiles are a stats strip and a list of 71 inside one would break it, so
+/// the list unfolds below both tiles and names which one it belongs to. What
+/// it shows is deliberately thin: GLPI's own name, its rank, whether it is
+/// switched on, and how much criteria and action there is to interpret. It
+/// does not show the criteria themselves - those are a tree PHP evaluates,
+/// and rendering them as rows would read as this app knowing what they do.
+#[component]
+fn RuleList(
+    title: String,
+    subtitle: String,
+    note: String,
+    /// The business list merges three collections and has to say which;
+    /// the import list is one collection and the column would be noise.
+    show_collection: bool,
+    /// Only the import collection can refuse, so the column exists only
+    /// where it means something rather than being blank everywhere else.
+    show_denies: bool,
+    rules: Vec<(String, api::RuleSummary)>,
+) -> Element {
+    rsx! {
+        Panel {
+            title,
+            subtitle,
+            info: note,
+            if rules.is_empty() {
+                div { class: "text-sm text-base-content/60",
+                    "GLPI served the count but not the rules. That is a backend older than \
+                     this page, not a collection that emptied."
+                }
+            } else {
+                div { class: "overflow-x-auto",
+                    table { class: "table table-xs",
+                        thead {
+                            tr {
+                                th { "rank" }
+                                if show_collection {
+                                    th { "collection" }
+                                }
+                                th { "name" }
+                                th { "active" }
+                                if show_denies {
+                                    th { "refuses" }
+                                }
+                                th { "criteria" }
+                                th { "actions" }
+                            }
+                        }
+                        tbody {
+                            for (collection , r) in rules.iter() {
+                                tr {
+                                    key: "{collection}-{r.ranking}-{r.name}",
+                                    // A switched-off rule fires on nothing, so
+                                    // it is dimmed rather than listed as an
+                                    // equal of the ones that run.
+                                    class: if r.is_active { "" } else { "opacity-50" },
+                                    td { class: "text-base-content/50", "{r.ranking}" }
+                                    if show_collection {
+                                        td { class: "whitespace-nowrap text-xs", "{collection}" }
+                                    }
+                                    td { "{r.name}" }
+                                    td { {if r.is_active { "\u{2713}" } else { "" }} }
+                                    if show_denies {
+                                        td {
+                                            class: if r.denies { "text-warning" } else { "" },
+                                            {if r.denies { "refuses" } else { "" }}
+                                        }
+                                    }
+                                    td { class: "text-base-content/60", "{r.criteria}" }
+                                    td { class: "text-base-content/60", "{r.actions}" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The two tiles, and what neither is a measure of.
+///
+/// Side by side because they are the same mechanism pointed at two different
+/// moments: one runs when a person touches a ticket, the other when an agent
+/// submits an inventory. The second is the one this app exists around, which
+/// is why it is not buried in the collection list below.
+#[component]
+fn RuleTiles(report: api::RulesReport) -> Element {
+    // The three GLPI calls business rules, summed: they are one feature, and
+    // two of them being empty belongs in the same sentence as the third
+    // having two.
+    let business: Vec<&api::RuleCollection> = ["Ticket", "Change", "Problem"]
+        .iter()
+        .filter_map(|t| report.collection(t))
+        .collect();
+    let b_total: usize = business.iter().map(|c| c.total).sum();
+    let b_active: usize = business.iter().map(|c| c.active).sum();
+    let b_breakdown = business
+        .iter()
+        .map(|c| format!("{} {}", c.total, c.rule_type.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ");
+
+    // Only the business collections can carry it, so it is summed over the
+    // same three the first tile counts rather than over everything.
+    let b_stops: usize = business.iter().map(|c| c.stops).sum();
+
+    let import = report.collection("ImportAsset");
+
+    // Which tile's rules are unfolded, or neither. One at a time: the two
+    // lists are 2 rows and 71, and side by side the short one would be read
+    // as a continuation of the long one. Not mut - each link takes its own
+    // copy to write through.
+    let open = use_signal(|| None::<&'static str>);
+
+    rsx! {
+        div { class: "stats stats-vertical sm:stats-horizontal mb-5 w-full border border-base-300 bg-base-100 shadow-sm",
+            StatTile {
+                title: "Business rules".to_string(),
+                value: b_total.to_string(),
+                desc: if b_total == 0 {
+                    "none defined".to_string()
+                } else {
+                    format!("{b_active} active \u{b7} {b_breakdown}")
+                },
+                body: "GLPI's own term, and it means three collections and no others: \
+                       business rules for tickets, for changes and for problems. They run \
+                       when one of those is created or updated, and they can set fields on \
+                       it without anyone asking - assign a group or a technician, set a \
+                       category or a priority, take the location from the affected item. \
+                       The two this install ships are both of that last kind. Read live from \
+                       GLPI's Rule controller, one request per collection, so the figure is \
+                       scoped to this profile and these entities rather than counted off \
+                       the glpi_rules table, which would report rules the caller cannot \
+                       see. Two things the number does not tell you. It is not a count of \
+                       everything GLPI calls a rule - measured on 2026-11-20, this install \
+                       holds 91 rules across nine collections, and the import rules in the \
+                       tile beside this one are not business rules and are not counted \
+                       here. And a rule that exists may do nothing at all, because each \
+                       carries its own is_active - which is why this tile reports the \
+                       active count beside the total rather than the total alone. What a \
+                       rule WILL do is not readable from any count - its criteria tree and \
+                       action list are interpreted by PHP, which is the same line this \
+                       whole page draws between GLPI's data and GLPI's program."
+                    .to_string(),
+                links: vec![InfoLink::new("Rules", "front/rule.php")],
+                action: rsx! {
+                    button {
+                        class: if open() == Some("business") { "link link-primary font-semibold" } else { "link link-primary" },
+                        onclick: move |_| {
+                            let mut slot = open;
+                            if slot() == Some("business") { slot.set(None) } else { slot.set(Some("business")) }
+                        },
+                        if open() == Some("business") { "hide the rules" } else { "show the rules" }
+                    }
+                },
+            }
+
+            if let Some(c) = import {
+                StatTile {
+                    title: "Import rules".to_string(),
+                    value: c.total.to_string(),
+                    desc: format!("{} active \u{b7} {} can refuse", c.active, c.denies),
+                    body: "The rules that decide what happens to an inventory submission \
+                           before it becomes anything: GLPI runs this collection against \
+                           every agent report that arrives. They are a RANKED list and the \
+                           first match wins, so the number says nothing on its own - rule 1 \
+                           can end the matter for every submission that reaches it, and a \
+                           rule ranked last fires only on what the 70 above it did not \
+                           claim. What they match on is identity: serial, uuid, mac \
+                           address, name, and whether the report is partial. What they then \
+                           do is one of three things - link the report to an asset that \
+                           already exists, let a new asset be created, or refuse it \
+                           outright. The refusals are the ones this app is built around. A \
+                           rule refuses by setting _ignore_import, GLPI names them plainly \
+                           - Computer import denied, Printer import denied, No creation on \
+                           partial import, the constraint rules - and a submission that \
+                           lands on one gets written to glpi_refusedequipments with the \
+                           rule's own id, which is the table the Refused page reads and the \
+                           only record that the submission ever happened. The agent is told \
+                           nothing: it exits 0 and its log says the report was sent. That \
+                           is the failure this whole app exists to surface, and these are \
+                           the rules that cause it. Measured on 2026-11-20: 17 of the 71 \
+                           can refuse and all 17 are active, the 14 switched off are the \
+                           by-mac and by-uuid matching variants, and \
+                           glpi_refusedequipments holds no rows - so nothing has ever \
+                           actually been refused on this install, which is a finding rather \
+                           than a gap."
+                        .to_string(),
+                    links: vec![InfoLink::new("Rules", "front/rule.php")],
+                    action: rsx! {
+                        button {
+                            class: if open() == Some("import") { "link link-primary font-semibold" } else { "link link-primary" },
+                            onclick: move |_| {
+                                let mut slot = open;
+                                if slot() == Some("import") { slot.set(None) } else { slot.set(Some("import")) }
+                            },
+                            if open() == Some("import") { "hide the rules" } else { "show the rules" }
+                        }
+                    },
+                }
+            }
+
+            StatTile {
+                title: "Skip remaining rules".to_string(),
+                value: b_stops.to_string(),
+                desc: if b_total == 0 {
+                    "no business rules to skip".to_string()
+                } else {
+                    format!("of {b_total} business rules")
+                },
+                body: "The one action whose effect is on the other rules rather than on \
+                       the ticket, and the answer to what happens when a rule chain gets \
+                       long. Why it exists: the two collections on this tab are \
+                       evaluated differently. The import rules stop at the first match - \
+                       RuleImportAssetCollection sets stop_on_first_match true - so GLPI \
+                       walks them in rank order and quits as soon as one claims the \
+                       submission. Business rules do not: RuleCollection leaves that \
+                       false and RuleTicketCollection does not override it, so every \
+                       active rule is evaluated against every ticket create and update, \
+                       and every rule whose criteria hold gets to act. That is linear in \
+                       active rules, paid inside the request that creates the ticket. \
+                       The escape hatch is a rule action, not a setting: \
+                       Rule::getActions offers _stop_rules_processing, labelled Skip \
+                       remaining rules in the interface, and RuleCollection honours it \
+                       by ending the chain for whatever that rule matched. Where you can \
+                       use it: getActions adds it only when the collection does not \
+                       already stop on first match, so it appears on a business rule and \
+                       never on an import one - GLPI hides the hatch exactly where it \
+                       would be redundant. There is no maximum number of rules anywhere \
+                       in GLPI; the ceilings are glpi_rules.id as an unsigned int and \
+                       ranking as a signed one, which nobody will reach, so the thing \
+                       that actually limits a chain is this action and the cost of the \
+                       rules it skips."
+                    .to_string(),
+                links: vec![InfoLink::new("Rules", "front/rule.php")],
+            }
+        }
+
+        if open() == Some("business") {
+            div { class: "mb-5",
+                RuleList {
+                    title: "Business rules".to_string(),
+                    subtitle: format!("{b_total} across {} collections", business.len()),
+                    note: "Three collections in one list, each ranked within its own \u{2014} \
+                           ranks repeat across them because a ticket rule and a change rule \
+                           never compete. Unlike the import rules, these do not stop at the \
+                           first match: every rule whose criteria hold gets to act."
+                        .to_string(),
+                    show_collection: true,
+                    show_denies: false,
+                    rules: business
+                        .iter()
+                        .flat_map(|c| c.rules.iter().map(move |r| (c.name.clone(), r.clone())))
+                        .collect(),
+                }
+            }
+        }
+
+        if open() == Some("import") {
+            if let Some(c) = import {
+                div { class: "mb-5",
+                    RuleList {
+                        title: c.name.clone(),
+                        subtitle: format!("{} in rank order", c.total),
+                        note: "Rank order is the meaning here, not a sort: GLPI walks this \
+                               list from the top and the first rule whose criteria hold ends \
+                               the matter, so everything below it never runs on that \
+                               submission. A rule marked refuses sets _ignore_import - the \
+                               submission goes to glpi_refusedequipments and the agent is \
+                               told nothing."
+                            .to_string(),
+                        show_collection: false,
+                        show_denies: true,
+                        rules: c.rules.iter().map(|r| (c.name.clone(), r.clone())).collect(),
+                    }
+                }
+            }
+        }
+
+        div { class: "max-w-prose space-y-2 text-sm text-base-content/70",
+            for c in report.collections.iter() {
+                p { key: "{c.rule_type}",
+                    span { class: "font-medium", "{c.name}: " }
+                    if c.total == 0 {
+                        "none."
+                    } else if c.denies > 0 {
+                        "{c.total} defined, {c.active} active, {c.denies} of which can refuse an import."
+                    } else {
+                        "{c.total} defined, {c.active} active."
+                    }
+                }
+            }
+            p { class: "text-xs text-base-content/60",
+                "Four of GLPI's nine collections, because each one costs a walk of its \
+                 rules. The other five - itemtype, entity, location, authorizations, \
+                 software category - are reachable the same way when something wants them."
+            }
+        }
+    }
+}
+
+/// The fourth sub-tab, named for HeidiSQL - the client this server is reached
+/// with from the desktop, as distinct from the three sub-tabs beside it, which
+/// are all about the server itself.
+///
+/// Three links, and all three answer a question HeidiSQL's own grids provoke
+/// and then answer worst - every one of them a count that is easy to read off
+/// the screen wrong:
+///
+/// - **plugins**: 71 rows in one flat table with the type column visible a few
+///   rows at a time, which is how a stock server reads as three kinds of
+///   plugin when it has six.
+/// - **attributes**: what the table designer lists down the side - five, for
+///   `glpi_alerts`, and a fact about GLPI's schema.
+/// - **properties**: what it lists across the top - fourteen, and a fact about
+///   HeidiSQL. Headings that look like data are what makes a five-attribute
+///   table read as a fourteen-attribute one.
+///
+/// The second and third are one fetch, because the page's answer is the pair
+/// and half of it would be misleading on its own.
+#[component]
+fn Heidi() -> Element {
+    // Fetched inside the tab, never with the page: the three sub-tabs beside
+    // this one must not pay for a query nobody asked for.
+    let report = use_resource(|| async move { api::fetch_plugins().await });
+    let schema = use_resource(|| async move { api::fetch_attributes().await });
+
+    // Shut until asked, and one at a time. The reader arrived here for one
+    // link, and 71 rows unfolded under it would be the thing HeidiSQL already
+    // does. By name rather than index for the same reason the plugin strip
+    // uses names: an index is a position, and positions move. Not mut - each
+    // link's handler takes its own copy to write through.
+    let open = use_signal(|| None::<&'static str>);
+    // Which group is unfolded, by name rather than index: the backend orders
+    // the groups and an index would silently point at a different type the
+    // first time that order changed. Not mut here - the strip owns the
+    // writing, and it takes its own copy of the signal to do it.
+    let at = use_signal(|| None::<String>);
+
+    rsx! {
+        Panel {
+            title: "heidi".to_string(),
+            subtitle: "What HeidiSQL is looking at".to_string(),
+            info: "Three readings of what this client puts on screen, each read live from the \
+                   server rather than quoted: its plugin grid, and the two halves of its table \
+                   designer. The designer lists a table's attributes down the side and their \
+                   properties across the top, so the headings sit where data sits and get \
+                   counted as though they were some."
+                .to_string(),
+
+            div { class: "flex flex-wrap items-center gap-x-5 gap-y-1 text-sm",
+
+                span {
+                    button {
+                        class: if open() == Some("plugins") { "link link-primary font-semibold" } else { "link link-primary" },
+                        onclick: move |_| {
+                            let mut slot = open;
+                            if slot() == Some("plugins") { slot.set(None) } else { slot.set(Some("plugins")) }
+                        },
+                        "plugins"
+                    }
+                    if let Some(Ok(r)) = &*report.read_unchecked() {
+                        if r.configured {
+                            span { class: "text-base-content/60",
+                                " - {r.types.len()} kinds, {r.types.iter().map(|t| t.plugins.len()).sum::<usize>()} in total"
+                            }
+                        }
+                    }
+                }
+
+                span {
+                    button {
+                        class: if open() == Some("attributes") { "link link-primary font-semibold" } else { "link link-primary" },
+                        onclick: move |_| {
+                            let mut slot = open;
+                            if slot() == Some("attributes") { slot.set(None) } else { slot.set(Some("attributes")) }
+                        },
+                        "attributes"
+                    }
+                    if let Some(Ok(r)) = &*schema.read_unchecked() {
+                        if r.configured {
+                            span { class: "text-base-content/60", " - {r.attributes.len()} on {r.table}" }
+                        }
+                    }
+                }
+
+                span {
+                    button {
+                        class: if open() == Some("properties") { "link link-primary font-semibold" } else { "link link-primary" },
+                        onclick: move |_| {
+                            let mut slot = open;
+                            if slot() == Some("properties") { slot.set(None) } else { slot.set(Some("properties")) }
+                        },
+                        "properties"
+                    }
+                    if let Some(Ok(r)) = &*schema.read_unchecked() {
+                        // No "on glpi_alerts" here, and that is the point: the
+                        // same fourteen are shown for every table on every
+                        // server this client connects to.
+                        span { class: "text-base-content/60", " - {r.properties.len()}, the same on every table" }
+                    }
+                }
+            }
+
+            if open() == Some("plugins") {
+                div { class: "mt-3",
+                    match &*report.read_unchecked() {
+                        None => rsx! {
+                            div { class: "text-sm text-base-content/60", "Reading the server\u{2019}s plugin list\u{2026}" }
+                        },
+                        Some(Err(e)) => rsx! { FetchError { error: e.clone() } },
+                        Some(Ok(r)) if !r.configured => rsx! {
+                            div { class: "text-sm text-base-content/60",
+                                "This backend has no database URL, so it cannot ask. That is not \
+                                 an empty plugin list - it is no answer at all."
+                            }
+                        },
+                        Some(Ok(r)) => rsx! { PluginKinds { types: r.types.clone(), at } },
+                    }
+                }
+            }
+
+            if matches!(open(), Some("attributes") | Some("properties")) {
+                div { class: "mt-3",
+                    match &*schema.read_unchecked() {
+                        None => rsx! {
+                            div { class: "text-sm text-base-content/60", "Reading the table\u{2019}s attributes\u{2026}" }
+                        },
+                        Some(Err(e)) => rsx! { FetchError { error: e.clone() } },
+                        Some(Ok(r)) => {
+                            // Properties render with no database at all - they
+                            // are this app's list, not the server's - so the
+                            // unconfigured case is checked inside the
+                            // attributes arm only.
+                            if open() == Some("attributes") {
+                                rsx! { TableAttributes { report: r.clone() } }
+                            } else {
+                                rsx! { AttributeProperties { report: r.clone() } }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// One link per plugin type, each unfolding that type's own plugins.
+///
+/// Largest group first, as the backend sent them. The count rides in the link
+/// because it is the whole reason the breakdown is worth having: 41 of the 71
+/// are information_schema tables, so a flat list reads as a server carrying far
+/// more choices than it does.
+#[component]
+fn PluginKinds(types: Vec<api::PluginType>, at: Signal<Option<String>>) -> Element {
+    rsx! {
+        div { class: "flex flex-wrap items-center gap-x-3 gap-y-1 text-sm",
+            for t in types.iter() {
+                {
+                    let name = t.name.clone();
+                    let here = at().as_deref() == Some(t.name.as_str());
+                    rsx! {
+                        button {
+                            key: "{t.name}",
+                            class: if here { "link link-primary font-semibold" } else { "link" },
+                            onclick: move |_| {
+                                let name = name.clone();
+                                let mut slot = at;
+                                // Clicking the open one closes it, so the strip
+                                // is a toggle rather than a thing that can only
+                                // ever be more open.
+                                if slot().as_deref() == Some(name.as_str()) {
+                                    slot.set(None);
+                                } else {
+                                    slot.set(Some(name));
+                                }
+                            },
+                            "{t.name.to_lowercase()} ({t.plugins.len()})"
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(name) = at() {
+            if let Some(t) = types.iter().find(|t| t.name == name) {
+                div { class: "mt-3", PluginRows { kind: t.clone() } }
+            }
+        }
+    }
+}
+
+/// One type's plugins, with the note on what that type is.
+///
+/// The note is this app's and the table is the server's, which is the split
+/// every panel on this page keeps: MariaDB publishes no explanation of what a
+/// PLUGIN_TYPE means, so the info button is a judgement and is written as one,
+/// while every row below it is read.
+#[component]
+fn PluginRows(kind: api::PluginType) -> Element {
+    let note = PLUGIN_TYPE_NOTES
+        .iter()
+        .find(|(n, _)| *n == kind.name)
+        .map(|(_, body)| (*body).to_string())
+        // Not an empty string: a type this app has never seen is a finding
+        // about the server, and saying nothing would read as saying it does
+        // not matter.
+        .unwrap_or_else(|| {
+            "This app has no note on this plugin type. It came from the server, so the \
+             rows below are real - what is missing is only the explanation, which means \
+             this build of MariaDB carries a type that was not here when the page was \
+             written."
+                .to_string()
+        });
+
+    rsx! {
+        Panel {
+            title: kind.name.to_lowercase(),
+            subtitle: format!("{} on this server", kind.plugins.len()),
+            info: note,
+            div { class: "overflow-x-auto",
+                table { class: "table table-xs",
+                    thead {
+                        tr {
+                            th { "name" }
+                            th { "status" }
+                            th { "load" }
+                            th { "maturity" }
+                            th { "what the server calls it" }
+                        }
+                    }
+                    tbody {
+                        for p in kind.plugins.iter() {
+                            tr { key: "{p.name}",
+                                td { class: "font-mono text-xs whitespace-nowrap", "{p.name}" }
+                                // Anything but ACTIVE is the row worth seeing,
+                                // and on this server exactly one is.
+                                td {
+                                    class: if p.status == "ACTIVE" { "" } else { "text-warning" },
+                                    "{p.status}"
+                                }
+                                td { "{p.load_option}" }
+                                td { "{p.maturity}" }
+                                td { class: "text-base-content/70", "{p.description}" }
+                            }
+                        }
+                    }
+                }
+            }
+            p { class: "mt-2 text-xs text-base-content/60",
+                // The column HeidiSQL shows and nobody reads. Said once under
+                // the table rather than as an empty column in it.
+                "Every one of these is compiled into the server binary - PLUGIN_LIBRARY is \
+                 null for all 71 rows, so nothing on this install was installed as a plugin."
+            }
+        }
+    }
+}
+
+/// What each PLUGIN_TYPE is, as against what the server says each plugin is.
+///
+/// Keyed by the server's own word so a build carrying a seventh type falls
+/// through to the honest default rather than being quietly labelled as one of
+/// these six. Read on mariadb-server-11.4.12; every claim about this install
+/// was checked against it rather than recalled.
+const PLUGIN_TYPE_NOTES: [(&str, &str); 6] = [
+    (
+        "INFORMATION SCHEMA",
+        "Each one adds a table to the information_schema database, generated per query \
+         rather than stored. The largest group by a long way and the one nobody chose: \
+         most of the 41 arrive with InnoDB, which brings its own buffer-pool, lock, \
+         compression and tablespace views. One is switched off - FEEDBACK, which would \
+         report usage statistics to mariadb.org if it were on - and it is the only row in \
+         all six groups whose status is not ACTIVE.",
+    ),
+    (
+        "STORAGE ENGINE",
+        "What a table can be created with: each decides how rows are stored and indexed, \
+         what locking they take, and whether a transaction can be rolled back. Not all \
+         twelve are engines a CREATE TABLE would name - binlog, online_alter_log and \
+         PERFORMANCE_SCHEMA are pseudo-engines the server uses to present its own \
+         internals, and partition is a helper wrapped around another engine. All 447 of \
+         GLPI\u{2019}s tables are InnoDB, which is the only one here that gives GLPI the \
+         transaction its inventory import depends on.",
+    ),
+    (
+        "FUNCTION",
+        "SQL functions the server loads rather than compiles into its grammar. All ten \
+         here are the address and identifier helpers that come with the data types in the \
+         group below - inet_aton, inet6_ntoa, is_ipv4, is_ipv6, uuid, sys_guid and the \
+         rest - so FUNCTION and DATA TYPE on this server are two halves of the same \
+         thing rather than two separate capabilities.",
+    ),
+    (
+        "AUTHENTICATION",
+        "How an account proves who it is. Each account in mysql.global_priv names one of \
+         these, and which one it names decides whether a password exists at all: \
+         unix_socket authenticates from the peer credential the kernel attaches to a \
+         local socket, which is what this app\u{2019}s own account uses - no password is \
+         stored anywhere and it cannot authenticate over TCP. The other two are password \
+         schemes, mysql_old_password being the pre-4.1 one kept for compatibility.",
+    ),
+    (
+        "DATA TYPE",
+        "Column types the server\u{2019}s parser does not have built in: INET4, INET6 and UUID \
+         arrive as plugins. Available rather than in use - no column in GLPI\u{2019}s 447 tables \
+         has any of the three, because GLPI stores an address as a varchar and its own \
+         schema has to install on MySQL too, where these do not exist.",
+    ),
+    (
+        "REPLICATION",
+        "Plugins that take part in a replication stream. Both are Galera\u{2019}s - wsrep and \
+         wsrep_provider - and they are present because this build was compiled with \
+         cluster support, which is not the same as replication being configured. This \
+         server is a single node with wsrep_on off, so neither does anything today.",
+    ),
+];
+
+/// One attribute's value for one property, by the property's heading.
+///
+/// The single place that knows which field answers which heading, so the two
+/// panels below cannot disagree about it. None means the property is blank on
+/// that attribute - which is a real answer and renders as one, distinct from
+/// a property this app cannot read at all.
+fn property_value(a: &api::Attribute, heading: &str) -> Option<String> {
+    // "yes" rather than a tick for the booleans: these are read as text in the
+    // properties table, where a tick in a column of sentences reads as noise.
+    let flag = |b: bool| b.then(|| "yes".to_string());
+    match heading {
+        "Name" => Some(a.name.clone()),
+        "Datatype" => Some(a.datatype.clone()),
+        "Length/Set" => a.length_set.clone(),
+        "Unsigned" => flag(a.unsigned),
+        "Allow NULL" => flag(a.allow_null),
+        "Zerofill" => flag(a.zerofill),
+        "Default" => a.default.clone(),
+        "Comment" => (!a.comment.is_empty()).then(|| a.comment.clone()),
+        "Collation" => a.collation.clone(),
+        "Expression" => a.expression.clone(),
+        "Virtuality" => a.virtuality.clone(),
+        // Not a lookup that failed. The server publishes no per-column SRID,
+        // so there is nothing for any attribute to have one in.
+        "SRID" => None,
+        "Invisible" => flag(a.invisible),
+        "Compressed" => flag(a.compressed),
+        // A heading this app has no field for is a backend that grew one,
+        // which the properties table reports rather than hides.
+        _ => None,
+    }
+}
+
+/// One table's attributes - the rows of HeidiSQL's designer, which are the
+/// only things on that screen that are the table's.
+///
+/// Five, for `glpi_alerts`, and the count is read rather than written: it is
+/// a fact about GLPI's schema and changes with GLPI, unlike the fourteen
+/// beside it.
+#[component]
+fn TableAttributes(report: api::AttributesReport) -> Element {
+    if !report.configured {
+        return rsx! {
+            div { class: "text-sm text-base-content/60",
+                "This backend has no database URL, so it cannot ask. That is not a table \
+                 with no attributes - it is no answer at all. The properties link beside \
+                 this one still works: those are this app\u{2019}s list and need no server."
+            }
+        };
+    }
+
+    let n = report.attributes.len();
+    let of_total = match report.tables_total {
+        Some(t) => format!("{n} on {}, one of {t} tables", report.table),
+        None => format!("{n} on {}", report.table),
+    };
+
+    rsx! {
+        Panel {
+            title: "attributes".to_string(),
+            subtitle: of_total,
+            info: format!(
+                "What the table itself has, and the only part of HeidiSQL\u{2019}s designer that \
+                 is about {}. Read from information_schema.COLUMNS now rather than quoted, \
+                 because a GLPI upgrade can add one. The grid\u{2019}s headings are not among \
+                 these - they describe each row below rather than joining it, and they are \
+                 the properties link beside this one.",
+                report.table,
+            ),
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-xs",
+                    thead {
+                        tr {
+                            th { "#" }
+                            th { "name" }
+                            th { "datatype" }
+                            th { "length/set" }
+                            th { "unsigned" }
+                            th { "allow null" }
+                            th { "default" }
+                            th { "collation" }
+                            th { "key" }
+                        }
+                    }
+                    tbody {
+                        for a in report.attributes.iter() {
+                            tr { key: "{a.name}",
+                                td { class: "text-base-content/50", "{a.position}" }
+                                td { class: "font-mono text-xs whitespace-nowrap", "{a.name}" }
+                                td { "{a.datatype}" }
+                                td { class: "font-mono text-xs", {a.length_set.clone().unwrap_or_default()} }
+                                td { {if a.unsigned { "\u{2713}" } else { "" }} }
+                                td { {if a.allow_null { "\u{2713}" } else { "" }} }
+                                // "No default" rather than an empty cell: the
+                                // attribute must then be given a value on
+                                // every INSERT, which an empty cell reads as
+                                // the opposite of.
+                                td {
+                                    class: if a.default.is_none() { "text-base-content/50 italic" } else { "font-mono text-xs" },
+                                    {a.default.clone().unwrap_or_else(|| "no default".to_string())}
+                                }
+                                td { class: "text-base-content/70 text-xs", {a.collation.clone().unwrap_or_default()} }
+                                // What the designer draws as key icons, which
+                                // is the one thing on its grid that is neither
+                                // an attribute nor one of the fourteen.
+                                td { class: "text-xs", "{a.key}" }
+                            }
+                        }
+                    }
+                }
+            }
+            p { class: "mt-2 text-xs text-base-content/60",
+                "The key column is HeidiSQL\u{2019}s row of key icons, not a property: it says which \
+                 indexes an attribute is in, and an attribute can be in more than one."
+            }
+        }
+    }
+}
+
+/// The fourteen properties the designer shows for each attribute - the
+/// headings across the top, which are HeidiSQL's and not the table's.
+///
+/// Each row carries where the value is read from and how many of this table's
+/// attributes actually have one, because the second is what settles the
+/// confusion: a property that is blank on all five is still a property, and a
+/// grid full of empty columns is what makes the headings look like a list of
+/// things the table has.
+#[component]
+fn AttributeProperties(report: api::AttributesReport) -> Element {
+    let attrs = &report.attributes;
+    let n = attrs.len();
+
+    // Counted, not quoted - and worth not hard-coding: glpi_alerts was read as
+    // seven from the designer screenshot and is eight, because every attribute
+    // is NOT NULL and so leaves Allow NULL unticked as well. Blank here means
+    // the grid cell is empty, which for a boolean property is a real answer
+    // ("none of them") rather than a missing one.
+    let blank = report
+        .properties
+        .iter()
+        .filter(|(h, _, _)| !attrs.iter().any(|a| property_value(a, h).is_some()))
+        .count();
+
+    rsx! {
+        Panel {
+            title: "properties".to_string(),
+            subtitle: format!("{} per attribute, on every table", report.properties.len()),
+            info: "HeidiSQL\u{2019}s designer shows these fourteen across the top, one column each, \
+                   for every table on every server. They describe an attribute rather than \
+                   being one, so counting them as the table\u{2019}s is how a five-attribute \
+                   table reads as a fourteen-attribute one. This list is written into this \
+                   app, unlike everything else on this sub-tab: MariaDB publishes columns, \
+                   and which of them a client lays out as a heading is the client\u{2019}s choice.\n\n\
+                   Compressed is the one worth spelling out, because what decides it is not \
+                   size. Set it by putting the word after the type - ALTER TABLE t MODIFY c \
+                   VARCHAR(255) COMPRESSED - and the server stores it as the version-gated \
+                   comment /*M!100301 COMPRESSED*/, which is what the Compressed column here \
+                   is reading.\n\n\
+                   It takes only the variable-length string types: VARCHAR, VARBINARY, TEXT \
+                   and BLOB. CHAR(255) COMPRESSED is a syntax error rather than a warning, a \
+                   fixed-width type having nothing to shorten. And a compressed column cannot \
+                   be indexed at all - ADD INDEX answers 4097, a prefix index included - so \
+                   any attribute you search or sort on is ruled out before its size is even \
+                   asked about. Measured on this server, not quoted.\n\n\
+                   Two things that make it look like it did nothing. Values shorter than \
+                   column_compression_threshold are stored uncompressed - 100 bytes here - so \
+                   a compressed attribute full of short strings is byte-for-byte what it was. \
+                   And on a glpi_ table it does not last: GLPI\u{2019}s upgrade migrations issue \
+                   their own ALTER TABLE, and one that redefines the attribute drops the \
+                   COMPRESSED with it, silently, because nothing in GLPI knows it was there."
+                .to_string(),
+
+            div { class: "overflow-x-auto",
+                table { class: "table table-xs",
+                    thead {
+                        tr {
+                            th { "property" }
+                            th { "read from" }
+                            if report.configured {
+                                th { class: "whitespace-nowrap", "on {report.table}" }
+                            }
+                            th { "what it is" }
+                        }
+                    }
+                    tbody {
+                        for (heading , source , note) in report.properties.iter() {
+                            tr { key: "{heading}",
+                                td { class: "font-semibold whitespace-nowrap", "{heading}" }
+                                // Empty source is not a gap in this app. The
+                                // server publishes nothing for it, so the
+                                // client's column is empty on every table it
+                                // ever opens.
+                                td {
+                                    class: if source.is_empty() { "text-warning text-xs whitespace-nowrap" } else { "font-mono text-xs whitespace-nowrap" },
+                                    {if source.is_empty() { "nothing".to_string() } else { source.clone() }}
+                                }
+                                if report.configured {
+                                    {
+                                        let set = attrs.iter().filter(|a| property_value(a, heading).is_some()).count();
+                                        rsx! {
+                                            td {
+                                                class: if set == 0 { "text-base-content/40 whitespace-nowrap" } else { "whitespace-nowrap" },
+                                                {if set == 0 { "blank".to_string() } else { format!("{set} of {n}") }}
+                                            }
+                                        }
+                                    }
+                                }
+                                td { class: "text-base-content/70", "{note}" }
+                            }
+                        }
+                    }
+                }
+            }
+            if report.configured {
+                p { class: "mt-2 text-xs text-base-content/60",
+                    "{blank} of the {report.properties.len()} are blank on every attribute of \
+                     {report.table}, so the grid devotes that many columns to nothing. They \
+                     are still properties, and a property with nothing in it is still not an \
+                     attribute."
+                }
+            }
         }
     }
 }
@@ -3290,6 +4175,35 @@ fn Rsql(reach: api::FilterReach) -> Element {
     let mut t = use_signal(|| 0usize);
 
     rsx! {
+        // Above the strip and named rather than an icon, by the same rule as
+        // the Overview tab's own link: what it heads off is a misreading of
+        // the page's title, which a reader has made before there is anything
+        // on the page to hover. The R has been read as Rust more than once,
+        // and this app's own builder being a .rs file is what makes that easy.
+        div { class: "mb-3",
+            InfoButton {
+                label: "What RSQL is".to_string(),
+                title: "RESTful Service Query Language, not Rust SQL".to_string(),
+                body: "The R is RESTful: RSQL is the RESTful Service Query Language, and it \
+                       is an extension of FIQL, the Feed Item Query Language. GLPI's own \
+                       lexer says so in its header - src/Glpi/Api/HL/RSQL/Lexer.php:41 \
+                       describes itself as parsing an RSQL query, \u{201c}extension of \
+                       FIQL\u{201d}, into tokens. Nothing about it is Rust, and it predates \
+                       this app and its language entirely. Where each half runs: an RSQL \
+                       string is a value in an HTTP query parameter, and the thing that \
+                       executes it is PHP - GLPI's RSQL/Parser.php, on GLPI's side of the \
+                       wire, turning the filter into SQL against GLPI's own schema. This \
+                       app never parses one. The Rust in the picture is incidental: \
+                       backend/src/glpi/rsql.rs builds the filter string this app sends, \
+                       and it is Rust only because the whole backend is - it would be the \
+                       same language in any other client. Nor is RSQL anything the database \
+                       knows: MariaDB speaks SQL and has no notion of RSQL, so a filter \
+                       means something only to the API in front of it, which is the \
+                       distinction the whole of this tab rests on."
+                    .to_string(),
+            }
+        }
+
         // The only tab strip left on this page, and the one level the sidebar
         // deliberately does not take: these four are local view state, not
         // part of the URL, so there is nothing for a menu entry to link to.

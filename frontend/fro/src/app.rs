@@ -11,8 +11,8 @@
 use crate::components::{GlobalErrorBar, Header, Sidebar, SidebarOpen};
 use crate::pages::{
     About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
-    Netw, PageNotFound, Perf, Rights, Screens, Sec, Status, TemplateForm, TemplateMessage,
-    TemplateRow, TemplateValues,
+    Netw, PageNotFound, Perf, PerfHistory, PerfNginx, PerfPhp, Rights, Screens, Sec, Status,
+    TemplateForm, TemplateMessage, TemplateRow, TemplateValues,
 };
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Outlet, Routable, Router};
@@ -77,6 +77,29 @@ pub enum Route {
         // one reading and it is taken when the page is opened.
         #[route("/perf")]
         Perf {},
+        // The history's own page. A sibling route rather than a tab on
+        // /perf, for the same reason the inv views are: /perf is a reading
+        // taken when it opens and this is a record of readings already
+        // taken, so they answer different questions and one of them is
+        // worth linking someone to on its own.
+        // The window rides in the URL rather than in local state: a reading
+        // someone wants to show someone else is the reason this page exists
+        // apart from /perf at all, and "the week, not the day" is part of
+        // what they would be pointing at.
+        #[route("/perf/history?:window")]
+        PerfHistory { window: String },
+        // PHP's own history, beside MariaDB's. Two routes rather than one
+        // with a subject parameter: they are fed by different samplers with
+        // different failure modes - one survives this process being down
+        // and the other does not - and a page that quietly swapped between
+        // them would hide which.
+        #[route("/perf/php?:window")]
+        PerfPhp { window: String },
+        // No window parameter: nothing here is sampled over time. Two
+        // timings taken on open and a config file read, which is all nginx
+        // will say without a stub_status location somebody has to add.
+        #[route("/perf/nginx")]
+        PerfNginx {},
         #[route("/logs?:log")]
         Logs { log: String },
         #[route("/about")]
@@ -114,6 +137,9 @@ impl Route {
             Route::Netw {} => "Netw",
             Route::Sec {} => "Security",
             Route::Perf {} => "Perf",
+            Route::PerfHistory { .. } => "History",
+            Route::PerfPhp { .. } => "PHP",
+            Route::PerfNginx {} => "nginx",
             Route::Logs { .. } => "Logs",
             Route::About {} => "About",
             Route::PageNotFound { .. } => "Not found",
