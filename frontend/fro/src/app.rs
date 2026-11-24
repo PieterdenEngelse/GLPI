@@ -11,8 +11,8 @@
 use crate::components::{GlobalErrorBar, Header, Sidebar, SidebarOpen};
 use crate::pages::{
     About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
-    Netw, PageNotFound, Perf, PerfHistory, PerfNginx, PerfPhp, Rights, Screens, Sec, Status,
-    TemplateForm, TemplateMessage, TemplateRow, TemplateValues,
+    Netw, NetwProxy, PageNotFound, Perf, PerfHistory, PerfNginx, PerfPhp, Rights, Screens, Sec,
+    Status, TemplateForm, TemplateMessage, TemplateRow, TemplateValues,
 };
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Outlet, Routable, Router};
@@ -67,6 +67,11 @@ pub enum Route {
         Db { tab: String, sub: String },
         #[route("/netw")]
         Netw {},
+        // A sibling route rather than a tab, the same shape the /perf and
+        // /inv children have: it is one subject read on its own, and the
+        // whole point of the page is that someone can be sent to it.
+        #[route("/netw/proxy")]
+        NetwProxy {},
         #[route("/sec")]
         Sec {},
         // The tab is in the URL as a query argument, so a particular log is
@@ -135,6 +140,7 @@ impl Route {
             Route::Rights { .. } => "Rights",
             Route::Db { .. } => "DB",
             Route::Netw {} => "Netw",
+            Route::NetwProxy {} => "proxy",
             Route::Sec {} => "Security",
             Route::Perf {} => "Perf",
             Route::PerfHistory { .. } => "History",

@@ -147,6 +147,30 @@ pub struct NginxModule {
     pub note: String,
 }
 
+/// What the binary says it was built with, as one string.
+///
+/// `nginx -V` with no config and no privileges: it prints the configure line
+/// and exits, so running it is safe while nginx is serving. None rather than
+/// an empty string when the binary could not be run - a packaged install
+/// where the path on the master's command line is not executable by this
+/// service - because "we could not ask" and "it was built without that" are
+/// different answers and both callers render them differently.
+///
+/// Shared with the proxy page, which asks the same string three questions
+/// this module does not: whether the proxy module was left out, whether
+/// stream is in, and whether anything added CONNECT.
+pub(super) fn configure_line(binary: &str) -> Option<String> {
+    let out = std::process::Command::new(binary).arg("-V").output().ok()?;
+    // The configure line goes to stderr. Both are read because that is a
+    // version detail nobody should have to remember.
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout)
+    );
+    (!text.trim().is_empty()).then_some(text)
+}
+
 /// The modules worth knowing about before advising anything.
 ///
 /// Read from the binary rather than assumed: `stub_status` is the difference
@@ -598,19 +622,9 @@ fn capacity(settings: &[NginxSetting], observed_workers: usize) -> NginxCapacity
 /// of absences - "we could not ask" and "it is not there" are different
 /// answers and the page renders them differently.
 fn module_flags(binary: &str) -> Vec<NginxModule> {
-    let Ok(out) = std::process::Command::new(binary).arg("-V").output() else {
+    let Some(text) = configure_line(binary) else {
         return Vec::new();
     };
-    // The configure line goes to stderr. Both are read because that is a
-    // version detail nobody should have to remember.
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stderr),
-        String::from_utf8_lossy(&out.stdout)
-    );
-    if text.trim().is_empty() {
-        return Vec::new();
-    }
     MODULES
         .iter()
         .map(|(flag, note)| NginxModule {
@@ -626,7 +640,12 @@ fn module_flags(binary: &str) -> Vec<NginxModule> {
 /// Read from /proc rather than by running `nginx -V`: the binary is not on
 /// this service's PATH on a packaged install, and `cmdline` is world readable
 /// where the process itself is not.
-fn process_facts() -> (bool, Option<String>, Option<String>, usize, Option<String>) {
+///
+/// Shared with the proxy page for the part that matters there: which config
+/// file the RUNNING master was started with. Re-deriving that from a
+/// conventional path would let the two pages report on different files
+/// without either of them being able to say so.
+pub(super) fn process_facts() -> (bool, Option<String>, Option<String>, usize, Option<String>) {
     let mut running = false;
     let mut version = None;
     let mut config_path = None;

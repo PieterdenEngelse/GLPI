@@ -131,6 +131,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/mariadb/history", get(status_history))
         .route("/api/php/history", get(php_history))
         .route("/api/nginx", get(nginx))
+        .route("/api/nginx/proxy", get(nginx_proxy))
         .route("/api/nginx/tuning", get(nginx_tuning))
         .route("/api/nginx/tuning/{name}", post(set_nginx_tuning))
         .route("/api/self-timing", get(self_timing))
@@ -1884,6 +1885,17 @@ async fn status_history(
 /// one of them is a full GLPI bootstrap.
 async fn nginx(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, ApiError> {
     Ok(Json(crate::glpi::nginx::report(&state.glpi_url).await))
+}
+
+/// Where a request goes after nginx, which is a config question.
+///
+/// Unlike the handler above this takes no measurable time and makes no
+/// requests: it reads the config file the running master names and the
+/// configure line of the binary running it. No state either - nothing here
+/// depends on GLPI being reachable, which is the point of a page that can
+/// still answer when the thing behind the proxy is down.
+async fn nginx_proxy() -> impl IntoResponse {
+    Json(crate::glpi::nginx_proxy::report())
 }
 
 /// Whether the slow query log is on, for the perf page's tile.

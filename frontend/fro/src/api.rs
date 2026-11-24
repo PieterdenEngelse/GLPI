@@ -2024,6 +2024,86 @@ pub async fn fetch_nginx() -> Result<NginxReport, ApiError> {
     get_json::<NginxReport>("/api/nginx").await
 }
 
+/// One directive that hands a request to something other than the filesystem.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxPass {
+    #[serde(default)]
+    pub directive: String,
+    #[serde(default)]
+    pub target: String,
+    /// `http` or `stream`: an HTTP request handed on, or a TCP connection
+    /// forwarded. The two answer different questions and the page keeps them
+    /// apart.
+    #[serde(default)]
+    pub context: String,
+    /// Whether the target is built from a variable, which is the shape a
+    /// forward proxy has and not proof of one.
+    #[serde(default)]
+    pub dynamic: bool,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// A piece of config that does nothing unless something is proxied.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxProxySupport {
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub present: bool,
+    #[serde(default)]
+    pub used: bool,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// What the running config says about proxying. Mirrors the backend's
+/// ProxyReport; every field defaults so a drifting backend leaves a figure
+/// blank rather than failing the whole page.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct NginxProxyReport {
+    #[serde(default)]
+    pub running: bool,
+    #[serde(default)]
+    pub config_path: Option<String>,
+    /// False means the counts below are not a reading of anything. The page
+    /// says so rather than reporting an absence it did not establish.
+    #[serde(default)]
+    pub config_readable: bool,
+    #[serde(default)]
+    pub passes: Vec<NginxPass>,
+    #[serde(default)]
+    pub reverse: usize,
+    #[serde(default)]
+    pub forward: usize,
+    #[serde(default)]
+    pub stream: usize,
+    #[serde(default)]
+    pub gateways: usize,
+    #[serde(default)]
+    pub upstreams: Vec<String>,
+    #[serde(default)]
+    pub resolver: Option<String>,
+    /// None when the binary could not be run, which is not the same as the
+    /// module being absent - the page renders the two differently.
+    #[serde(default)]
+    pub proxy_module: Option<bool>,
+    #[serde(default)]
+    pub stream_module: Option<bool>,
+    #[serde(default)]
+    pub connect_module: Option<bool>,
+    #[serde(default)]
+    pub support: Vec<NginxProxySupport>,
+    /// `include` lines the backend did not follow, so a zero count is read
+    /// as covering only the file it read.
+    #[serde(default)]
+    pub includes: Vec<String>,
+}
+
+pub async fn fetch_nginx_proxy() -> Result<NginxProxyReport, ApiError> {
+    get_json::<NginxProxyReport>("/api/nginx/proxy").await
+}
+
 pub async fn fetch_php_history(window: &str) -> Result<StatusHistoryReport, ApiError> {
     let window = history_window(window);
     get_json::<StatusHistoryReport>(&format!("/api/php/history?window={window}")).await

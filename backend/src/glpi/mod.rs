@@ -38,6 +38,7 @@ pub mod innodb_help;
 pub mod inventory;
 pub mod legacy;
 pub mod nginx;
+pub mod nginx_proxy;
 pub mod nginx_tuning;
 pub mod perf;
 pub mod php_sampler;

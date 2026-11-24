@@ -19,7 +19,7 @@ pub use computers::Computers;
 pub use db::Db;
 pub use inv::{Inv, InvHardware, InvNetwork, InvRefused, InvSoftware};
 pub use logs::Logs;
-pub use netw::Netw;
+pub use netw::{Netw, NetwProxy};
 pub use not_found::PageNotFound;
 pub use perf::{Perf, PerfHistory, PerfNginx, PerfPhp};
 pub use rights::Rights;

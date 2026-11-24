@@ -148,8 +148,8 @@ pub fn destinations() -> Vec<Dest> {
             label: "DB",
             in_header: true,
         },
-        // Empty so far - see pages/netw.rs. Distinct from the fleet network
-        // view at /inv/network, which stays where it is under Inv.
+        // This machine's own networking. Distinct from the fleet network
+        // view at /inv/network, which is inventory and stays under Inv.
         Dest {
             route: Route::Netw {},
             label: "Netw",
@@ -196,6 +196,10 @@ pub fn is_active(dest: &Route, current: &Route) -> bool {
                 | Route::PerfPhp { .. }
                 | Route::PerfNginx {}
         ),
+        // Netw lights for the proxy page too, which is reachable only from
+        // /netw - without this, following that link leaves the nav with
+        // nothing highlighted.
+        Route::Netw {} => matches!(current, Route::Netw {} | Route::NetwProxy {}),
         Route::Inv {} => matches!(
             current,
             Route::Inv {}
@@ -304,6 +308,13 @@ pub fn children(current: &Route) -> Vec<Node> {
                 matches!(current, Route::InvRefused {}),
             ),
         ],
+        // One leaf so far. A leaf and not a tab for the same reason the Perf
+        // ones are: it is a sibling route, not tab state on /netw.
+        Route::Netw {} | Route::NetwProxy {} => vec![leaf(
+            Route::NetwProxy {},
+            "proxy",
+            matches!(current, Route::NetwProxy {}),
+        )],
         // The three kept-readings pages that hang off /perf. Leaves rather
         // than tabs because they are sibling routes, not tab state - and
         // labelled for the system each one reads rather than for the shape of
