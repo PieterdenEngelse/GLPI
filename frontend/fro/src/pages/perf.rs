@@ -859,7 +859,20 @@ fn NginxTuning() -> Element {
                                 tbody {
                                     for t in r.settings.iter() {
                                         tr { key: "{t.name}",
-                                            td { class: "font-mono text-xs whitespace-nowrap", "{t.name}" }
+                                            td { class: "font-mono text-xs whitespace-nowrap",
+                                                // Per row, because the panel's
+                                                // own modal can only describe
+                                                // the three groups in general
+                                                // and what a reader wants is
+                                                // which one THIS setting is in.
+                                                div { class: "flex items-center gap-1.5",
+                                                    span { "{t.name}" }
+                                                    InfoButton {
+                                                        title: t.name.clone(),
+                                                        body: tuning_body(t),
+                                                    }
+                                                }
+                                            }
                                             td {
                                                 if t.group == "generated" {
                                                     span { class: "text-xs text-base-content/50", "set by the flag" }
@@ -2090,6 +2103,262 @@ fn RuleLoadPanel(report: api::RulesReport) -> Element {
     }
 }
 
+/// One figure in a strip, with its explanation attached to it.
+///
+/// This page's panels are strips of figures rather than tables, and a figure
+/// in a strip is exactly the kind of thing a reader guesses at - is it a
+/// limit or a reading, is it per worker or in total. So each carries its own
+/// modal, the same rule `StatTile` follows for the dashboard tiles. Not
+/// `StatTile` itself: these read value-above-label inside a panel that
+/// already has a border, where a daisyUI stat cell brings its own.
+#[component]
+fn Figure(
+    value: String,
+    label: String,
+    body: String,
+    /// Colour the figure only when it means something is wrong - `StatTile`'s
+    /// rule, for the same reason: a red zero trains the reader to ignore the
+    /// colour, and then the one that matters does not register.
+    #[props(default = false)]
+    alarm: bool,
+) -> Element {
+    // Cloned before the macro rather than inside it: the label is also
+    // formatted into the markup below, and the prop would move it.
+    let title = label.clone();
+
+    rsx! {
+        div {
+            div {
+                class: if alarm { "text-2xl font-semibold text-error" } else { "text-2xl font-semibold" },
+                "{value}"
+            }
+            // The button sits on the label line, not beside the number: the
+            // figure should stay the thing the eye lands on.
+            div { class: "flex items-center gap-1.5 text-xs text-base-content/60",
+                span { "{label}" }
+                InfoButton { title, body }
+            }
+        }
+    }
+}
+
+/// What a directive does, past the one line already printed beside it.
+///
+/// Keyed by name, not by position: the list of directives is the app's to
+/// send and its order is not promised. A name with no entry here gets no
+/// button rather than an empty one - a modal is a promise of more than the
+/// row already says, and an unkept one is worse than none.
+const NGINX_DIRECTIVES: [(&str, &str); 16] = [
+    (
+        "worker_processes",
+        "auto resolves to one per core at startup, which is why the figure above can differ \
+         from what the file asks for. Each worker is single-threaded and event-driven, so \
+         one of them handles thousands of connections and more than one per core buys \
+         nothing but context switches. It is read at startup only: a reload will not move \
+         it.",
+    ),
+    (
+        "worker_connections",
+        "The ceiling on simultaneous connections one worker will hold, idle keepalive ones \
+         included - which is what keepalive_timeout trades against. Raising it without \
+         raising worker_rlimit_nofile swaps a connection limit for \"too many open files\", \
+         because every connection is also a descriptor.",
+    ),
+    (
+        "worker_rlimit_nofile",
+        "Every connection, every open file and every log handle is one descriptor, so this \
+         has to clear worker_connections with room to spare - twice it is the usual rule \
+         for something proxying. Left unset, nginx inherits whatever limit the service \
+         manager gave it, which is not a number the capacity figures above know about.",
+    ),
+    (
+        "http2",
+        "Multiplexing removes head-of-line blocking between a page's assets, so the gain \
+         tracks latency: largest over a slow link, near nothing on this host. Every browser \
+         requires TLS for it, so turning it on without a certificate changes nothing one \
+         will do. Older nginx spelled it listen ... http2, which is why guides disagree.",
+    ),
+    (
+        "open_file_cache",
+        "Keeps descriptors and stat results for a time you choose, so a repeat request skips \
+         the syscalls rather than looking the file up again. What it costs is staleness: a \
+         file replaced inside that window is still served from the old descriptor. On a \
+         document root that is a store path nothing is replaced in place, which makes it \
+         cheap here.",
+    ),
+    (
+        "gzip_types",
+        "text/html is always compressed and is never in this list - naming it is the common \
+         mistake. Everything else is opt in by MIME type, so whether a response is \
+         compressed depends on the Content-Type nginx gave it, which is the type printed on \
+         each timing card above.",
+    ),
+    (
+        "gzip",
+        "Spends processor time to buy bandwidth, so it wins wherever the link is slower than \
+         the processor - which is every link that leaves this host. It does nothing for \
+         images or anything already compressed, and nothing at all for a type gzip_types \
+         does not name.",
+    ),
+    (
+        "gzip_comp_level",
+        "1 to 9, and the curve flattens early on text: most of the saving is already there \
+         at level 1 and the rest is paid per response, every response. gzip_static avoids \
+         the trade entirely for files that can be compressed once, ahead of time.",
+    ),
+    (
+        "keepalive_timeout",
+        "The idle seconds before nginx closes a connection it could have reused. Long holds \
+         a worker connection open for nothing; short pays the setup again. Whether the \
+         current value is buying anything is a measurement rather than a guess - it is the \
+         requests-per-connection figure, and it needs a stub_status location to exist.",
+    ),
+    (
+        "sendfile",
+        "The file goes kernel to socket without passing through nginx's own memory, saving a \
+         copy per response. It applies to files on disk only: nothing coming back from \
+         php-fpm takes that path, so it has no effect on a GLPI page.",
+    ),
+    (
+        "tcp_nopush",
+        "Holds a response back until a full packet's worth is ready, so a sendfile response \
+         is not dribbled out in fragments. It needs sendfile on to do anything at all, and \
+         it adds nothing to a proxied response.",
+    ),
+    (
+        "client_max_body_size",
+        "nginx refuses the request before PHP is started, so PHP's own upload limits are \
+         never reached and nothing in GLPI's log accounts for the loss. The agent reports a \
+         failure and GLPI records nothing. A machine with a long software list is where this \
+         is met first.",
+    ),
+    (
+        "fastcgi_read_timeout",
+        "The clock runs between two successive reads from php-fpm, not across the whole \
+         request. On a timeout the PHP worker is still working and will finish, so a long \
+         import looks failed in the browser and succeeds underneath it. Set it against \
+         PHP's own max_execution_time rather than by feel.",
+    ),
+    (
+        "ssl_protocols",
+        "1.3 finishes its handshake in one round trip where 1.2 needs two, which is what \
+         puts it on a performance page. Offering only 1.3 locks out old clients; 1.0 and \
+         1.1 are what there is to remove, and this build does not offer them anyway.",
+    ),
+    (
+        "ssl_session_cache",
+        "shared:SSL:10m is ten megabytes shared by every worker - roughly forty thousand \
+         sessions, not ten minutes; the lifetime is ssl_session_timeout. Without a shared \
+         cache each worker remembers alone, and a client landing on a different worker \
+         starts the handshake over.",
+    ),
+    (
+        "server_tokens",
+        "off drops the version from the Server header and from nginx's own error pages, \
+         leaving \"nginx\". It does not hide that nginx is there. The version this page \
+         shows is read from the binary rather than from a header, so turning it off does \
+         not blind the page.",
+    ),
+];
+
+/// What a build flag buys, past the line already beside it.
+const NGINX_MODULES: [(&str, &str); 4] = [
+    (
+        "--with-http_stub_status_module",
+        "Compiled in here, so the counters already exist and what is missing is only a place \
+         to read them: a location containing stub_status, restricted to localhost. Seven \
+         numbers is all it offers - no breakdown by vhost, path or status code, because \
+         nginx keeps none.",
+    ),
+    (
+        "--with-http_v2_module",
+        "Present, so http2 on is a config change rather than a different nginx. Where it is \
+         absent the directive is not ignored, it is a startup error - which is the thing \
+         worth knowing before editing the settings below.",
+    ),
+    (
+        "--with-http_v3_module",
+        "QUIC runs over UDP and carries its own encryption, so a firewall rule for 443/tcp \
+         does not cover it and the TLS reasoning on this page does not transfer. Nothing \
+         here uses it; it is listed because its presence is what decides whether the option \
+         exists at all.",
+    ),
+    (
+        "--with-http_gzip_static_module",
+        "Looks for file.gz beside file and sends that instead, so compression is paid once \
+         ahead of time rather than per response. It needs the .gz to be there: a document \
+         root built without them is served exactly as before, with nothing to say why.",
+    ),
+];
+
+/// What a timing is, past the line already under it.
+///
+/// Keyed on the probe's own name, which is also what `NginxBody` matches on
+/// to pair the static reading against the PHP one.
+const NGINX_PROBES: [(&str, &str); 3] = [
+    (
+        "static file",
+        "The URL is chosen when the reading is taken, from a list of assets GLPI ships - the \
+         first that answers 200 is the one timed. Five requests, keepalive off, body \
+         included; the median is the figure and the best is beside it because the gap \
+         between them is scheduling noise rather than anything about nginx.",
+    ),
+    (
+        "through php-fpm",
+        "status.php, which is GLPI's lightest endpoint - so this is close to the floor for a \
+         PHP response and not a typical page. Take the static reading off it and what is \
+         left is the FastCGI round trip plus GLPI's bootstrap. A real page adds its own \
+         queries on top of all of it.",
+    ),
+    (
+        "a path that is not there",
+        "The 404 is deliberate and is not nginx refusing anything: GLPI's vhost ends in \
+         try_files $uri /index.php, so a path that is not a file on disk is answered by PHP. \
+         The bytes are a fully rendered error page. One wrong asset reference therefore buys \
+         a GLPI bootstrap on every page view that includes it.",
+    ),
+];
+
+/// The body for one of the tables above, or none if nothing was written for
+/// that name.
+fn lookup(table: &[(&str, &'static str)], name: &str) -> Option<&'static str> {
+    table
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, body)| *body)
+}
+
+/// Why this setting has the control it has, in its own terms.
+///
+/// Built from the row rather than written out sixteen times, because what a
+/// reader cannot get from the table is which of the three groups THIS
+/// setting is in and what that costs - and the group, the route and the
+/// accepted shape are all in the row already.
+fn tuning_body(t: &api::NginxTunable) -> String {
+    match t.group.as_str() {
+        "generated" => format!(
+            "No field, and not because this one is dangerous: {} already emits this \
+             directive, nginx refuses to start on a duplicate, and a second line is all a \
+             field here could write. Changing it means turning that flag off and owning \
+             every directive it generates, which is a decision rather than an edit.",
+            t.via
+        ),
+        "option" => format!(
+            "The generated config does set this, but services.nginx.{} REPLACES that line \
+             instead of adding a second one, so it is safe to write. Accepts {}. Nothing \
+             happens until the rebuild - this app writes the file and stops there.",
+            t.via, t.accepts
+        ),
+        _ => format!(
+            "Absent from the generated config - measured, not assumed - so the tuning file \
+             may add it outright, through services.nginx.{}. Accepts {}; an empty box \
+             removes the line rather than writing an empty value. Nothing happens until the \
+             rebuild.",
+            t.via, t.accepts
+        ),
+    }
+}
+
 /// The figures beside the nginx link.
 ///
 /// The two timings rather than the version: what a reader wants to know
@@ -2218,36 +2487,66 @@ fn NginxBody(report: api::NginxReport) -> Element {
                            worth seeing together."
                         .to_string(),
 
+                    // Each figure carries its own modal rather than leaning
+                    // on the panel's: the arithmetic above explains how they
+                    // relate, and what a reader still has to guess at is
+                    // what any one of them is on its own.
                     div { class: "flex flex-wrap items-baseline gap-x-8 gap-y-2",
-                        div {
-                            div { class: "text-2xl font-semibold", "{c.workers}" }
-                            div { class: "text-xs text-base-content/60",
-                                if c.workers_auto {
-                                    "workers (auto)"
-                                } else {
-                                    "worker process(es)"
-                                }
-                            }
+                        Figure {
+                            value: c.workers.to_string(),
+                            label: if c.workers_auto {
+                                "workers (auto)".to_string()
+                            } else {
+                                "worker process(es)".to_string()
+                            },
+                            body: "Processes nginx forked to serve connections, counted from \
+                                   the running process table rather than read from the \
+                                   config - so this is what is serving now, not what the \
+                                   file asks for. Each one is single-threaded and \
+                                   event-driven, which is why a single worker handles \
+                                   thousands of connections at once."
+                                .to_string(),
                         }
-                        div {
-                            div { class: "text-2xl font-semibold",
-                                if let Some(n) = c.connections_per_worker { "{n}" } else { "?" }
-                            }
-                            div { class: "text-xs text-base-content/60", "connections per worker" }
+                        Figure {
+                            value: match c.connections_per_worker {
+                                Some(n) => n.to_string(),
+                                None => "?".to_string(),
+                            },
+                            label: "connections per worker".to_string(),
+                            body: "worker_connections: the ceiling on how many connections one \
+                                   worker will hold at once, idle keepalive ones included. It \
+                                   is per worker and not per server, so the total is this \
+                                   times the figure beside it. Where the config does not set \
+                                   it, nginx's own default is in force and is named under \
+                                   these figures."
+                                .to_string(),
                         }
-                        div {
-                            div { class: "text-2xl font-semibold",
-                                if let Some(n) = c.concurrent_requests { "{n}" } else { "?" }
-                            }
-                            div { class: "text-xs text-base-content/60",
-                                "proxied requests, at most"
-                            }
+                        Figure {
+                            value: match c.concurrent_requests {
+                                Some(n) => n.to_string(),
+                                None => "?".to_string(),
+                            },
+                            label: "proxied requests, at most".to_string(),
+                            body: "Workers times connections per worker, divided by two. A \
+                                   static file needs one connection and would get the whole \
+                                   figure; this is the GLPI number, which is the one worth \
+                                   having. And it is a ceiling nginx enforces rather than a \
+                                   throughput estimate: php-fpm's own worker count is usually \
+                                   the smaller limit, and that is on the PHP page."
+                                .to_string(),
                         }
-                        div {
-                            div { class: "text-2xl font-semibold",
-                                if let Some(n) = c.somaxconn { "{n}" } else { "?" }
-                            }
-                            div { class: "text-xs text-base-content/60", "somaxconn" }
+                        Figure {
+                            value: match c.somaxconn {
+                                Some(n) => n.to_string(),
+                                None => "?".to_string(),
+                            },
+                            label: "somaxconn".to_string(),
+                            body: "The kernel's ceiling on how many connections may queue on a \
+                                   listening socket before nginx accepts them. nginx's own \
+                                   backlog is clamped to it silently, so a config asking for \
+                                   more is neither an error nor in effect. It decides what \
+                                   survives a burst, not what throughput is."
+                                .to_string(),
                         }
                     }
 
@@ -2300,7 +2599,18 @@ fn NginxBody(report: api::NginxReport) -> Element {
                             key: "{p.url}",
                             class: "flex flex-col rounded-box border border-base-300 p-3",
                             div { class: "flex flex-wrap items-baseline justify-between gap-x-2",
-                                span { class: "font-medium", "{p.what}" }
+                                // The name and its modal together, so the
+                                // button belongs to this reading rather than
+                                // to the row of three.
+                                div { class: "flex items-center gap-1.5",
+                                    span { class: "font-medium", "{p.what}" }
+                                    if let Some(b) = lookup(&NGINX_PROBES, &p.what) {
+                                        InfoButton {
+                                            title: p.what.clone(),
+                                            body: b.to_string(),
+                                        }
+                                    }
+                                }
                                 if let Some(code) = p.status {
                                     span {
                                         class: if code == 200 {
@@ -2445,7 +2755,20 @@ fn NginxBody(report: api::NginxReport) -> Element {
                                 key: "{st.name}",
                                 class: "rounded-box border border-base-300 p-3",
                                 div { class: "flex flex-wrap items-baseline justify-between gap-x-3",
-                                    span { class: "font-mono text-xs", "{st.name}" }
+                                    // The directive's own modal, beside its
+                                    // name: the line under the card says
+                                    // what it is for in one sentence, and
+                                    // what it leaves out is what the value
+                                    // trades against.
+                                    div { class: "flex items-center gap-1.5",
+                                        span { class: "font-mono text-xs", "{st.name}" }
+                                        if let Some(b) = lookup(&NGINX_DIRECTIVES, &st.name) {
+                                            InfoButton {
+                                                title: st.name.clone(),
+                                                body: b.to_string(),
+                                            }
+                                        }
+                                    }
                                     span { class: "font-mono text-sm",
                                         if let Some(v) = st.value.clone() {
                                             "{v}"
@@ -2483,6 +2806,9 @@ fn NginxBody(report: api::NginxReport) -> Element {
                                     span {
                                         span { class: "font-mono", "{m.flag}" }
                                         span { class: "text-base-content/60", " - {m.note}" }
+                                    }
+                                    if let Some(b) = lookup(&NGINX_MODULES, &m.flag) {
+                                        InfoButton { title: m.flag.clone(), body: b.to_string() }
                                     }
                                 }
                             }
@@ -2540,50 +2866,108 @@ fn NginxCounters(status: api::NginxStatus) -> Element {
                 }
             } else {
                 div { class: "flex flex-wrap items-baseline gap-x-8 gap-y-2",
-                    div {
-                        div { class: "text-2xl font-semibold",
-                            if let Some(n) = status.active { "{n}" } else { "?" }
-                        }
-                        div { class: "text-xs text-base-content/60", "active connections" }
+                    Figure {
+                        value: match status.active {
+                            Some(n) => n.to_string(),
+                            None => "?".to_string(),
+                        },
+                        label: "active connections".to_string(),
+                        body: "Connections open at the instant this page read the counter, \
+                               idle keepalive ones included. The only figure in this panel \
+                               that is a reading of now rather than a total since the master \
+                               started - and it is one reading, so a value close to the \
+                               ceiling above is worth taking again before acting on it."
+                            .to_string(),
                     }
-                    div {
-                        div {
-                            class: if dropped > 0 {
-                                "text-2xl font-semibold text-error"
-                            } else {
-                                "text-2xl font-semibold"
-                            },
-                            "{dropped}"
-                        }
-                        div { class: "text-xs text-base-content/60",
-                            "dropped (accepts \u{2212} handled)"
-                        }
+                    Figure {
+                        value: dropped.to_string(),
+                        alarm: dropped > 0,
+                        label: "dropped (accepts \u{2212} handled)".to_string(),
+                        body: "Subtracted here, because nginx publishes the two totals and \
+                               never the difference. It counts since the master process \
+                               started, so a figure above zero may be from a load test last \
+                               month rather than from this morning: the uptime is what dates \
+                               it, and a restart is what clears it."
+                            .to_string(),
                     }
-                    div {
-                        div { class: "text-2xl font-semibold",
-                            if let Some(n) = status.per_connection { "{n:.1}" } else { "?" }
-                        }
-                        div { class: "text-xs text-base-content/60",
-                            "requests per connection"
-                        }
+                    Figure {
+                        value: match status.per_connection {
+                            Some(n) => format!("{n:.1}"),
+                            None => "?".to_string(),
+                        },
+                        label: "requests per connection".to_string(),
+                        body: "Requests divided by handled connections. Above one, setup is \
+                               being amortised across several requests; at one, each request \
+                               opened and closed its own. HTTP/2 raises it on its own, \
+                               because a browser multiplexes a whole page over one \
+                               connection - so a low figure with http2 on points at the \
+                               clients rather than at the setting."
+                            .to_string(),
                     }
-                    div {
-                        div { class: "text-2xl font-semibold",
-                            if let Some(n) = status.requests { "{n}" } else { "?" }
-                        }
-                        div { class: "text-xs text-base-content/60", "requests served" }
+                    Figure {
+                        value: match status.requests {
+                            Some(n) => n.to_string(),
+                            None => "?".to_string(),
+                        },
+                        label: "requests served".to_string(),
+                        body: "Every request since the master process started, static and \
+                               proxied counted together, with no split by vhost, path or \
+                               status code - stub_status keeps one total and nothing else. \
+                               Over the uptime it gives an average rate, which is not the \
+                               rate now."
+                            .to_string(),
                     }
                 }
 
-                div { class: "mt-3 flex flex-wrap gap-x-6 gap-y-1 text-xs text-base-content/60",
+                // items-center here, which the plain row did not need: these
+                // three now carry buttons taller than their own text.
+                div { class: "mt-3 flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-base-content/60",
                     if let Some(n) = status.reading {
-                        span { "reading {n}" }
+                        div { class: "flex items-center gap-1.5",
+                            span { "reading {n}" }
+                            InfoButton {
+                                title: "reading".to_string(),
+                                body: "Connections nginx is reading a request from right now - \
+                                       the header, or the body of an upload. A figure that \
+                                       stays high points at slow clients or large submissions \
+                                       rather than at anything nginx is doing."
+                                    .to_string(),
+                            }
+                        }
                     }
                     if let Some(n) = status.writing {
-                        span { "writing {n}" }
+                        div { class: "flex items-center gap-1.5",
+                            span { "writing {n}" }
+                            InfoButton {
+                                title: "writing".to_string(),
+                                // "in flight", not the obvious word for it:
+                                // output.css is generated by scanning these
+                                // files for anything class-shaped, and that
+                                // word pulled daisyUI's whole component of
+                                // the same name into the stylesheet - 1.7 KB
+                                // of rules this app never uses.
+                                body: "Connections nginx is writing a response to. A proxied \
+                                       request counts here for the whole time php-fpm is \
+                                       thinking and not only while bytes move, so this is \
+                                       nearer to a count of requests in flight than to \
+                                       anything about the network."
+                                    .to_string(),
+                            }
+                        }
                     }
                     if let Some(n) = status.waiting {
-                        span { "waiting {n}" }
+                        div { class: "flex items-center gap-1.5",
+                            span { "waiting {n}" }
+                            InfoButton {
+                                title: "waiting".to_string(),
+                                body: "Idle keepalive connections, held open for a request that \
+                                       may never arrive. Each costs one worker connection and \
+                                       nothing else, so a large number beside a healthy \
+                                       ceiling above is keepalive working rather than a \
+                                       problem."
+                                    .to_string(),
+                            }
+                        }
                     }
                     span { class: "font-mono text-base-content/40", "{status.url}" }
                 }
