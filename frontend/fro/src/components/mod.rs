@@ -12,6 +12,7 @@ pub mod sidebar;
 pub mod stat_row;
 pub mod stat_tile;
 pub mod theme_toggle;
+pub mod tuning_field;
 
 pub use fetch_error::FetchError;
 pub use global_error_bar::GlobalErrorBar;
@@ -26,3 +27,4 @@ pub use sidebar::{Sidebar, SidebarOpen};
 pub use stat_row::StatRow;
 pub use stat_tile::StatTile;
 pub use theme_toggle::ThemeToggle;
+pub use tuning_field::TuningField;

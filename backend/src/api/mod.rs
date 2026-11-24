@@ -1583,6 +1583,7 @@ fn describe(wanted: &[(String, String)]) -> Vec<NginxTunable> {
                     Kind::Duration => "a number with an optional s, m or h",
                     Kind::FileCache => "off, or max=N with an optional inactive=<time>",
                     Kind::TlsProtocols => "TLSv1.2 and TLSv1.3, space separated",
+                    Kind::Resolver => "IP addresses, with optional valid=<time> and ipv6=on|off",
                 },
             }
         })
@@ -1648,9 +1649,17 @@ async fn set_nginx_tuning(
     match file.set(&name, value.as_deref()) {
         Ok(set) => {
             tracing::info!("nginx tuning: {name} -> {value:?} ({} set)", set.len());
+            // What is IN THE FILE, not what was submitted. check() returns a
+            // canonical form assembled from the parts that matched, so the
+            // two can legitimately differ - `resolver` reorders its flags,
+            // and a size or duration loses the case of its suffix. Echoing
+            // the submission would have this endpoint report a value that
+            // was never written, which is the one thing the rebuild-not-echo
+            // rule exists to prevent.
+            let stored = set.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
             Json(serde_json::json!({
                 "name": name,
-                "wanted": value,
+                "wanted": stored,
                 "note": "Written. A nixos-rebuild switch is what applies it.",
             }))
             .into_response()

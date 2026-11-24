@@ -11,7 +11,7 @@
 //! scattered through its config: whether any of it is in force.
 use crate::api::{self, NginxProxyReport};
 use crate::app::Route;
-use crate::components::{FetchError, InfoButton, Panel, StatTile};
+use crate::components::{FetchError, InfoButton, Panel, StatTile, TuningField};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -364,6 +364,10 @@ fn ProxyBody(report: NginxProxyReport) -> Element {
         }
 
         div { class: "mt-5",
+            ResolverBoard { current: r.resolver.clone() }
+        }
+
+        div { class: "mt-5",
             Panel {
                 title: "Proxy settings with nothing to apply to".to_string(),
                 subtitle: "In the config, waiting for a proxy_pass".to_string(),
@@ -391,6 +395,118 @@ fn ProxyBody(report: NginxProxyReport) -> Element {
                                     "in the config, applies to nothing"
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Setting the resolver, which is the one thing on this page that can be
+/// changed from it.
+///
+/// WHY THIS IS A BOARD AND NOT A FIELD IN THE ROW ABOVE. Nothing here is
+/// applied by this app and nothing can be: nginx's running config is a Nix
+/// store path, mode 444 on a read-only mount, and nginx has no runtime
+/// settings interface - no equivalent of SET GLOBAL. What the box does is
+/// write one line into a Nix file the system config imports, and
+/// `nixos-rebuild switch` is what makes it real. A control that looked like
+/// the rest of the page's figures would promise an apply it cannot do, so it
+/// gets a panel that can say what the trade is.
+///
+/// The same file and the same endpoints as the settings table on
+/// /perf/nginx, deliberately: the resolver is one of its rows too, so a
+/// value set here shows up there and the two cannot disagree. What this adds
+/// is the reason to set it, which is on this page and not that one.
+#[component]
+fn ResolverBoard(current: Option<String>) -> Element {
+    let report = use_resource(|| async move { api::fetch_nginx_tuning().await });
+    // The last refusal, which is where the useful text is: what the value
+    // should have looked like, or why it may not be written at all.
+    let notice = use_signal(|| None::<String>);
+
+    rsx! {
+        match &*report.read_unchecked() {
+            None | Some(Err(_)) => rsx! {},
+            Some(Ok(t)) => {
+                let t = t.clone();
+                // By name, not by position: the settings list is the
+                // backend's to order and an index would quietly point this
+                // board at a different directive.
+                let row = t.settings.iter().find(|s| s.name == "resolver").cloned();
+                rsx! {
+                    Panel {
+                        title: "Set the resolver".to_string(),
+                        subtitle: if t.writable {
+                            "writes a Nix file - the rebuild applies it".to_string()
+                        } else if t.configured {
+                            "read-only in this backend".to_string()
+                        } else {
+                            "no tuning file configured".to_string()
+                        },
+                        info: "WHAT A RESOLVER IS FOR. nginx resolves the targets written in                                its config once, when it starts. A name it meets later - in a                                proxy_pass built from the request, or in a target given as a                                variable - has to be looked up while the request waits, and                                without this directive nginx has nowhere to ask: it does not                                use the system resolver and does not read /etc/resolv.conf.                                That is why the forward-proxy figure on this page has this                                setting under it rather than beside the timings on the perf                                page. WHAT SETTING IT DOES NOT DO. It does not make nginx a                                proxy, and on this install it changes nothing on its own:                                with no proxy_pass there is no name to look up. It is the                                half you would need first. HOW IT IS APPLIED, WHICH IS NOT BY                                THIS APP. nginx's config here is a read-only store path and                                nginx has no runtime settings interface, so the box writes                                one line into a Nix file the system config imports and stops                                there. The rebuild is the apply and it stays yours to run.                                WHERE THE LINE GOES. services.nginx.commonHttpConfig, which                                lands inside the http block - and that detail is load                                bearing: resolver is invalid in main context, so writing it                                through appendConfig like worker_processes would produce a                                server that refuses to start. VALUES ARE REBUILT, NOT ECHOED.                                What reaches the file is assembled from the parts that                                matched - addresses parsed as addresses, then valid=, then                                ipv6= - in that order whatever order they were typed in. A                                hostname is refused: nginx would take one, but a resolver                                that has to resolve its own resolver is not a thing a text                                field can explain."
+                            .to_string(),
+
+                        if !t.configured {
+                            div { class: "mb-3 alert alert-info text-sm",
+                                "No tuning file, so there is nowhere to write. Set                                  GLPI_INV_NGINX_TUNING to a path the system config imports -                                  and git add it, because /etc/nixos is a git repo and a flake                                  cannot see an untracked file."
+                            }
+                        }
+                        if let Some(n) = notice() {
+                            div { class: "mb-3 alert alert-warning text-sm", "{n}" }
+                        }
+
+                        // The running value first, because it is the one that
+                        // is true. What the file asks for is the next line,
+                        // and until a rebuild they are allowed to differ -
+                        // which is the state this panel must not hide.
+                        p { class: "mb-3 text-sm text-base-content/70",
+                            "In the running config: "
+                            span { class: "font-mono",
+                                if let Some(c) = current.as_ref() { "{c}" } else { "not set" }
+                            }
+                        }
+
+                        match row {
+                            None => rsx! {
+                                p { class: "text-sm text-base-content/70",
+                                    "This backend does not list resolver as a setting it can                                      write. Nothing to set here."
+                                }
+                            },
+                            Some(row) => rsx! {
+                                TuningField {
+                                    name: "resolver".to_string(),
+                                    wanted: row.wanted.clone().unwrap_or_default(),
+                                    accepts: row.accepts.clone(),
+                                    enabled: t.writable,
+                                    wide: true,
+                                    notice,
+                                    report,
+                                }
+
+                                p { class: "mt-2 text-xs text-base-content/60",
+                                    "Accepts {row.accepts}. An empty box removes the line \
+                                     rather than writing an empty value."
+                                }
+
+                                if let Some(w) = row.wanted.as_ref() {
+                                    p { class: "mt-2 text-xs text-base-content/60",
+                                        "The file asks for "
+                                        span { class: "font-mono", "resolver {w};" }
+                                        if current.as_deref() != Some(w.as_str()) {
+                                            " - which the running config does not have yet."
+                                        }
+                                    }
+                                }
+
+                                if let Some(path) = t.path.as_ref() {
+                                    p { class: "mt-2 text-xs text-base-content/60",
+                                        "Written to {path}. Not in effect until:"
+                                        code { class: "ml-1", "sudo nixos-rebuild switch" }
+                                    }
+                                }
+                            },
                         }
                     }
                 }

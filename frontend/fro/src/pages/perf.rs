@@ -14,7 +14,7 @@
 //! If that ratio ever closes, this page is where it shows.
 use crate::api;
 use crate::app::Route;
-use crate::components::{FetchError, InfoButton, Panel};
+use crate::components::{FetchError, InfoButton, Panel, TuningField};
 use dioxus::prelude::*;
 use dioxus_router::Link;
 
@@ -908,64 +908,6 @@ fn NginxTuning() -> Element {
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-}
-
-/// One editable setting: a box, and a save that reports its own refusal.
-#[component]
-fn TuningField(
-    name: String,
-    wanted: String,
-    accepts: String,
-    enabled: bool,
-    notice: Signal<Option<String>>,
-    report: Resource<Result<api::NginxTuningReport, api::ApiError>>,
-) -> Element {
-    let mut draft = use_signal(|| wanted.clone());
-    let busy = use_signal(|| false);
-    // Compared against what the file says rather than against the last
-    // keystroke, so the control only offers to act when there is something
-    // to do.
-    let changed = draft() != wanted;
-
-    rsx! {
-        div { class: "flex items-center gap-1",
-            input {
-                class: "input input-xs input-bordered w-36 font-mono",
-                r#type: "text",
-                value: "{draft}",
-                disabled: !enabled || busy(),
-                placeholder: "{accepts}",
-                title: "{accepts}",
-                oninput: move |e| draft.set(e.value()),
-            }
-            if changed && enabled {
-                button {
-                    class: "btn btn-xs btn-primary",
-                    disabled: busy(),
-                    onclick: move |_| {
-                        let name = name.clone();
-                        let v = draft();
-                        let mut busy = busy;
-                        let mut notice = notice;
-                        let mut report = report;
-                        busy.set(true);
-                        notice.set(None);
-                        spawn(async move {
-                            // Empty clears the setting, which is how a value
-                            // is removed rather than set to nothing.
-                            let v = if v.trim().is_empty() { None } else { Some(v) };
-                            match api::set_nginx_tuning(&name, v.as_deref()).await {
-                                Ok(()) => report.restart(),
-                                Err(e) => notice.set(Some(format!("{name}: {e}"))),
-                            }
-                            busy.set(false);
-                        });
-                    },
-                    if busy() { "..." } else { "save" }
                 }
             }
         }

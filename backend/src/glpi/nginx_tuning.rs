@@ -63,6 +63,9 @@ pub enum Kind {
     FileCache,
     /// One or more `TLSv1`, `TLSv1.1`, `TLSv1.2`, `TLSv1.3`, space separated.
     TlsProtocols,
+    /// nginx's `resolver` form: one or more IP addresses, with an optional
+    /// `valid=<duration>` and `ipv6=on|off`.
+    Resolver,
 }
 
 /// One tunable, with where it goes and what it accepts.
@@ -78,7 +81,7 @@ pub struct Tunable {
 /// nginx.conf before being listed here. If a future NixOS starts emitting one
 /// of them, it moves to Generated or Option_ - adding it here would be a
 /// config that will not start.
-pub const TUNABLES: [Tunable; 16] = [
+pub const TUNABLES: [Tunable; 17] = [
     Tunable {
         name: "worker_processes",
         route: Route::Append("appendConfig"),
@@ -103,6 +106,20 @@ pub const TUNABLES: [Tunable; 16] = [
         name: "fastcgi_read_timeout",
         route: Route::Append("commonHttpConfig"),
         kind: Kind::Duration,
+    },
+    // commonHttpConfig and not appendConfig, and the difference is the whole
+    // reason this one can exist: `resolver` is only valid inside http,
+    // server, location or stream, and appendConfig lands in MAIN context
+    // after the http block - which nginx rejects outright. A control that
+    // wrote it there would hand the reader a server that will not start.
+    //
+    // Absent from this machine's generated config, checked the same way the
+    // other four were: the proxy page reads the running config and reports
+    // no resolver at all.
+    Tunable {
+        name: "resolver",
+        route: Route::Append("commonHttpConfig"),
+        kind: Kind::Resolver,
     },
     Tunable {
         name: "client_max_body_size",
@@ -221,6 +238,44 @@ pub fn check(kind: Kind, value: &str) -> Result<String, String> {
                 None => format!("max={max}"),
             })
         }
+        Kind::Resolver => {
+            // Rebuilt from the parts that matched, like FileCache above and
+            // for the sharper version of the same reason: this value ends up
+            // as a directive nginx consults for every name it has to look
+            // up, and an address is the one thing here that decides where a
+            // request actually goes.
+            let mut addresses = Vec::new();
+            let mut valid = None;
+            let mut ipv6 = None;
+            for part in v.split_whitespace() {
+                if let Some(d) = part.strip_prefix("valid=") {
+                    let (digits, suffix) = split_suffix(d, &['s', 'm', 'h']);
+                    valid = Some(format!("{}{}", number(digits)?, suffix));
+                } else if let Some(f) = part.strip_prefix("ipv6=") {
+                    ipv6 = Some(match f.to_ascii_lowercase().as_str() {
+                        "on" => "on",
+                        "off" => "off",
+                        _ => return Err("ipv6= takes on or off".into()),
+                    });
+                } else {
+                    addresses.push(address(part)?);
+                }
+            }
+            if addresses.is_empty() {
+                return Err("needs at least one IP address".into());
+            }
+            let mut out = addresses.join(" ");
+            // Fixed order, not submission order: nginx accepts the flags
+            // anywhere, and a file whose lines differ only in how someone
+            // typed them is a file nobody can diff.
+            if let Some(t) = valid {
+                let _ = write!(out, " valid={t}");
+            }
+            if let Some(f) = ipv6 {
+                let _ = write!(out, " ipv6={f}");
+            }
+            Ok(out)
+        }
         Kind::TlsProtocols => {
             let mut out = Vec::new();
             for part in v.split_whitespace() {
@@ -232,6 +287,27 @@ pub fn check(kind: Kind, value: &str) -> Result<String, String> {
             Ok(out.join(" "))
         }
     }
+}
+
+/// One resolver address, canonicalised by the standard library's parser.
+///
+/// Parsed and re-rendered rather than pattern-matched: `std` already knows
+/// every shape an IP address takes, and a regex that merely looks right is
+/// the thing this module refuses to rely on. A name is NOT accepted - nginx
+/// would take one, but a resolver that has to resolve its own resolver is a
+/// bootstrap problem the page cannot explain in a field.
+fn address(s: &str) -> Result<String, String> {
+    // A bracketed v6 literal, which is how nginx writes one when a port
+    // follows. Ports are not accepted here, so the brackets are dropped and
+    // the address is rendered bare - still valid, and one spelling instead
+    // of two.
+    let bare = s
+        .strip_prefix('[')
+        .and_then(|r| r.strip_suffix(']'))
+        .unwrap_or(s);
+    bare.parse::<std::net::IpAddr>()
+        .map(|ip| ip.to_string())
+        .map_err(|_| format!("{s:?} is not an IP address"))
 }
 
 fn number(s: &str) -> Result<u64, String> {
@@ -616,6 +692,72 @@ mod tests {
         assert!(e.contains("recommendedOptimisation"), "{e}");
         assert!(e.contains("duplicate"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resolver_is_rebuilt_in_a_fixed_order() {
+        // Submitted flags-first, written addresses-first: the file has one
+        // spelling whatever anyone typed.
+        let got = check(Kind::Resolver, "ipv6=off 1.1.1.1 valid=30s 9.9.9.9").unwrap();
+        assert_eq!(got, "1.1.1.1 9.9.9.9 valid=30s ipv6=off");
+    }
+
+    #[test]
+    fn a_resolver_with_one_address_and_nothing_else_is_enough() {
+        assert_eq!(check(Kind::Resolver, "127.0.0.53").unwrap(), "127.0.0.53");
+    }
+
+    #[test]
+    fn a_bracketed_v6_resolver_is_written_bare() {
+        // One spelling, and nginx takes it: the brackets exist to separate a
+        // v6 address from a port, and no port is accepted here.
+        assert_eq!(
+            check(Kind::Resolver, "[2001:4860:4860::8888]").unwrap(),
+            "2001:4860:4860::8888"
+        );
+    }
+
+    #[test]
+    fn a_resolver_hostname_is_refused_by_name() {
+        // nginx would accept one. This does not: a resolver that has to
+        // resolve its own resolver cannot be explained in a text field.
+        let e = check(Kind::Resolver, "dns.example.com").unwrap_err();
+        assert!(e.contains("not an IP address"), "{e}");
+    }
+
+    #[test]
+    fn a_resolver_with_no_address_is_refused() {
+        let e = check(Kind::Resolver, "valid=30s").unwrap_err();
+        assert!(e.contains("at least one IP address"), "{e}");
+    }
+
+    #[test]
+    fn a_resolver_flag_that_is_not_one_is_refused() {
+        assert!(check(Kind::Resolver, "1.1.1.1 ipv6=maybe").is_err());
+        assert!(check(Kind::Resolver, "1.1.1.1 status_zone=dns").is_err());
+    }
+
+    #[test]
+    fn an_injected_resolver_value_is_not_a_value() {
+        // The shape the whole check() design exists for: this text ends up
+        // inside a Nix string inside a config that runs as root.
+        assert!(check(Kind::Resolver, "1.1.1.1; rm -rf /").is_err());
+        assert!(check(Kind::Resolver, "1.1.1.1\n  worker_processes 99").is_err());
+    }
+
+    #[test]
+    fn the_resolver_goes_into_the_http_block_and_not_main_context() {
+        // The failure this routing avoids: nginx rejects `resolver` in main
+        // context, so appendConfig would produce a server that does not
+        // start. The test is on the ROUTE rather than on the rendered line
+        // because that is where the mistake would be made.
+        let t = tunable("resolver").unwrap();
+        assert_eq!(t.route, Route::Append("commonHttpConfig"));
+
+        let out = render(&[("resolver".to_string(), "1.1.1.1 valid=30s".to_string())]);
+        assert!(out.contains("commonHttpConfig"), "{out}");
+        assert!(out.contains("resolver 1.1.1.1 valid=30s;"), "{out}");
+        assert!(!out.contains("appendConfig"), "{out}");
     }
 
     #[test]
