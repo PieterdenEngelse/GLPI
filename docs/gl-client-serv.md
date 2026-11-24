@@ -145,8 +145,12 @@ diverge, which is why lazy creation is safe here and would not be under mixed
 users.
 
 `/var/lib/glpi/config` is where `config_db.php` lands, holding the database
-connection **and GLPI's encryption key** — which is why that tree is `0750
-glpi:glpi` and why a backup of it is as sensitive as the database dump.
+connection — and beside it `glpicrypt.key`, **GLPI's encryption key**
+(`src/GLPIKey.php:101`; a legacy `glpi.key` is still read as a fallback). Two
+files, not one: the key is not inside `config_db.php`, which is worth knowing
+because the key is what decrypts the encrypted columns *inside* a dump. That is
+why the tree is `0750 glpi:glpi` and why a backup of it is as sensitive as the
+database dump.
 
 All three variables go to php-fpm, the cron unit **and** the `glpi-console`
 wrapper, and all three must agree. A console run with different paths writes a
@@ -368,8 +372,10 @@ belongs in a runbook.
 ### 2.8 Confirm the server before touching any client
 
 ```sh
-# the application itself
-sudo -u glpi glpi-console system:status            # expect glpi: OK, db: OK
+# the application itself. -p MATTERS: without it `system:status` redacts the
+# schema versions AND hardcodes `uptodate` to false, so the check never runs
+# (StatusChecker.php:181, :188). Output is JSON, not a summary line.
+sudo -u glpi glpi-console system:status -p
 sudo -u glpi glpi-console system:check_requirements # expect 0 errors, 0 warnings
 
 # the loopback listener
@@ -383,6 +389,15 @@ curl -s -o /dev/null -w '%{http_code} verify=%{ssl_verify_result}\n' \
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/Inventory
 ```
 
+Read the individual services out of that JSON rather than the `glpi` key.
+`glpi` is **not** GLPI's own health: `getServiceStatus('all')` overwrites it
+with a roll-up over every service (`StatusChecker.php:149`), and
+`calculateGlobalStatus` returns `PROBLEM` if any one of them is (`:118-128`).
+A single stuck crontask therefore reads as `glpi: PROBLEM` — see §8.3, where
+that is exactly what happened. Expect `db: OK`, `filesystem: OK`,
+`database_version: OK`, and `NO_DATA` for every service this install does not
+configure.
+
 That last one should return **405, not 403**. 405 means the enabled-check
 passed and the endpoint is live — it is simply refusing a GET, which is the
 correct answer for an endpoint that only accepts POST. A 403 means step 2.7
@@ -391,13 +406,23 @@ did not take. **All four verified here.**
 One more check worth running deliberately:
 
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' --cacert /var/lib/glpi-tls/cert.pem \
-  https://192.168.2.3/
+curl -s -o /dev/null -w '%{http_code} verify=%{ssl_verify_result}\n' \
+  --cacert /var/lib/glpi-tls/cert.pem \
+  "https://$(avahi-resolve -n -4 nixos.local | awk '{print $2}')/"
 ```
 
-This should **fail**. The address is not in the certificate's SAN, and that
-failure is the proof hostname verification is genuinely enforced rather than
-encryption alone.
+This should **fail**, with `verify=1`. The address is not in the certificate's
+SAN, and that failure is the proof hostname verification is genuinely enforced
+rather than encryption alone.
+
+**The address is derived, not written out, and that is the whole point of the
+test.** A hardcoded `https://192.168.2.3/` also fails — but after a DHCP lease
+change it fails because *nothing is at that address*, not because the address
+is absent from the SAN. Same `curl` exit, a different reason, and the check
+silently stops testing what it claims to while still reading as a pass. Taking
+the address from mDNS keeps the two causes from being confused: if the name
+resolves and the connection still refuses to verify, the SAN is what refused
+it. Watch for `verify=1` specifically rather than only a non-200 — see §8.5.
 
 ---
 
@@ -625,9 +650,12 @@ sudo mariadb-dump --single-transaction glpi > glpi-$(date +%F).sql
 sudo tar czf glpi-state-$(date +%F).tar.gz /var/lib/glpi
 ```
 
-`/var/lib/glpi/config/config_db.php` holds the database credentials **and the
-encryption key** — which is why that directory is 0750 and why a backup of it
-is as sensitive as the database itself. `/var/lib/glpi/files` holds every
+`/var/lib/glpi/config/config_db.php` holds the database credentials, and
+`glpicrypt.key` beside it holds **the encryption key** (`src/GLPIKey.php:101`)
+— which is why that directory is 0750 and why a backup of it is as sensitive as
+the database itself. Take the dump and this tree with the *same* timestamp:
+restore a dump against a different key and the encrypted columns come back as
+garbage with no error. `/var/lib/glpi/files` holds every
 uploaded document. The GLPI source needs no backup; it is in the store and
 rebuilt from the pinned hash.
 
@@ -671,7 +699,7 @@ of its failures are silent.
 | `/etc/nixos/glpi.nix` | — | package + module: PHP env, nginx, MariaDB, TLS, cron |
 | `/etc/nixos/glpi-agent.nix` | — | the agent module, importable on any NixOS host |
 | `/var/lib/glpi` | 0750 glpi:glpi | all mutable state |
-| `/var/lib/glpi/config` | 0750 glpi:glpi | `config_db.php` — credentials **and** encryption key |
+| `/var/lib/glpi/config` | 0750 glpi:glpi | `config_db.php` — credentials; `glpicrypt.key` — encryption key |
 | `/var/lib/glpi/files` | 0750 glpi:glpi | uploads, cache, logs, sessions |
 | `/var/lib/glpi-tls/cert.pem` | 0644 | the trust anchor handed to clients |
 | `/var/lib/glpi-tls/key.pem` | 0640 root:nginx | never leaves the machine |
@@ -716,22 +744,486 @@ then cannot read the key and aborts the start. (`gl-net.md` trap 4.)
 
 ---
 
+## 8. Verification pass — 2026-11-24
+
+Everything in §2.8 and §4 re-run against the running system three weeks after
+it was built, plus the items *Not proven* below had left open. The read-only
+checks were executed and their output read; the changes are marked by who ran
+them.
+
+### What still holds
+
+| check | expected | result |
+|---|---|---|
+| `http://localhost:8080/` | 200 | 200 |
+| `https://nixos.local/` with `--cacert` | 200 verify=0 | 200 verify=0 |
+| `http://localhost:8080/Inventory` | 405, not 403 | 405 |
+| `https://192.168.2.3/` | must **fail** | 000 verify=1 |
+| MariaDB listeners | both loopbacks | `127.0.0.1:3306`, `[::1]:3306` |
+| reachable on `192.168.2.3` | 443 only | 443 open; 8080, 3306, 3200 unreachable |
+| `/var/lib/glpi`, `/var/lib/glpi/config` | 0750 | 0750 |
+| the loop closes | one agent, recent | `nixos-2026-10-31-08-36-00`, 15 h, not stale |
+| timers | cron minutely, agent daily | `glpi-cron` ran 46 s prior; `glpi-agent` next 00:03 |
+
+**Certificate expiry — the open item in *Not proven*, now closed.** Read off
+the live TLS handshake rather than with `openssl`, which is still absent from
+this system outside the generating unit: Python's `ssl` module returns the peer
+certificate without it.
+
+```
+CN=nixos.local    SAN: DNS:nixos.local, DNS:nixos    (no IP SAN, as designed)
+notBefore Oct 31 07:07:12 2026 GMT
+notAfter  Oct 28 07:07:12 2036 GMT     -> 3625 days remaining
+```
+
+This file used to record `notAfter=Oct 28 06:46:41 2036 GMT`. The live
+certificate is twenty minutes later, so it was **reissued once** after that
+note was written — the event §5 warns invalidates every copy already
+distributed to clients. Nothing was lost, because the only client is this host,
+but the recorded value described a certificate that no longer exists. Re-read
+it from the handshake rather than trusting a transcribed figure.
+
+### 8.1 nginx was IPv4-only while mDNS advertised both families — **fixed**
+
+The one real defect this pass found, and the one a same-machine test cannot
+find on principle.
+
+`services.avahi.publish.addresses = true` publishes an **A and an AAAA** for
+this host, so `nixos.local` resolves to either. nginx listened on
+`0.0.0.0:443` and nothing else. The server got away with it only because
+`configuration.nix` sets `nssmdns4 = true` and **not** `nssmdns6`, so its own
+resolver never returns the AAAA — the one host in the setup configured not to
+ask the question.
+
+A client that does mDNS natively and dual-stack gets the AAAA and hits a
+connection refused against a name that resolved perfectly. **That is Windows
+and macOS**, which is to say precisely the two platforms §3.5 and §3.6 could
+not test.
+
+Demonstrated before the fix, forcing the AAAA while leaving the hostname
+intact so certificate verification still applies:
+
+```sh
+V6=$(avahi-resolve -n -6 nixos.local | awk '{print $2}')
+curl -s -o /dev/null -w '%{http_code} verify=%{ssl_verify_result}\n' \
+  --cacert /var/lib/glpi-tls/cert.pem \
+  --resolve "nixos.local:443:[$V6]" https://nixos.local/
+```
+
+`000 verify=0` against `200 verify=0` for the same name over v4 — the name
+resolves, the certificate would verify, and nothing is listening.
+
+The fix is a second entry in the vhost's explicit `listen` list in `glpi.nix`:
+
+```nix
+++ lib.optionals cfg.lan.enable [
+  { addr = "0.0.0.0"; port = cfg.lan.port; ssl = true; }
+  { addr = "[::]";    port = cfg.lan.port; ssl = true; }
+];
+```
+
+`listenString` in nginx/default.nix interpolates `addr` verbatim, so this
+emits `listen [::]:443 ssl;`. It costs no certificate work — the cert carries
+DNS names and no IP SAN, so it covers either family — and
+`networking.firewall.allowedTCPPorts` already applies to both.
+
+Confirmed after the rebuild: `ss -ltn` shows both `0.0.0.0:443` and
+`[::]:443`, and the `--resolve` probe above returns `200 verify=0` over either
+family. Generation
+`951kw3f4kvs5i9mzvigp135gnym8fjcl-nixos-system-nixos-26.05.20261012.7993f34`.
+
+The alternative, suppressing AAAA publication in avahi, closes the same
+mismatch and costs this host v6 mDNS for everything else. The listener is the
+cheaper half.
+
+### 8.2 Backup — **taken once 2026-11-24; not automated, and on the same disk**
+
+There was no dump anywhere on this system, no systemd unit, nothing in
+`$HOME`. One has now been taken:
+
+```
+glpi-2026-11-24.sql        6 927 429 B   449 CREATE TABLEs
+glpi-state-2026-11-24.tar.gz  2 725 598 B
+glpi-tls-2026-11-24.tar.gz        4 065 B
+```
+
+The table count is the check that the `--databases glpi glpi_inv` correction
+below actually took: `live` counts both schemas, so 449 = 449 can only hold if
+both are in the file. A dump of `glpi` alone would have come in one short.
+
+**What is still open.** It ran by hand, so there is no second one, and
+`/var/lib/glpi-backup` sits on `/dev/nvme0n1p5` — the same filesystem as
+`/var/lib/mysql` and `/var/lib/glpi`. It survives a bad migration, a dropped
+table and a botched upgrade; it does not survive the disk. Copying it off is a
+separate decision from taking it.
+
+**What is actually at risk, which is narrower than "the database".** Every
+agent re-reports daily, so a lost `glpi` schema followed by a fresh
+`database:install` and one inventory round brings back the computers, their
+hardware and their software. The inventory is the bulk of the rows and it is
+self-healing. What does *not* come back:
+
+- **The OAuth client.** The id and secret in `~/.config/glpi-inv/env` identify
+  a row GLPI keeps in its own database (`oauth-setup.md`). Lose the database
+  and the env file names a client that does not exist; every API call this
+  dashboard makes fails. That file is not a backup of the client.
+- **The settings GLPI needs before it will answer at all** — `enable_api`,
+  `enable_hlapi`, `enable_api_login_credentials`, `url_base`, `url_base_api`,
+  and §2.7's native-inventory switch. All off by default, all in the database.
+  Recoverable from these files, but that is an hour of re-reading, not a
+  restore.
+- **The read-only service-account profile** — hand-built rights, in the
+  database. See `gl-rights.md`.
+- **`glpi_logs`** — field-level change history, which `gl-sql-plan.md` names as
+  one of the two things no GLPI API exposes. No inventory round regenerates
+  history; this is the only copy.
+- **`glpi_inv.status_samples`** — the minutely time series every history panel
+  on the Perf and Status pages plots. Also the only copy.
+
+So the case for this step is **two irreplaceable time series and an hour of
+re-setup**, not a lost asset inventory. Worth stating, because the usual
+argument for backing up a CMDB does not apply to an install whose data walks
+back in by itself.
+
+**Two things overstated when this section was first written.**
+`/var/lib/glpi-tls` is cheap to lose *today*: the only agent is this host,
+reading the certificate out of that same directory, so regenerating costs a
+rebuild and nothing else. §5's warning is about a future with real clients, and
+it becomes true the moment §8.1's work pays off and a second one exists.
+And `glpicrypt.key` has no independent value — it matters only *for* restoring
+a dump.
+
+> **Corrected at source, 2026-11-24.** §0, §5 and §6 used to say
+> `config_db.php` holds the database credentials *and* the encryption key. It
+> does not: the key is `glpicrypt.key`, a separate file beside it
+> (`src/GLPIKey.php:101`, with a legacy `glpi.key` still read as a fallback).
+> Both sit in `/var/lib/glpi/config`, so "back up `/var/lib/glpi`, and it is
+> 0750 for a reason" was always right — only the attribution was wrong. Noted
+> here because it is the reason the dump and the state tree have to be taken
+> with the same timestamp, which no longer has to be rediscovered.
+
+**The run.** One script rather than a sequence, because the sequence was tried
+and failed: the `install -d` was a separate step, it was skipped, and four
+commands then redirected into a directory that did not exist — six cascading
+errors from one missing line.
+
+```sh
+#!/usr/bin/env bash
+set -euo pipefail
+
+TS=$(date +%F)
+D=${GLPI_BACKUP_DIR:-/var/lib/glpi-backup}
+
+# 0700 root: the dump carries every stored credential, and the state tree
+# carries glpicrypt.key, which decrypts the encrypted columns inside it.
+install -d -m 0700 -o root -g root "$D"
+
+# BOTH databases. `glpi_inv` is a separate schema this app creates for its own
+# history; a dump of `glpi` alone silently omits it.
+mariadb-dump --single-transaction --databases glpi glpi_inv > "$D/glpi-$TS.sql"
+
+tar czf "$D/glpi-state-$TS.tar.gz" -C /var/lib glpi
+tar czf "$D/glpi-tls-$TS.tar.gz"   -C /var/lib glpi-tls
+chmod 0600 "$D"/*
+
+# Verified, not assumed: a truncated dump is still a plausible-looking file.
+tail -1 "$D/glpi-$TS.sql"
+in_dump=$(grep -c '^CREATE TABLE' "$D/glpi-$TS.sql")
+live=$(mariadb -N -e "SELECT COUNT(*) FROM information_schema.tables \
+    WHERE table_schema IN ('glpi','glpi_inv')")
+[ "$in_dump" = "$live" ] && echo "OK - counts agree" \
+  || { echo "MISMATCH - do not trust this dump" >&2; exit 1; }
+```
+
+`set -euo pipefail` so it stops at the first failure instead of running four
+more commands that cannot work. Re-running on the same day overwrites rather
+than accumulating.
+
+Confirmed on the first run: `-- Dump completed on 2026-11-24 16:03:58`, and
+`dump=449 live=449`.
+
+**Follow-on, not done:** wrap it in a `systemd.services.glpi-backup` and
+`.timer` with `Persistent = true` — the same reason `glpi-cron.timer` sets it,
+in §5: without it a laptop asleep at the scheduled hour never runs the job.
+
+### 8.3 The console checks — **all three run; the one fault found is cleared**
+
+```sh
+sudo -u glpi glpi-console system:status -p              # NOTE the -p
+sudo -u glpi glpi-console system:check_requirements
+sudo -u glpi glpi-console database:check_schema_integrity
+```
+
+Use the wrapper (`/run/current-system/sw/bin/glpi-console`), never
+`php bin/console` — §5 for why.
+
+**`-p` is not cosmetic, and this is the trap.** Without it, `system:status`
+redacts `defined` and `installed` *and* hardcodes `uptodate` to `false` —
+`StatusChecker.php:181` is `$public_only ? false : Update::isDbUpToDate()`, so
+the schema check never runs. Line 188 likewise hardcodes the status to
+`NO_DATA`. A sanitised run therefore reports a database that looks out of date
+and has not been looked at. With `-p`:
+
+```
+"database_version": { "defined":  "12.0.1@5768fcc43eb6712d0bc124e36b6be3f1e5e506fb",
+                      "installed":"12.0.1@5768fcc43eb6712d0bc124e36b6be3f1e5e506fb",
+                      "uptodate": true, "status": "OK" }
+```
+
+Defined equals installed, so the 11.0.12 → 12.0.1 migration completed.
+
+> **Corrected at source, 2026-11-24.** §2.8 used to say to expect
+> `glpi: OK, db: OK` from `system:status`. GLPI 12 prints **JSON**, not that
+> line, and the `glpi` key cannot be read as GLPI's own health:
+> `getServiceStatus('all')` **overwrites** `$status['glpi']['status']` with a
+> roll-up over every service (`StatusChecker.php:149`), and
+> `calculateGlobalStatus` returns `PROBLEM` if any one of them is
+> (`:118-128`). `glpi` is a global summary. §2.8 now says so, and says to pass
+> `-p`.
+
+**The one fault.** `crontasks` is `PROBLEM`:
+
+```
+"stuck": ["queuedwebhook"]
+"status_msg": "RUNNING: 1, STUCK: 1, ERRORED: 0, TOTAL: 50"
+```
+
+Proof that `glpi: PROBLEM` is only this, counted twice: it stayed `PROBLEM`
+across both runs while `database_version` moved from `NO_DATA` to `OK`.
+
+`cronQueuedWebhook()` is in `src/QueuedWebhook.php:616`, so the itemtype is
+`QueuedWebhook`:
+
+```sh
+sudo -u glpi glpi-console task:unlock -t QueuedWebhook::queuedwebhook
+```
+
+Scoped to the one task rather than `--all` (`UnlockCommand.php:57`; the default
+staleness threshold is 1800 s). Run 2026-11-24:
+
+```
+Task "QueuedWebhook::queuedwebhook" unlocked.
+Number of tasks unlocked: 1.
+glpi: OK
+crontasks: OK   RUNNING: 0, STUCK: 0, ERRORED: 0, TOTAL: 50
+stuck: []
+```
+
+Which closes the loop on the roll-up: `glpi` went to `OK` the moment
+`crontasks` did, with nothing else in the document changing. `RUNNING` also
+fell 1 → 0, so the stuck task was the one being counted as running.
+
+**Why it was worth clearing, given nothing here uses webhooks** — `plugins`
+is `NO_DATA` and no function in use was blocked. Because it pinned
+`system:status` to `PROBLEM` permanently, and that costs the signal: the next
+real fault would not have changed the output. A monitor that is always red is
+not a monitor.
+
+Everything else was `OK` or `NO_DATA` — no LDAP, IMAP, CAS, mail collectors,
+replicas or plugins are configured on this install, so `NO_DATA` is the
+correct answer rather than a gap.
+
+`system:check_requirements` passed every `[REQUIRED]` and `[SECURITY]` item,
+with two `[SKIPPED]`: SELinux, not applicable on NixOS, and the session
+security configuration, which the CLI cannot evaluate without a web request.
+
+`database:check_schema_integrity` is the one of the three whose exit code
+carries meaning — seven codes, of which `2` is found differences and `3` is
+requires a database update (`CheckSchemaIntegrityCommand.php:54-90`). It
+returned:
+
+```
+Database schema is OK.
+exit=0
+```
+
+So the 11.0.12 → 12.0.1 move left no drift in the table definitions, which is
+a stronger statement than `uptodate: true` on its own: that one compares a
+recorded version string, this one compares the schema against the empty-SQL
+GLPI ships for its own version.
+
+### 8.4 Default passwords — **checked; three are still shipped, left in place by decision 2026-11-24**
+
+Not a matter of logging in and looking. GLPI ships no default-password console
+command — checked against the 12.0.1 command list, where the `security:*`
+commands are `change_key`, `change_oauth_key`, `session:list` and
+`session:revoke`. The check is exact anyway, because
+`install/empty_data.php` seeds precisely these:
+
+| account | shipped password |
+|---|---|
+| `glpi` | `glpi` |
+| `post-only` | `postonly` |
+| `tech` | `tech` |
+| `normal` | `normal` |
+| `glpi-system` | empty — a system account, not a login |
+
+and `Auth::getPasswordHash()` is `password_hash($p, PASSWORD_DEFAULT)`, checked
+by `password_verify()` (`src/Auth.php:426` and `:398`). So PHP's own verifier
+against the stored hash settles it:
+
+```sh
+PHP=$(systemctl cat phpfpm-glpi | grep -oE '/nix/store/[^ ]*php[^/ ]*/bin/php' | head -1)
+sudo mariadb -N -B glpi -e \
+  "SELECT name,password,is_active FROM glpi_users WHERE name IN ('glpi','post-only','tech','normal')" |
+while IFS=$'\t' read -r name hash active; do
+  case $name in glpi) p=glpi;; post-only) p=postonly;; tech) p=tech;; normal) p=normal;; esac
+  echo "$name: $("$PHP" -r 'echo password_verify($argv[1],$argv[2])?"DEFAULT":"changed";' "$p" "$hash") (is_active=$active)"
+done
+```
+
+`$PHP` is derived from the running unit rather than written out, so it does not
+go stale at the next rebuild.
+
+**The result, 2026-11-24:**
+
+```
+glpi:      changed (is_active=1)
+normal:    DEFAULT (is_active=1)
+post-only: DEFAULT (is_active=1)
+tech:      DEFAULT (is_active=1)
+```
+
+So §2.6 took for `glpi` and for none of the others. All three are active, on a
+server whose `0.0.0.0:443` listener is reachable from the LAN, and the same
+seed sets `use_password_security => 0`, so nothing ever forced a change.
+`tech` is the one that carries weight: a technician login is write access to
+the asset database, not a read.
+
+**Left as it is, deliberately, on 2026-11-24.** Recorded here rather than
+quietly dropped, because the point of this section is that nothing reads as
+more done than it is.
+
+**Nothing depends on them**, which is worth knowing for whenever the decision
+is revisited: this dashboard signs in as a separate user `inv`
+(`GLPI_USERNAME`, `grant_type=password`), and the inventory endpoint takes
+unauthenticated POSTs by design — that is what §2.7 enables. So all three can
+go without breaking anything:
+
+```sh
+for u in tech normal post-only; do sudo -u glpi glpi-console user:disable "$u"; done
+```
+
+`user:disable` takes a bare login as a positional argument
+(`AbstractUserCommand.php:49`) and only sets `is_active = 0`
+(`DisableCommand.php:56-60`), so `user:enable` reverses it — which is why it is
+the one to reach for rather than `user:delete`. Note that disabling leaves the
+hash alone, so the check above will still print `DEFAULT` afterwards; the
+column that changes is `is_active`.
+
+### 8.5 The DHCP lease — **deliberately not pinned, 2026-11-24**
+
+Closed as a decision, not as an open item. The analysis below is why: once
+§2.8 stopped hardcoding the address, a reservation protected nothing but
+documentation literals. Recorded in full so the decision can be revisited
+without redoing the reasoning.
+
+
+| | |
+|---|---|
+| address to reserve | `192.168.2.3` |
+| MAC | `f8:5e:a0:1e:91:23` |
+| interface | `wlp0s20f3` — **wireless** |
+| router / DHCP / DNS | `192.168.2.254` |
+| lease | 14400 s |
+| local domain | `home` |
+
+The router model could not be identified from the network: port 80 is open and
+`/` returns a bare 404 with no `Server` header. Gateway MAC OUI `7c:39:53`.
+
+Two things would defeat the reservation silently. **It is the wireless MAC** —
+plug in ethernet and the lease is keyed to a different one. And **MAC
+randomization** would break it outright; not in effect here, since
+`f8:5e:a0:1e:91:23` has the locally-administered bit clear and is therefore the
+burned-in address rather than a per-connection random one.
+
+If it is ever set, confirm with:
+
+```sh
+sudo nmcli device disconnect wlp0s20f3 && sudo nmcli device connect wlp0s20f3
+ip -4 -o addr show wlp0s20f3 | grep 192.168.2.3
+avahi-resolve -n -4 nixos.local
+```
+
+Note that a reservation is **not** detectable from this side — the client still
+receives an ordinary lease and still reads `dynamic` in `ip addr`, and a
+release/renew returning the same address proves nothing, because a DHCP server
+normally re-offers the previous lease anyway. The router's own interface is the
+only confirmation.
+
+### What actually happens if the lease moves
+
+Measured rather than assumed, because the answer decides whether this step is
+worth doing at all.
+
+**avahi tracks the interface; it does not store a value.** The proof is already
+running here: this interface carries five rotating IPv6 privacy addresses, and
+two `avahi-resolve -n -6 nixos.local` queries a second apart returned
+*different* ones, each the currently live address. A v4 lease change rides the
+same mechanism.
+
+**No configuration holds the literal address.** `grep` over
+`/etc/nixos/*.nix`, the dashboard's env file and the agent's config file
+returns zero hits for `192.168.2.3`.
+
+| | why it survives a change |
+|---|---|
+| nginx | listens on `0.0.0.0` and `[::]` — every address, so the new one is picked up with no rebind. Pinned to `192.168.2.3` it would instead **fail to start** |
+| TLS | no IP SAN, so the certificate matches `nixos.local` at any address |
+| glpi-agent | `server = https://nixos.local/` — a name |
+| the dashboard → GLPI | `localhost:8080` |
+| the dashboard → MariaDB | `localhost`, unix socket |
+| firewall | opens a port, not an address |
+
+mDNS address records are short-lived and avahi sends a goodbye plus a fresh
+announcement on change, so a client can briefly hold the old address. The
+agent runs daily, which makes that window irrelevant to it.
+
+**What a move does break is one test, and it breaks it invisibly.** §2.8's
+deliberate-failure probe used to read `https://192.168.2.3/`. It exists to
+prove the certificate's SAN is enforced, so it has to fail *for that reason*.
+After a lease change it fails because nothing is at the address — same exit,
+different cause, and a reader ticks it off having proved nothing. §2.8 now
+derives the address from mDNS and watches for `verify=1`, which fixes the test
+regardless of whether the lease is ever pinned.
+
+Beyond that it is prose: six occurrences in this file, five in `gl-net.md`.
+
+So this step protects eleven lines of documentation and, before the §2.8
+change, one self-invalidating test. Belt-and-braces rather than a fix, for the
+reason §1 gives: the certificate carries no IP SAN, so a moved lease breaks no
+TLS and mDNS re-announces by itself. It saves confusion, not an outage — and
+with §2.8 fixed, less of even that.
+
+**Hence the decision not to pin it.** What is left to go stale is prose, and
+prose that is wrong about an address is visible on the next read; a test that is
+wrong about *why* it passed is not, which is why that half was worth fixing and
+this half was not. If a second client ever makes the address worth quoting to
+someone else, the values above are what to enter.
+
+---
+
 ## Not proven
 
 Stated plainly so nothing here reads as more tested than it is.
 
-- **No second client.** The only agent is the server itself. Every claim about
+- **No second client.** The only agent is the server itself. §8.1 was its
+  prerequisite and is now fixed; the IPv6 listener it adds is what a Windows or
+  macOS client would otherwise have fallen over. Every claim about
   the client-server path is true for a host that resolves its own mDNS name
   and goes out over the network to reach itself — which exercises the whole
   chain, but is not a genuinely separate machine.
 - **Windows (3.5) and macOS (3.6) are untested**, written from upstream
   documentation with no such host available. 3.6 flags one path it could not
   confirm at all.
-- **The DHCP lease is not pinned** in the router, or at least that was never
-  confirmed here.
-- **Certificate expiry** (`notAfter=Oct 28 06:46:41 2036 GMT`) was recorded at
-  generation time and has not been re-checked; there is no `openssl` on this
-  system outside the generating unit.
+- **The DHCP lease is not pinned** in the router — no longer an open item but
+  a decision, taken 2026-11-24; see §8.5 for what a lease change actually costs,
+  measured rather than assumed, and for the values to enter if it is revisited.
+  Note that a reservation is not verifiable from the client in any case.
+- **Certificate expiry** — no longer open. Re-read from the live handshake on
+  2026-11-24; see §8. It expires `Oct 28 07:07:12 2036 GMT`, twenty minutes
+  later than the figure this list used to carry, which means the certificate
+  was reissued once since.
 
 ## See also
 

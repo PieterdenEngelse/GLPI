@@ -13,7 +13,7 @@ was checked against — not a claim it was re-verified afterwards.
 - **GLPI 12.0.1, loopback only:** working — login and dashboard verified
   (on 11.0.12, before the upgrade)
 - **PHP 8.4.27 from a second nixpkgs input:** working — two live RCE CVEs closed
-- **LAN over HTTPS + mDNS + inventory agent:** live — `0.0.0.0:443` up, the
+- **LAN over HTTPS + mDNS + inventory agent:** live — `0.0.0.0:443` and `[::]:443` up, the
   agent reporting daily, TLS verified by the client
 - **Windows / macOS clients:** written from upstream docs, **untested here**
 
@@ -287,7 +287,7 @@ glpi-agent (root, daily)                        this machine, as a CLIENT
         │  https://nixos.local/   TLS verified against cert.pem
         ▼
 nginx  0.0.0.0:443  ─┐
-                     ├─ one vhost, two listeners            the SERVER
+nginx  [::]:443      ├─ one vhost, three listeners          the SERVER
 nginx  127.0.0.1:8080┘
         │
         ├─► GLPI 12.0.1 + PHP-FPM + MariaDB
@@ -304,7 +304,7 @@ end-to-end test rather than a local shortcut.
 
 | | |
 |---|---|
-| listeners | `0.0.0.0:443` (LAN, HTTPS) and `127.0.0.1:8080` (loopback, HTTP) — both observed up |
+| listeners | `0.0.0.0:443` and `[::]:443` (LAN, HTTPS) and `127.0.0.1:8080` (loopback, HTTP) — all observed up. **`[::]:443` added 2026-11-24**: avahi publishes an AAAA as well as an A, so a v4-only listener is refused by any dual-stack client resolving the name natively, which is Windows and macOS. Invisible from this host, whose `nssmdns4`-only resolver never returns the AAAA — `gl-client-serv.md` §8.1 |
 | why both | `addSSL`, not `forceSSL`: one vhost keeps the routing rules from drifting between the local and LAN copies |
 | firewall | `networking.firewall.allowedTCPPorts = [ cfg.lan.port ]`, gated on `lan.enable` — glpi.nix:350 |
 | hostname | `services.glpi.hostname`, defaulting to `${config.networking.hostName}.local` → `nixos.local` |
@@ -529,10 +529,10 @@ state, Part 3.
 | `GET /` | 200, 86 KB, `<title>Authentication - GLPI</title>` |
 | `POST /front/login.php` | 302 → `/front/central.php`, session cookie set |
 | `GET /front/central.php` | 200, 212 KB, `<title>Standard interface - GLPI</title>` |
-| `system:status` | `glpi: OK`, `db: OK` |
+| `system:status` | `db: OK`, `filesystem: OK`. **Corrected 2026-11-24**: the output is JSON, not that line — this row was a paraphrase in a table of literal results, and it is what led `gl-client-serv.md` §2.8 to tell readers to expect a line GLPI never prints. `glpi` is also a roll-up over every service (`StatusChecker.php:142` on 11.0.12, `:149` on 12.0.1), so it reads `PROBLEM` whenever any one of them does. And it needs `-p`, or the schema check does not run at all |
 | store-relocation | 14 state dirs created outside the store |
-| cert generation | SAN + 2036 expiry confirmed by running it |
-| `nixos.local` | resolves to 192.168.2.3 |
+| cert generation | SAN + 2036 expiry confirmed by running it. **Note**: reissued once since — the live `notAfter` is 20 minutes later than the figure recorded here, so re-read it from the handshake rather than trusting a transcription |
+| `nixos.local` | resolves to 192.168.2.3 — and tracks the interface rather than storing a value, so a lease change is followed automatically; `gl-client-serv.md` §8.5 measures what one actually costs |
 
 The throwaway MariaDB and test web server were stopped and their data deleted;
 the admin session opened to test login was logged out.
@@ -542,10 +542,10 @@ the admin session opened to test login was logged out.
 | check | result |
 |---|---|
 | `nginx`, `glpi-cert`, `phpfpm-glpi`, `mysql`, `avahi-daemon` | all active |
-| listeners | `0.0.0.0:443` and `127.0.0.1:8080` both up |
+| listeners | `0.0.0.0:443` and `127.0.0.1:8080` both up — `[::]:443` added later, see Part 3 |
 | key permissions | `640 root:nginx` — the unconditional `chmod` corrected the pre-existing 0600 key |
 | `https://nixos.local/` with `--cacert` | **200**, `ssl_verify_result=0` |
-| `https://192.168.2.3/` with the same CA | **refused** — the IP is not in the SAN, so hostname verification is genuinely enforced, not merely encryption |
+| `https://192.168.2.3/` with the same CA | **refused** — the IP is not in the SAN, so hostname verification is genuinely enforced, not merely encryption. Derive the address rather than writing it out when re-running this: after a lease change a hardcoded probe fails because nothing is there, and the test silently stops testing the SAN while still reading as a pass — `gl-client-serv.md` §2.8 |
 | `http://localhost:8080/` | 200 — the loopback listener survived, i.e. `addSSL` not `forceSSL` was the right call |
 | `GET /Inventory` | **405**, not 403 — the enabled-check passed; `InventoryController.php:78` returns 405 for a non-POST, which is the correct response for a live endpoint |
 
