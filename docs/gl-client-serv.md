@@ -1203,16 +1203,90 @@ someone else, the values above are what to enter.
 
 ---
 
+### 8.6 A client that is not the server — **as far as one machine goes**
+
+*Not proven*'s first entry is that the only agent is the server itself. This
+narrows it: a client in its own network namespace now reaches the server by
+name, over TLS, with verification passing.
+
+| check, from the namespace | result |
+|---|---|
+| `https://nixos.local/` | **200 verify=0** — TLS by name, verified, from a client that is not the server |
+| `https://nixos.local/Inventory` | **405** — the endpoint a real client posts to is live |
+| `https://10.231.0.1/` (bare address) | **000 verify=1** — connected, certificate correctly refused. The SAN is enforced against a non-local client |
+| `:3306`, `:3200` | unreachable |
+
+That last row is the one that could not be had before. Every other check in
+this file was run from the host, where loopback makes those ports reachable by
+definition; this is the first evidence the bindings hold against a stack that
+is not the host's. **And it is only meaningful because 443 succeeded in the
+same run** — see the counter-reading mistake below for why an unreachable
+result on its own proves nothing.
+
+**A network namespace, not a container, and not for simplicity.** Two things
+rule the obvious approaches out on this machine:
+
+- **macvlan and ipvlan cannot work here.** The AP would have to accept a second
+  MAC from one station, and `iw dev` reports `type managed`, so macvlan is out.
+  Both drivers also isolate parent from child by design — traffic between a
+  host interface and its children goes out to the switch, which will not
+  hairpin it back. Normally a nuisance; here fatal, because the server under
+  test *is* the parent.
+- **There is no rootfs.** `systemd-nspawn` and `machinectl` exist but
+  `nixos-container` does not — that module is not enabled — so nspawn has no
+  NixOS image to boot, and `machinectl pull-tar` would fetch a distribution
+  with no `glpi-agent` in it.
+
+So: `ip netns` plus a veth, and `ip netns exec` to run host binaries in the
+new namespace. No image, no download, no rebuild, nothing persisted.
+
+**What this does NOT prove, stated because it is easy to overclaim.** The
+namespace has no avahi of its own — `avahi-resolve` reaches the host's daemon
+over a unix socket, so a query from inside would still be issued by the host.
+The name is therefore supplied with `--resolve`, and **mDNS is untested from a
+foreign resolver**. That matters because it is the half §8.1 could not settle:
+whether a dual-stack resolver prefers the AAAA is a property of Windows' and
+macOS' resolvers, not of anything on this machine, and no namespace or
+container here can stand in for them. That needs a VM, and a VM needs
+`qemu` installed plus 1-2 GB against the 2.3 GB free on a host with an OOM
+history. The veth also bypasses the access point, so the wireless hop is not
+exercised; the firewall is, since `allowedTCPPorts` carries no interface
+restriction.
+
+> **A mistake worth keeping, because it is a general one.** The first two runs
+> of this test failed with every request at `000`, and the firewall's counters
+> appeared to explain it: the `tcp dpt:443` accept rule read **0 packets**
+> while the mangle `nixos-fw-rpfilter` DROP read 18, and `curl` reported a
+> timeout rather than a refusal — the signature of a silent drop. That reading
+> was wrong. **Those counters are cumulative since the firewall started, not
+> per-run.** `443 = 0` meant no *external* host had ever connected, which is
+> true because there are none, and every request from the host itself had
+> matched rule 1 (`-i lo`) instead. The 18 drops were weeks of accumulated
+> multicast. A controlled test settled it: exempting the veth from the
+> reverse-path check changed nothing, because the request already succeeded
+> without the exemption, and the 443 counter moved off zero the instant the
+> namespace connected. Read a counter as a delta across the thing you are
+> testing, never as a level.
+
+**Why the first two runs failed is unexplained.** Same script, same setup, no
+configuration change in between. The first run also showed 50% ICMP loss on a
+brand-new veth, so a fresh-neighbour transient is plausible — recorded as a
+guess, not a cause, because it was never tested.
+
+---
+
 ## Not proven
 
 Stated plainly so nothing here reads as more tested than it is.
 
-- **No second client.** The only agent is the server itself. §8.1 was its
-  prerequisite and is now fixed; the IPv6 listener it adds is what a Windows or
-  macOS client would otherwise have fallen over. Every claim about
-  the client-server path is true for a host that resolves its own mDNS name
-  and goes out over the network to reach itself — which exercises the whole
-  chain, but is not a genuinely separate machine.
+- **No second *machine*.** Narrowed on 2026-11-24, see §8.6: a client in its
+  own network namespace reaches the server by name over TLS with verification
+  passing, the inventory endpoint answers it, the SAN is enforced against it,
+  and the private ports are proven unreachable from it. What remains unproven
+  is a separate *host* — and specifically a foreign dual-stack resolver, since
+  whether Windows or macOS prefers the AAAA is a property of their resolvers
+  and nothing here can stand in for them. §8.1 was the prerequisite and is
+  fixed; without it such a client would have been refused outright.
 - **Windows (3.5) and macOS (3.6) are untested**, written from upstream
   documentation with no such host available. 3.6 flags one path it could not
   confirm at all.
