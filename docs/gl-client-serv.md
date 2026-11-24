@@ -428,6 +428,12 @@ it. Watch for `verify=1` specifically rather than only a non-200 — see §8.5.
 
 ## 3. Clients
 
+**This section is about inventory agents, not people.** An agent reports a
+machine's hardware and software and has no user, no login and no interface.
+For giving a *person* access to GLPI, see §9 — a different axis entirely, and
+neither needs the other.
+
+
 ### 3.1 Get the trust anchor off the server
 
 ```sh
@@ -1275,6 +1281,181 @@ guess, not a cause, because it was never tested.
 
 ---
 
+## 9. Onboarding a human user
+
+**Written 2026-11-24. The server side is verified; steps 2, 3 and 4 are
+untested** — they need `sudo` and a second device, and neither was available
+when this was written. Command syntax is read from the 12.0.1 source, cited
+inline, rather than recalled.
+
+### 9.0 There is no client program
+
+GLPI's user interface **is** its web interface. A user needs a browser and an
+account; there is nothing to install on their machine.
+
+This is a different axis from §3, and conflating the two wastes time. §3 sets
+up `glpi-agent`, which reports a *machine's* inventory and has no user, no
+login and no interface. §9 gives a *person* access to GLPI. **A user needs no
+agent and an agent needs no user.** If you want both for one machine, do §3
+and §9 independently.
+
+**Verified**: `https://nixos.local/` returns 200 and serves
+`<title>Authentication - GLPI</title>` over the LAN listener. The client side
+is already working; what follows is an account and a trust anchor.
+
+### 9.1 Close the default accounts first
+
+Before the URL reaches anyone. `post-only` *is* GLPI's Self-Service demo
+account and `tech` is the Technician one; §8.4 found both active with their
+shipped passwords. While nobody was meant to connect that was a recorded risk.
+A login page people know about makes it a live one.
+
+```sh
+for u in tech normal post-only; do sudo -u glpi glpi-console user:disable "$u"; done
+```
+
+Nothing depends on them — this dashboard signs in as `inv` and the inventory
+endpoint is unauthenticated. `user:enable` reverses it; §8.4 for why
+`user:disable` rather than `user:delete`.
+
+### 9.2 Create the user
+
+```sh
+sudo -u glpi glpi-console user:create <username>
+```
+
+**Omit `-p` deliberately.** Without it the command prompts with echo off and
+asks for confirmation (`AbstractUserCommand.php:52-66`); passing `-p` puts the
+password in your shell history. Note that `install/empty_data.php` sets
+`use_password_security => 0`, so GLPI enforces no minimum length or
+composition — the strength is entirely the operator's choice, with nothing to
+catch a weak one.
+
+### 9.3 Grant a profile
+
+`--profile` takes a **numeric id, not a name** — it is resolved with
+`$profile_obj->getFromDB($profile)` (`GrantCommand.php:56`, lookup at `:70`),
+so a name silently fails to find anything.
+
+```sh
+sudo -u glpi glpi-console user:grant <username> --profile 1   # Self-Service
+sudo -u glpi glpi-console user:grant <username> --profile 6   # Technician
+```
+
+**It is an option, not a positional.** `user:grant user1 profile 1` fails with
+*"Too many arguments"* — the signature is
+`[-p|--profile PROFILE] [-e|--entity ENTITY] [-r|--recursive] [--] <username>`,
+so the profile must carry its `--`.
+
+> **Use the long forms in both commands.** `-p` means something different in
+> each: `--password` in `user:create` (`CreateCommand.php:51`) and `--profile`
+> in `user:grant` (`GrantCommand.php:56`). So `user:create user1 -p 1` does not
+> set a profile — it silently sets the password to `1`, and succeeds, because
+> §9.2 notes there is no password policy to refuse it.
+
+**`user:grant` is not idempotent. Run it once.** It builds its input and calls
+`$profile_user->add()` with no check for an existing grant, then reports
+"Profile granted" regardless (`GrantCommand.php:85-93`); and
+`glpi_profiles_users` has only `PRIMARY KEY (id)` with non-unique indexes on
+`users_id`, `profiles_id` and `entities_id`, so nothing in the schema refuses
+the duplicate either. Three runs give three identical rows. **Verified here on
+2026-11-24** — `user1` ended with three Self-Service grants.
+
+Nothing breaks: the user has the profile and can log in. GLPI's UI shows one
+identical line per row in the user's *Authorizations* tab, which is confusing
+rather than wrong. There is no `user:revoke` — the `User/` command directory
+is create, delete, disable, enable, grant and reset-password, and no more — so
+clean up in **Administration → Users → *Authorizations***, which goes through
+GLPI's own delete handling for history and cache. The SQL below is the blunt
+alternative and bypasses both:
+
+```sh
+sudo mariadb glpi -e "DELETE pu FROM glpi_profiles_users pu
+  JOIN glpi_profiles_users keep
+    ON keep.users_id=pu.users_id AND keep.profiles_id=pu.profiles_id
+   AND keep.entities_id=pu.entities_id AND keep.id<pu.id
+  WHERE pu.users_id=(SELECT id FROM glpi_users WHERE name='<username>')"
+```
+
+Read the grant back out of the join table rather than trusting the command's
+own output — but **do not put the grant in the same command as the check**, or
+the check creates the thing it is verifying. That is how the three rows above
+happened:
+
+```sh
+sudo mariadb -N -B glpi -e "SELECT u.name, u.is_active, p.name
+  FROM glpi_users u
+  JOIN glpi_profiles_users pu ON pu.users_id = u.id
+  JOIN glpi_profiles p ON p.id = pu.profiles_id
+  WHERE u.name = '<username>'"
+```
+
+| id | profile | for |
+|---|---|---|
+| 1 | Self-Service | an end user: opens tickets, sees their own, no asset access |
+| 2 | Observer | read across tickets and assets |
+| 3 | Admin | configuration short of the whole server |
+| 4 | Super-Admin | everything |
+| 5 | Hotliner | first-line, ticket intake |
+| 6 | Technician | works tickets, edits assets |
+| 7 | Supervisor | assigns and oversees |
+| 8 | Read-Only | read, nothing else |
+| 9 | `inv` | this dashboard's own service account - see `gl-rights.md`, not for people |
+
+`--entity` defaults to `0`, the root entity, which is what a single-entity
+install wants (`GrantCommand.php:57`). `--recursive` matters only once
+sub-entities exist.
+
+### 9.4 Put the certificate on the user's machine
+
+Same anchor the agents use, and §3.1 applies unchanged: `cert.pem` is 0644,
+contains no private key, and is safe to email or put on a share.
+
+```sh
+cp /var/lib/glpi-tls/cert.pem ./glpi-server-cert.pem
+```
+
+| OS | install as a trust anchor |
+|---|---|
+| Debian / Ubuntu | `sudo cp glpi-server-cert.pem /usr/local/share/ca-certificates/glpi.crt && sudo update-ca-certificates` |
+| NixOS | `security.pki.certificateFiles = [ ./glpi-server-cert.pem ];` then rebuild |
+| Windows, as admin | `certutil -addstore -f Root glpi-server-cert.pem` |
+| macOS | Keychain Access → System → drag in → **Always Trust** |
+
+**Firefox ignores every one of those.** It carries its own NSS trust store on
+all platforms, so it needs the certificate imported separately: *Settings →
+Privacy & Security → Certificates → View Certificates → Authorities →
+Import*. Chrome, Edge and Safari use the OS store. Skipping this gives the
+user a full-page certificate warning and teaches them to click through it,
+which is worse than no TLS.
+
+### 9.5 Connect
+
+Browse to **`https://nixos.local/`**.
+
+**The name, never the address.** `https://192.168.2.3/` fails verification —
+the SAN is `DNS:nixos.local, DNS:nixos` with no IP entry, which is exactly
+what §2.8 tests on purpose. mDNS resolution is native on Windows 10+ and
+macOS; a Linux client needs avahi with nss-mdns.
+
+This is the step §8.1 exists for. A Windows or macOS client resolving
+`nixos.local` natively may get the AAAA, and before 2026-11-24 a v4-only
+listener would have refused it — a name that resolves perfectly against a
+server that is not listening, which is a bad first experience to debug.
+
+### 9.6 Confirm it from the server
+
+```sh
+sudo -u glpi glpi-console security:session:list
+sudo -u glpi glpi-console system:status -p | head -20
+```
+
+The user's session should appear in the first; the second should still read
+`db: OK` with no service in `PROBLEM`. §8.3 on why `-p` is not optional and
+why the `glpi` key is a roll-up rather than GLPI's own health.
+
+---
+
 ## Not proven
 
 Stated plainly so nothing here reads as more tested than it is.
@@ -1298,6 +1479,11 @@ Stated plainly so nothing here reads as more tested than it is.
   2026-11-24; see §8. It expires `Oct 28 07:07:12 2036 GMT`, twenty minutes
   later than the figure this list used to carry, which means the certificate
   was reissued once since.
+- **§9 is untested past its first line.** The login page is verified as
+  serving over the LAN listener, and the command syntax is read from the
+  12.0.1 source. But no account has been created by it, no certificate
+  installed on a second device, and no user has logged in — all three need
+  `sudo` or a second machine.
 
 ## See also
 
