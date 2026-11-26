@@ -10,9 +10,9 @@
 //! before the router ever ran.
 use crate::components::{GlobalErrorBar, Header, Sidebar, SidebarOpen};
 use crate::pages::{
-    About, Agents, Computers, Db, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware, Logs,
-    Netw, NetwProxy, PageNotFound, Perf, PerfHistory, PerfNginx, PerfPhp, Rights, Screens, Sec,
-    Status, TemplateForm, TemplateMessage, TemplateRow, TemplateValues,
+    About, Agents, Computers, Db, Home, Inv, InvHardware, InvNetwork, InvRefused, InvSoftware,
+    Logs, Netw, NetwProxy, PageNotFound, Perf, PerfHistory, PerfNginx, PerfPhp, Reports, Rights,
+    Screens, Sec, Status, TemplateForm, TemplateMessage, TemplateRow, TemplateValues,
 };
 use dioxus::prelude::*;
 use dioxus_router::{use_route, Outlet, Routable, Router};
@@ -21,7 +21,13 @@ use dioxus_router::{use_route, Outlet, Routable, Router};
 #[rustfmt::skip]
 pub enum Route {
     #[layout(Layout)]
+        // The front door: a map of the thirteen pages plus the logout
+        // settings. `/` was the Agents table until the app grew twelve more
+        // pages and the landing page stopped being a reasonable place to
+        // land; Agents is still the first entry in the navigation.
         #[route("/")]
+        Home {},
+        #[route("/agents")]
         Agents {},
         #[route("/computers")]
         Computers {},
@@ -105,6 +111,12 @@ pub enum Route {
         // will say without a stub_status location somebody has to add.
         #[route("/perf/nginx")]
         PerfNginx {},
+        // After Perf and before Logs, matching the header. No arguments: the
+        // page is a list of saved definitions, and which one you are editing
+        // is state inside it rather than somewhere to send someone - until
+        // the builder exists there is nothing to carry anyway.
+        #[route("/reports")]
+        Reports {},
         #[route("/logs?:log")]
         Logs { log: String },
         #[route("/about")]
@@ -124,6 +136,7 @@ impl Route {
     /// clicked to reach it agree.
     pub fn title(&self) -> &'static str {
         match self {
+            Route::Home {} => "Home",
             Route::Agents {} => "Agents",
             Route::Computers {} => "Computers",
             Route::Status {} => "Status",
@@ -146,6 +159,7 @@ impl Route {
             Route::PerfHistory { .. } => "History",
             Route::PerfPhp { .. } => "PHP",
             Route::PerfNginx {} => "nginx",
+            Route::Reports {} => "Reports",
             Route::Logs { .. } => "Logs",
             Route::About {} => "About",
             Route::PageNotFound { .. } => "Not found",

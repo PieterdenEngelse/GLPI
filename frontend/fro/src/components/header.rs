@@ -84,7 +84,17 @@ pub fn Header() -> Element {
 
             // Mark. An inline SVG rather than an asset: one file fewer to
             // hash, bundle and cache-bust for a 20px square.
-            div { class: "ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary text-primary-content",
+            //
+            // It links Home, and that is the only route to the home page from
+            // the chrome - the header strip is already at ten tabs and the
+            // sidebar lists the pages a reader switches between. A mark that
+            // goes to the front door is the one navigation convention safe to
+            // assume, so the map does not need a tab of its own.
+            Link {
+                to: Route::Home {},
+                class: "ml-1 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-primary text-primary-content",
+                aria_label: "Home",
+                title: "Home",
                 svg {
                     xmlns: "http://www.w3.org/2000/svg",
                     view_box: "0 0 24 24",

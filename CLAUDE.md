@@ -103,12 +103,23 @@ What it costs, unchanged from the argument against it:
 - **The API stays the default.** The rule is not "SQL is now fine", it is
   "SQL is available where the API cannot answer". Where v2.3 or v1 answers a
   question, use it: same account, same profile rights, same entity scope.
-- **Read-only is now a convention, not a constraint.** The grant permits
-  `INSERT`, `UPDATE`, `DELETE` and DDL on every database, so nothing in the
-  database refuses a write any more. This app reads and must keep reading:
-  GLPI maintains its own history, entity scoping and derived state, and
-  writing behind it corrupts the install in ways the UI will not show. The
-  grant no longer enforces that — the code and the reviewer do.
+- **Writes are permitted, with one distinction that matters.** The grant
+  permits `INSERT`, `UPDATE`, `DELETE` and DDL on every database. This section
+  used to add "this app reads and must keep reading"; **that blanket rule was
+  lifted on 2026-11-26** and is recorded here rather than erased, because the
+  reasoning behind it still applies to part of the surface.
+
+  What is still true: **writing into a table GLPI itself manages corrupts the
+  install in ways the UI will not show.** GLPI maintains its own history,
+  entity scoping and derived state for its own tables, and an `UPDATE` behind
+  it skips all three. Where a write must land in GLPI's own data, go through
+  the API or GLPI's own code, not a query.
+
+  What the lifted rule was blocking: tables GLPI does **not** manage — a
+  plugin's own `glpi_plugin_*` tables, for instance, where there is no history,
+  no derived state and no entity scoping to bypass. Writing those directly is
+  not the hazard above, and is now allowed. Gate each such write behind its own
+  `GLPI_INV_*_WRITES` flag like every other write path here.
 
 The grant is to `pde@localhost` authenticating through the `unix_socket`
 plugin, which is the identity the service already connects as — the unit is a
@@ -284,6 +295,53 @@ Three things worth not undoing:
   event.** Existing samples are never dropped; the event holds no state, only
   a schedule, so replacing it costs nothing and lets a changed counter list
   take effect on the next start without a migration.
+
+### Session expiry: two php.ini keys, and the one that silently loses
+
+A fifth write landed on 2026-11-26, behind `GLPI_INV_PHP_WRITES` and pointed
+at `GLPI_INV_PHP_TUNING`. Same shape as the nginx tuning file: one Nix file
+this app writes, imported by the system config, applied by `nixos-rebuild
+switch` and never by the app - php.ini is a read-only store path and PHP has
+no runtime settings interface, so there is no apply-it-now at any price.
+`glpi::logout` owns it and the Logout tile on the home page is its only
+reader.
+
+Three things worth not undoing:
+
+- **A key glpi.nix's `php.buildEnv { extraConfig }` already sets cannot be
+  written from here, and the failure would be silent.** The phpfpm module
+  builds the pool's `-c` ini as `cat ${phpPackage}/etc/php.ini
+  $phpOptionsPath`, then PHP scans `${phpPackage}/lib`, where `buildEnv` puts
+  its own php.ini - and a scanned file is loaded last and wins. Measured, by
+  appending to a copy of this pool's real `-c` ini and reading it back
+  through the pool's own php binary:
+
+      session.gc_maxlifetime = 28800   ->  28800   (absent from extraConfig)
+      memory_limit = 333M              ->  256M    (extraConfig sets it)
+      session.cookie_httponly = 0      ->  On      (extraConfig sets it)
+
+  So `Owner::Package` refuses those keys rather than writing a file that
+  rebuilds clean and changes nothing. The corollary: do **not** tidy
+  `session.gc_maxlifetime` into that `extraConfig`, which would turn the
+  control into one of them.
+
+- **`login_remember_time` is read and never written.** It is a row in
+  `glpi_configs`, which GLPI manages - history, cache in `$CFG_GLPI` - so
+  the rule above sends it through GLPI's own code, and GLPI's API has no
+  config write at any version (`getGlpiConfig` reads; nothing writes). The
+  row carries a link into GLPI's General setup instead of a field. It is
+  read over **v1** `getGlpiConfig`, not SQL: `getSafeConfig()` strips only
+  the eight `Config::$undisclosedFields` secrets and this is not one.
+
+- **`session.gc_maxlifetime` has a 60-second floor.** PHP reads 0 as
+  "eligible for collection immediately" and `CronTask::cronSession` reads
+  the same 0 as "fall back to a week", so at 0 the two halves of one setting
+  disagree about what was asked for.
+
+GLPI has no session-duration setting of its own, which is the whole reason
+the tile exists: the figure everyone calls "the GLPI logout time" is PHP's,
+and the figure GLPI does own (`login_remember_time`) is a cookie lifetime
+and not a timeout.
 
 A third write landed on 2026-11-20: `POST /api/mariadb/variables/{name}`, the
 general case of the InnoDB one, behind its own `GLPI_INV_VARIABLE_WRITES`.

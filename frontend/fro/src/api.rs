@@ -2151,3 +2151,93 @@ pub async fn fetch_self_timing() -> Result<SelfTimingReport, ApiError> {
 pub async fn fetch_slow_log_entries() -> Result<SlowLogEntriesReport, ApiError> {
     get_json::<SlowLogEntriesReport>("/api/mariadb/slow-log/entries").await
 }
+
+/// One logout setting, and whether this app can change it.
+///
+/// Duplicates the backend's `LogoutSetting` deliberately, like every other
+/// shape here: no shared crate, every field defaulted, so a drifting backend
+/// leaves a blank cell rather than failing the whole parse.
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct LogoutSetting {
+    #[serde(default)]
+    pub name: String,
+    /// "pool", "package" or "glpi" - who owns the value. Only "pool" gets a
+    /// field; the other two get a destination.
+    #[serde(default)]
+    pub owner: String,
+    /// The file or screen that owns it.
+    #[serde(default)]
+    pub via: String,
+    #[serde(default)]
+    pub editable: bool,
+    /// What the tuning file currently asks for, if anything.
+    #[serde(default)]
+    pub wanted: Option<String>,
+    /// PHP's or GLPI's documented default. Shown as a default and never as a
+    /// reading - this app does not run `ini_get`.
+    #[serde(default)]
+    pub default: String,
+    /// GLPI's own value, for the one row GLPI owns.
+    #[serde(default)]
+    pub live: Option<i64>,
+    #[serde(default)]
+    pub glpi_path: Option<String>,
+    #[serde(default)]
+    pub what: String,
+    #[serde(default)]
+    pub min: u64,
+    #[serde(default)]
+    pub max: u64,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct LogoutReport {
+    #[serde(default)]
+    pub configured: bool,
+    #[serde(default)]
+    pub writable: bool,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub pool: String,
+    /// Why GLPI's own value is missing, when it is. Carried rather than
+    /// thrown: four of the five settings are PHP's and readable without
+    /// GLPI, so a GLPI that is down must not blank the whole tile.
+    #[serde(default)]
+    pub remember_error: Option<String>,
+    #[serde(default)]
+    pub settings: Vec<LogoutSetting>,
+}
+
+pub async fn fetch_logout() -> Result<LogoutReport, ApiError> {
+    get_json::<LogoutReport>("/api/logout").await
+}
+
+/// Writes one session setting into the tuning file, or clears it with None.
+///
+/// Applies nothing - a rebuild does, and the tile says so. The backend's own
+/// `error` is lifted out of the body for the same reason as the nginx one:
+/// the refusal is where the useful part is, and here it is more useful still,
+/// because two of the five settings are refused on the grounds that the file
+/// this would write is not the file PHP reads last.
+pub async fn set_logout_setting(name: &str, value: Option<&str>) -> Result<(), String> {
+    let req = reqwest::Client::new().post(api_url(&format!("/api/logout/{name}")));
+    let req = match value {
+        Some(v) => req.json(&serde_json::json!({ "value": v })),
+        None => req,
+    };
+
+    let r = req.send().await.map_err(|e| e.to_string())?;
+    if r.status().is_success() {
+        return Ok(());
+    }
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
+}

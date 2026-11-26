@@ -32,6 +32,12 @@ pub struct AppState {
     pub nginx_tuning: Option<crate::glpi::nginx_tuning::TuningFile>,
     pub nginx_writes: bool,
 
+    /// The Nix file the logout tile writes, when one is configured. Absent
+    /// means the tile shows the settings and explains the one-time setup
+    /// rather than offering a control with nowhere to write.
+    pub php_tuning: Option<crate::glpi::logout::TuningFile>,
+    pub php_writes: bool,
+
     /// How long this process took to answer each of its own routes. Written
     /// by the middleware below on every /api request, read by one endpoint.
     pub timings: timing::Timings,
@@ -134,6 +140,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/nginx/proxy", get(nginx_proxy))
         .route("/api/nginx/tuning", get(nginx_tuning))
         .route("/api/nginx/tuning/{name}", post(set_nginx_tuning))
+        .route("/api/logout", get(logout_settings))
+        .route("/api/logout/{name}", post(set_logout_setting))
         .route("/api/self-timing", get(self_timing))
         .route("/api/mariadb/variables", get(variables))
         .route("/api/mariadb/variables/{name}", post(set_variable))
@@ -1656,6 +1664,194 @@ async fn set_nginx_tuning(
             // the submission would have this endpoint report a value that
             // was never written, which is the one thing the rebuild-not-echo
             // rule exists to prevent.
+            let stored = set.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
+            Json(serde_json::json!({
+                "name": name,
+                "wanted": stored,
+                "note": "Written. A nixos-rebuild switch is what applies it.",
+            }))
+            .into_response()
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+/// One logout setting, as the tile renders it.
+#[derive(Serialize)]
+struct LogoutSetting {
+    name: &'static str,
+    /// Where the value has to be changed: `pool`, `package` or `glpi`. The
+    /// tile offers a field for the first and a destination for the other two.
+    owner: &'static str,
+    /// The file or screen that owns it, for the row's own explanation.
+    via: &'static str,
+    /// True only for the keys this app can actually change. Not the same as
+    /// the report's `writable`, which is about the file and the flag: a key
+    /// the php package owns is never editable however the backend is started.
+    editable: bool,
+    /// What the tuning file currently asks for, if anything.
+    wanted: Option<String>,
+    /// PHP's or GLPI's documented default, shown when nothing sets it.
+    ///
+    /// Labelled a default in the UI, never a reading. This app does not run
+    /// `ini_get`, and reporting a default as the live value is the one thing
+    /// the whole tile must not do.
+    default: &'static str,
+    /// GLPI's own value for the rows GLPI owns, read over v1. None means the
+    /// read failed or the key was absent - the tile says which.
+    live: Option<i64>,
+    /// Where to go for a row this app will not write, as a path under GLPI.
+    glpi_path: Option<&'static str>,
+    what: &'static str,
+    min: u64,
+    max: u64,
+}
+
+#[derive(Serialize)]
+struct LogoutReport {
+    /// False when GLPI_INV_PHP_TUNING names no file - the one-time root step
+    /// has not been done, so there is nowhere to write.
+    configured: bool,
+    /// False when the backend may read the file but not write it.
+    writable: bool,
+    path: Option<String>,
+    /// The phpfpm pool the file configures. Reported because a deployment
+    /// whose pool is not named this gets a file that rebuilds and changes
+    /// nothing, and that should be visible rather than silent.
+    pool: &'static str,
+    /// Why `login_remember_time` has no value, when it has none.
+    remember_error: Option<String>,
+    settings: Vec<LogoutSetting>,
+}
+
+/// The settings that decide when a GLPI session ends, and what owns each.
+///
+/// One v1 call, for the single row GLPI owns. Its failure is NOT this
+/// endpoint's failure: four of the five settings are PHP's and are readable
+/// from a file, so a GLPI that is down or refusing still leaves most of the
+/// tile truthful. The error is carried instead of thrown, and the row says
+/// "unknown" rather than showing a default as though it had been read.
+async fn logout_settings(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    use crate::glpi::logout::{self, Owner, SETTINGS};
+
+    let wanted = state
+        .php_tuning
+        .as_ref()
+        .map(|f| f.current())
+        .unwrap_or_default();
+
+    let legacy = &state.legacy;
+    let remember = with_v1(&state, |session| async move {
+        let out = legacy.get(&session, "getGlpiConfig", None).await;
+        (session, out)
+    })
+    .await;
+
+    let (remember_time, remember_error) = match remember {
+        Ok(cfg) => match logout::remember_time(&cfg) {
+            Some(n) => (Some(n), None),
+            None => (
+                None,
+                Some("GLPI's getGlpiConfig did not include login_remember_time.".to_string()),
+            ),
+        },
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+
+    Json(LogoutReport {
+        configured: state.php_tuning.is_some(),
+        writable: state.php_tuning.is_some() && state.php_writes,
+        path: state
+            .php_tuning
+            .as_ref()
+            .map(|f| f.path().display().to_string()),
+        pool: logout::POOL,
+        remember_error,
+        settings: SETTINGS
+            .iter()
+            .map(|s| {
+                let (owner, via, editable, glpi_path) = match s.owner {
+                    Owner::Pool => ("pool", "services.phpfpm.pools.glpi.phpOptions", true, None),
+                    Owner::Package => ("package", logout::PACKAGE_INI_SOURCE, false, None),
+                    Owner::Glpi { path } => (
+                        "glpi",
+                        "GLPI: Setup > General > Auto Login",
+                        false,
+                        Some(path),
+                    ),
+                };
+                LogoutSetting {
+                    name: s.name,
+                    owner,
+                    via,
+                    editable,
+                    wanted: wanted
+                        .iter()
+                        .find(|(n, _)| n == s.name)
+                        .map(|(_, v)| v.clone()),
+                    default: s.default,
+                    live: matches!(s.owner, Owner::Glpi { .. })
+                        .then_some(remember_time)
+                        .flatten(),
+                    glpi_path,
+                    what: s.what,
+                    min: s.min,
+                    max: s.max,
+                }
+            })
+            .collect(),
+    })
+}
+
+/// Writes one PHP session setting into the tuning file. Applies nothing.
+///
+/// The same three refusals as the nginx endpoint, in the same order - no
+/// file, no flag, then the value itself - plus one this page has and that one
+/// does not: a key the php package's own ini already sets is refused by
+/// `TuningFile::set` rather than written, because PHP loads that file last
+/// and the write would report a success that changed nothing.
+async fn set_logout_setting(
+    State(state): State<Arc<AppState>>,
+    Path(name): Path<String>,
+    body: Option<Json<VariableWrite>>,
+) -> axum::response::Response {
+    let Some(file) = state.php_tuning.as_ref() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No tuning file is configured, so there is nowhere to keep this. \
+                          Set GLPI_INV_PHP_TUNING, import the same path from the system \
+                          config, and git add it - /etc/nixos is a git repo and a flake \
+                          cannot see an untracked file.",
+            })),
+        )
+            .into_response();
+    };
+
+    if !state.php_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Session settings are read-only in this backend. Start it with \
+                          GLPI_INV_PHP_WRITES=1 to allow changes.",
+            })),
+        )
+            .into_response();
+    }
+
+    // No body clears the setting, exactly as the nginx and variables
+    // endpoints do.
+    let value = body.map(|Json(b)| b.value);
+    match file.set(&name, value.as_deref()) {
+        Ok(set) => {
+            tracing::info!("logout setting: {name} -> {value:?} ({} set)", set.len());
+            // What is IN THE FILE, not what was submitted: `check` returns a
+            // canonical form, so ` 03600 ` is stored as `3600` and echoing
+            // the submission would report a value that was never written.
             let stored = set.iter().find(|(n, _)| *n == name).map(|(_, v)| v.clone());
             Json(serde_json::json!({
                 "name": name,

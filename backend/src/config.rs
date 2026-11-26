@@ -126,6 +126,24 @@ pub struct Config {
     /// It gates the endpoint, not just the control, for the reason above.
     pub variable_writes: bool,
 
+    /// The Nix file the logout tile writes, or None when none is configured.
+    ///
+    /// Same shape and same one-time setup as `nginx_tuning`: a path the
+    /// system config IMPORTS, and - because /etc/nixos is a git repo here and
+    /// a flake only copies tracked files - one that has been `git add`ed
+    /// once. An untracked file is invisible to nixos-rebuild and the import
+    /// fails with "file not found", which reads like a typo rather than like
+    /// git.
+    pub php_tuning: Option<String>,
+
+    /// Whether the logout tile may write that file at all.
+    ///
+    /// Flagged for the same reason as `nginx_writes`: it writes SYSTEM
+    /// configuration. It applies nothing - a rebuild does - but a file that
+    /// changes when everyone gets logged out on the next rebuild is not a
+    /// table of readings.
+    pub php_writes: bool,
+
     /// The file MariaDB replays at startup, when one is configured.
     ///
     /// Absent by default, and the panel then says a change lasts until the
@@ -183,6 +201,10 @@ impl Config {
                 .ok()
                 .filter(|v| !v.trim().is_empty()),
             nginx_writes: enabled("GLPI_INV_NGINX_WRITES"),
+            php_tuning: std::env::var("GLPI_INV_PHP_TUNING")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            php_writes: enabled("GLPI_INV_PHP_WRITES"),
             // Default on, unlike the write flags: this records into this
             // app's own schema and the page it feeds is useless without it.
             // Clamped at the bottom because a one-second interval would be

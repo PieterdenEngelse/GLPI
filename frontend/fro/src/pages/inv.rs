@@ -1,8 +1,14 @@
 //! The inventory section: a landing page and four views beneath it.
 //!
-//! One module rather than five files. The four pages share a sub-header and
-//! are at the same stage, so keeping them together makes the family obvious
-//! and the shared nav one definition instead of four copies.
+//! One module rather than five files. The four pages are at the same stage
+//! and answer one question between them, so keeping them together makes the
+//! family obvious.
+//!
+//! They share NO sub-header, despite what this said until 2026-11-25. The
+//! navigation is the sidebar, built from nav.rs `children()`; these pages
+//! render no links of their own. The landing copy had drifted with it and
+//! told readers to "pick a view above", pointing at a strip that does not
+//! exist - found from a screenshot, not from the code.
 //!
 //! All four are fleet-wide: one pass over the estate rather than a machine
 //! picker. That is a deliberate consequence of where the data comes from.
@@ -94,9 +100,9 @@ pub fn Inv() -> Element {
                   the trade on its own terms."
                 .to_string(),
             p { class: "max-w-prose text-sm text-base-content/80",
-                "Pick a view above. Hardware is what is inside each machine, Software is what \
-                 is installed across the fleet, Network is the ports and addresses each \
-                 machine reported, and Refused is what GLPI threw away."
+                "Pick a view in the sidebar. Hardware is what is inside each machine, \
+                 Software is what is installed across the fleet, Network is the ports and \
+                 addresses each machine reported, and Refused is what GLPI threw away."
             }
         }
     }

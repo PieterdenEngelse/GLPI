@@ -45,6 +45,11 @@ async fn main() -> Result<()> {
             .as_deref()
             .map(crate::glpi::nginx_tuning::TuningFile::new),
         nginx_writes: cfg.nginx_writes,
+        php_tuning: cfg
+            .php_tuning
+            .as_deref()
+            .map(crate::glpi::logout::TuningFile::new),
+        php_writes: cfg.php_writes,
         started: std::time::Instant::now(),
         static_dir,
         innodb_writes: cfg.innodb_writes,

@@ -168,6 +168,13 @@ pub fn destinations() -> Vec<Dest> {
             label: "Perf",
             in_header: true,
         },
+        // After Perf: both are about GLPI rather than about this app, and a
+        // report is the thing you reach for once a reading raises a question.
+        Dest {
+            route: Route::Reports {},
+            label: "Reports",
+            in_header: true,
+        },
         // Empty log: the bare page, which falls back to the first file.
         Dest {
             route: Route::Logs { log: String::new() },

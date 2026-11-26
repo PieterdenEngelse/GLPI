@@ -37,6 +37,7 @@ pub mod init_file;
 pub mod innodb_help;
 pub mod inventory;
 pub mod legacy;
+pub mod logout;
 pub mod nginx;
 pub mod nginx_proxy;
 pub mod nginx_tuning;
