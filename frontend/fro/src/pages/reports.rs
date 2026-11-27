@@ -387,14 +387,40 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
 
             div { class: "mt-4",
                 div { class: "label",
-                    span { class: "label-text", "Also count, through what they are linked to" }
+                    div { class: "flex items-center gap-1",
+                        span { class: "label-text", "Also count, through what they are linked to" }
+                        InfoButton {
+                            title: "Counting through a link".to_string(),
+                            body: "Contracts, certificates and licences carry no such field of \
+                                   their own - a contract is not \"in\" a location - so there is \
+                                   nothing to group them by directly. Tick one and the report \
+                                   gains a second table counting it under the value of the \
+                                   items it is linked to.\n\n\
+                                   Counted once per value, however many items it touches \
+                                   there: a contract covering forty servers in one location is \
+                                   one, not forty. One spanning two values appears under each, \
+                                   which is true of it rather than double counting.\n\n\
+                                   Those counts are not clickable, unlike the ones above. \
+                                   GLPI's search reaches a linked item type in one hop only, \
+                                   and a count like this spans all of them at once - there is \
+                                   no single search that means the same thing, so a link would \
+                                   have to land somewhere narrower than the number it came \
+                                   from.\n\n\
+                                   That gap is the reason the option exists. SoftwareLicense \
+                                   is the sharpest case: GLPI will not let you search licences \
+                                   by the computers they are installed on - Computer is absent \
+                                   from its linked-type list - even though the table joining \
+                                   them is right there.\n\n\
+                                   The three offered are the three the plugin knows how to \
+                                   join. Each needs its link table and key named in the plugin, \
+                                   so unlike the group-by field there is no free-text escape."
+                                .to_string(),
+                        }
+                    }
                     span { class: "label-text-alt text-base-content/60", "optional" }
                 }
                 p { class: "mb-2 text-xs text-base-content/60",
-                    "These carry no such field of their own - a contract is not \"in\" a "
-                    "location - so each is counted under the value of the items it links to, "
-                    "in a second table. GLPI's own search cannot make this join in one hop, "
-                    "which is the reason the option exists."
+                    "Each is counted under the value of the items it links to, in a second table."
                 }
                 div { class: "flex flex-wrap gap-2",
                     for rt in RELATION_TYPES.iter() {
