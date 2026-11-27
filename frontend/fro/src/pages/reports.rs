@@ -13,7 +13,7 @@
 //! disagree are worse than one engine and a link. The saved report links out to
 //! GLPI instead, where the numbers come from the renderer that produces them.
 use crate::api::{self, ReportDef, ReportList};
-use crate::components::{FetchError, Panel};
+use crate::components::{FetchError, InfoButton, Panel};
 use dioxus::prelude::*;
 
 /// Fields offered in the group-by list.
@@ -269,15 +269,42 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
                 }
             }
 
-            label { class: "label mt-2 cursor-pointer justify-start gap-3",
-                input {
-                    r#type: "checkbox",
-                    class: "checkbox checkbox-sm",
-                    checked: rollup(),
-                    onchange: move |e| { rollup.set(e.checked()); saved.set(false); },
+            // The info button sits OUTSIDE the label on purpose. Inside it, a
+            // click would reach the <label> as well and toggle the checkbox
+            // while opening the modal - the control would fight the
+            // explanation of itself.
+            div { class: "mt-2 flex items-center gap-2",
+                label { class: "label cursor-pointer justify-start gap-3 py-0",
+                    input {
+                        r#type: "checkbox",
+                        class: "checkbox checkbox-sm",
+                        checked: rollup(),
+                        onchange: move |e| { rollup.set(e.checked()); saved.set(false); },
+                    }
+                    span { class: "label-text", "Aggregate to the top of the tree (trees only)" }
                 }
-                span { class: "label-text",
-                    "Aggregate to the top of the tree (ignored when the field is not a tree)"
+                InfoButton {
+                    title: "Aggregating to the top of the tree".to_string(),
+                    body: "Some GLPI dropdowns are trees - Location, Status, Entity, Group, \
+                           Software category. An item sits on one node of that tree, often \
+                           several levels down: \"Local > EMEA > Amsterdam > Rack 3\".\n\n\
+                           With this on, the report counts that item under the TOP of its \
+                           tree - \"Local\" - so a handful of root values summarise the whole \
+                           estate. With it off, each node is counted separately, so the same \
+                           item appears under \"Rack 3\" and the report has as many columns as \
+                           you have nodes.\n\n\
+                           It is ignored, with a notice on the report, when the field is not \
+                           a tree. Manufacturer has no root to aggregate to, so asking for it \
+                           there is meaningless rather than wrong, and the report says which \
+                           it did rather than quietly flattening.\n\n\
+                           This is the thing GLPI's own dashboard cards cannot do. They match \
+                           an exact node, so a card filtered to a root shows nothing at all \
+                           while every item sits on its descendants - measured on this \
+                           install: 1363 software beneath \"Local\" returned 0 with an exact \
+                           match and 1363 when the subtree was included. The drill-down links \
+                           in the report use the subtree form, so the number you click and \
+                           the list you land on agree."
+                        .to_string(),
                 }
             }
 
