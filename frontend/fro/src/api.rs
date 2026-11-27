@@ -2261,6 +2261,9 @@ pub struct ReportDef {
     pub group_by: String,
     #[serde(default)]
     pub rollup: bool,
+    /// Owner types counted through their link tables, in a second table.
+    #[serde(default)]
+    pub relations: Option<Vec<String>>,
     #[serde(default)]
     pub is_active: bool,
 }
@@ -2290,6 +2293,7 @@ pub async fn create_report(def: &ReportDef) -> Result<(), String> {
             "itemtypes": def.itemtypes,
             "group_by": def.group_by,
             "rollup": def.rollup,
+            "relations": def.relations,
         }))
         .send()
         .await

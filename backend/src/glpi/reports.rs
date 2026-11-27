@@ -26,6 +26,13 @@ use serde::{Deserialize, Serialize};
 
 use super::refused::Db;
 
+/// One row of the definitions table, as it comes back from MariaDB.
+///
+/// A named alias because clippy rejects the seven-field tuple written inline,
+/// and the column order is already spelled out in the SELECT that fills it:
+/// id, name, itemtypes, group_by, rollup, relations, is_active.
+type ReportRow = (i64, String, Option<String>, String, i8, Option<String>, i8);
+
 /// Guards against a definition set growing until `plugin_init_swcat()` - which
 /// reads this table on EVERY GLPI request - stops being a cheap lookup.
 const MAX_DEFINITIONS: usize = 200;
@@ -42,6 +49,12 @@ pub struct ReportDef {
     /// Aggregate a tree to its root. Ignored by the renderer, with a notice,
     /// when the field is not a tree.
     pub rollup: bool,
+    /// Owner types to additionally count through their link tables - Contract,
+    /// Certificate, SoftwareLicense. These carry no grouped field of their
+    /// own, so each is counted under the value of the items it links to. The
+    /// renderer puts them in a second table and does not make them clickable,
+    /// because GLPI's search cannot express that join in one hop.
+    pub relations: Option<Vec<String>>,
     pub is_active: bool,
 }
 
@@ -54,6 +67,8 @@ pub struct NewReport {
     pub group_by: String,
     #[serde(default)]
     pub rollup: bool,
+    #[serde(default)]
+    pub relations: Option<Vec<String>>,
 }
 
 /// Why a definition was refused, in words the UI can show as-is.
@@ -118,9 +133,9 @@ impl Db {
             return Ok(Vec::new());
         }
 
-        let rows: Vec<(i64, String, Option<String>, String, i8, i8)> = conn
+        let rows: Vec<ReportRow> = conn
             .query(
-                "SELECT id, name, itemtypes, group_by, rollup, is_active \
+                "SELECT id, name, itemtypes, group_by, rollup, relations, is_active \
                  FROM glpi_plugin_swcat_reports \
                  ORDER BY name",
             )
@@ -130,7 +145,7 @@ impl Db {
         Ok(rows
             .into_iter()
             .map(
-                |(id, name, itemtypes, group_by, rollup, is_active)| ReportDef {
+                |(id, name, itemtypes, group_by, rollup, relations, is_active)| ReportDef {
                     id,
                     // Invalid JSON is treated as "no restriction", matching the
                     // renderer. A definition is not worth hiding over a field
@@ -142,6 +157,10 @@ impl Db {
                     name,
                     group_by,
                     rollup: rollup != 0,
+                    relations: relations
+                        .as_deref()
+                        .and_then(|s| serde_json::from_str::<Vec<String>>(s).ok())
+                        .filter(|v| !v.is_empty()),
                     is_active: is_active != 0,
                 },
             )
@@ -182,15 +201,24 @@ impl Db {
             .transpose()
             .context("encoding itemtypes")?;
 
+        let relations = def
+            .relations
+            .as_ref()
+            .filter(|v| !v.is_empty())
+            .map(serde_json::to_string)
+            .transpose()
+            .context("encoding relations")?;
+
         conn.exec_drop(
             "INSERT INTO glpi_plugin_swcat_reports \
-                 (name, itemtypes, group_by, rollup, is_active, date_creation, date_mod) \
-             VALUES (:name, :itemtypes, :group_by, :rollup, 1, NOW(), NOW())",
+                 (name, itemtypes, group_by, rollup, relations, is_active, date_creation, date_mod) \
+             VALUES (:name, :itemtypes, :group_by, :rollup, :relations, 1, NOW(), NOW())",
             params! {
                 "name" => def.name.trim(),
                 "itemtypes" => itemtypes,
                 "group_by" => &def.group_by,
                 "rollup" => i8::from(def.rollup),
+                "relations" => relations,
             },
         )
         .await

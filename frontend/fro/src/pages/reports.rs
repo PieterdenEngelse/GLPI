@@ -38,6 +38,15 @@ const GROUP_FIELDS: &[(&str, &str)] = &[
 /// Not every CI type GLPI has — the ones with enough of a presence in an
 /// inventory to be worth counting separately. Leaving the list empty means
 /// every type that carries the chosen field, which is the useful default.
+/// Owner types that can be counted through a link table.
+///
+/// These carry no grouped field of their own — a contract is not "in" a
+/// location — so each is counted under the value of the items it links to,
+/// in a second table. The list is exactly what the plugin knows how to join;
+/// unlike the group-by field there is no free-text escape, because each one
+/// needs its link table and foreign key named in the plugin.
+const RELATION_TYPES: &[&str] = &["Contract", "Certificate", "SoftwareLicense"];
+
 const ITEM_TYPES: &[&str] = &[
     "Computer",
     "Software",
@@ -117,6 +126,7 @@ fn Saved(list: ReportList, on_change: EventHandler<()>) -> Element {
                                 th { "Grouped by" }
                                 th { "Rollup" }
                                 th { "Limited to" }
+                                th { "Linked" }
                                 th { "" }
                             }
                         }
@@ -157,6 +167,12 @@ fn Saved(list: ReportList, on_change: EventHandler<()>) -> Element {
                                             _ => "every type with the field".to_string(),
                                         }
                                     }
+                                    td { class: "text-xs text-base-content/70",
+                                        match &d.relations {
+                                            Some(v) if !v.is_empty() => v.join(", "),
+                                            _ => "—".to_string(),
+                                        }
+                                    }
                                     td { class: "text-right",
                                         if list.writes_enabled {
                                             button {
@@ -190,6 +206,7 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
     let mut group_by = use_signal(|| "locations_id".to_string());
     let mut rollup = use_signal(|| true);
     let mut chosen = use_signal(Vec::<String>::new);
+    let mut relations = use_signal(Vec::<String>::new);
     let mut error = use_signal(|| Option::<String>::None);
     let mut saved = use_signal(|| false);
 
@@ -298,18 +315,58 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
                 }
             }
 
+            div { class: "mt-4",
+                div { class: "label",
+                    span { class: "label-text", "Also count, through what they are linked to" }
+                    span { class: "label-text-alt text-base-content/60", "optional" }
+                }
+                p { class: "mb-2 text-xs text-base-content/60",
+                    "These carry no such field of their own - a contract is not \"in\" a "
+                    "location - so each is counted under the value of the items it links to, "
+                    "in a second table. GLPI's own search cannot make this join in one hop, "
+                    "which is the reason the option exists."
+                }
+                div { class: "flex flex-wrap gap-2",
+                    for rt in RELATION_TYPES.iter() {
+                        {
+                            let rt = rt.to_string();
+                            let on = relations().contains(&rt);
+                            rsx! {
+                                button {
+                                    key: "{rt}",
+                                    class: if on { "btn btn-xs btn-secondary" } else { "btn btn-xs btn-outline" },
+                                    onclick: move |_| {
+                                        let mut v = relations();
+                                        if let Some(i) = v.iter().position(|x| *x == rt) {
+                                            v.remove(i);
+                                        } else {
+                                            v.push(rt.clone());
+                                        }
+                                        relations.set(v);
+                                        saved.set(false);
+                                    },
+                                    "{rt}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             div { class: "mt-5",
                 button {
                     class: "btn btn-sm btn-primary",
                     disabled: name().trim().is_empty(),
                     onclick: move |_| async move {
                         let picked = chosen();
+                        let rels = relations();
                         let def = ReportDef {
                             id: 0,
                             name: name().trim().to_string(),
                             itemtypes: (!picked.is_empty()).then_some(picked),
                             group_by: group_by(),
                             rollup: rollup(),
+                            relations: (!rels.is_empty()).then_some(rels),
                             is_active: true,
                         };
                         match api::create_report(&def).await {
@@ -318,6 +375,7 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
                                 saved.set(true);
                                 name.set(String::new());
                                 chosen.set(Vec::new());
+                                relations.set(Vec::new());
                                 on_saved.call(());
                             }
                             Err(e) => { error.set(Some(e)); saved.set(false); }
