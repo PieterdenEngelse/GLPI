@@ -124,7 +124,30 @@ fn Saved(list: ReportList, on_change: EventHandler<()>) -> Element {
                             tr {
                                 th { "Name" }
                                 th { "Grouped by" }
-                                th { "Rollup" }
+                                th {
+                                    div { class: "flex items-center gap-1",
+                                        "Rollup"
+                                        InfoButton {
+                                            title: "Rollup".to_string(),
+                                            body: "Whether this report aggregates a tree field to \
+                                                   the top of its tree.\n\n\
+                                                   \"to root\" means an item several levels down - \
+                                                   say \"Local > EMEA > Amsterdam > Rack 3\" - is \
+                                                   counted under \"Local\", so the report has a \
+                                                   handful of columns whatever the tree looks \
+                                                   like. A dash means each node is counted on its \
+                                                   own, so there are as many columns as there are \
+                                                   nodes in use.\n\n\
+                                                   A dash also appears when the definition asked \
+                                                   for rollup on a field that is not a tree. \
+                                                   Manufacturer has no root to aggregate to, so \
+                                                   the setting is stored, ignored, and reported as \
+                                                   ignored on the report itself - it is not \
+                                                   silently flattened."
+                                                .to_string(),
+                                        }
+                                    }
+                                }
                                 th { "Limited to" }
                                 th { "Linked" }
                                 th { "" }
@@ -310,7 +333,27 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
 
             div { class: "mt-4",
                 div { class: "label",
-                    span { class: "label-text", "Limit to item types" }
+                    div { class: "flex items-center gap-1",
+                        span { class: "label-text", "Limit to item types" }
+                        InfoButton {
+                            title: "Limiting to item types".to_string(),
+                            body: "Which kinds of configuration item the report counts.\n\n\
+                                   Selecting none is the useful default, not an empty \
+                                   setting: the report then covers every item type that \
+                                   carries the chosen field. Pick some only when the report \
+                                   is about those types specifically - \"software by \
+                                   location\" rather than \"everything by location\".\n\n\
+                                   A type that does not have the field at all is left out \
+                                   either way, and the report names which ones it dropped. \
+                                   Software has no Status field, for one, so a report \
+                                   grouped by Status excludes it rather than counting 1363 \
+                                   titles as having no status - that would be a claim about \
+                                   the data rather than about the schema.\n\n\
+                                   The list offered here is the types worth counting \
+                                   separately in an inventory, not every type GLPI has."
+                                .to_string(),
+                        }
+                    }
                     span { class: "label-text-alt text-base-content/60",
                         "none selected = every type that has the field"
                     }
