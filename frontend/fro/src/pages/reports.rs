@@ -469,9 +469,17 @@ fn Builder(on_saved: EventHandler<()>) -> Element {
                             Ok(()) => {
                                 error.set(None);
                                 saved.set(true);
+                                // Every field, not just the ones that were
+                                // obviously per-report. Leaving Group by and the
+                                // rollup tick behind meant the next report
+                                // silently inherited them, and a form that looks
+                                // blank but is not is worse than one that
+                                // forgets something useful.
                                 name.set(String::new());
                                 chosen.set(Vec::new());
                                 relations.set(Vec::new());
+                                group_by.set("locations_id".to_string());
+                                rollup.set(true);
                                 on_saved.call(());
                             }
                             Err(e) => { error.set(Some(e)); saved.set(false); }
