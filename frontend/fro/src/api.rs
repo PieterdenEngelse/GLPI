@@ -2241,3 +2241,85 @@ pub async fn set_logout_setting(name: &str, value: Option<&str>) -> Result<(), S
         Err(_) => Err(status.to_string()),
     }
 }
+
+// ----------------------------------------------------------- report builder
+
+/// One saved report definition.
+///
+/// Every field `Option` or `#[serde(default)]` for the reason the whole file
+/// follows: a backend that drifts should blank a cell, never fail the parse.
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct ReportDef {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub name: String,
+    /// `None` means every item type carrying the grouped field.
+    #[serde(default)]
+    pub itemtypes: Option<Vec<String>>,
+    #[serde(default)]
+    pub group_by: String,
+    #[serde(default)]
+    pub rollup: bool,
+    #[serde(default)]
+    pub is_active: bool,
+}
+
+#[derive(Clone, PartialEq, serde::Deserialize)]
+pub struct ReportList {
+    #[serde(default)]
+    pub definitions: Vec<ReportDef>,
+    /// Whether GLPI_INV_REPORT_WRITES is set on the backend. The form is
+    /// hidden when it is not, rather than shown and answered 403 on submit.
+    #[serde(default)]
+    pub writes_enabled: bool,
+}
+
+pub async fn fetch_reports() -> Result<ReportList, ApiError> {
+    get_json::<ReportList>("/api/reports").await
+}
+
+/// Saves a definition. The backend's own `error` is lifted out of the body:
+/// a refused definition says which field is wrong and in what way, and that
+/// sentence belongs beside the field rather than in a status code.
+pub async fn create_report(def: &ReportDef) -> Result<(), String> {
+    let r = reqwest::Client::new()
+        .post(api_url("/api/reports"))
+        .json(&serde_json::json!({
+            "name": def.name,
+            "itemtypes": def.itemtypes,
+            "group_by": def.group_by,
+            "rollup": def.rollup,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    api_result(r).await
+}
+
+pub async fn delete_report(id: i64) -> Result<(), String> {
+    let r = reqwest::Client::new()
+        .delete(api_url(&format!("/api/reports/{id}")))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    api_result(r).await
+}
+
+/// Success, or the backend's `error` string, or the bare status.
+async fn api_result(r: reqwest::Response) -> Result<(), String> {
+    if r.status().is_success() {
+        return Ok(());
+    }
+    let status = r.status();
+    match r.json::<serde_json::Value>().await {
+        Ok(v) => Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string())),
+        Err(_) => Err(status.to_string()),
+    }
+}

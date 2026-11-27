@@ -144,6 +144,21 @@ pub struct Config {
     /// table of readings.
     pub php_writes: bool,
 
+    /// Whether the report builder may save definitions.
+    ///
+    /// Its own flag, not folded into any existing one, for the reason the
+    /// comment on `variable_writes` records: two flags written in separate
+    /// sessions disagreed about what counted as consent, and reusing a flag
+    /// silently widens what it permits.
+    ///
+    /// What it permits is narrower than the other write flags: rows in
+    /// `glpi_plugin_swcat_reports`, a table the swcat plugin owns. GLPI keeps
+    /// no history and derives no state from it, so this is not a write behind
+    /// GLPI's back - see the module comment on `glpi::reports`. Flagged
+    /// anyway, because a write into GLPI's schema should take a deliberate
+    /// act to enable whatever the table is.
+    pub report_writes: bool,
+
     /// The file MariaDB replays at startup, when one is configured.
     ///
     /// Absent by default, and the panel then says a change lasts until the
@@ -223,6 +238,7 @@ impl Config {
             init_file: std::env::var("GLPI_INV_INIT_FILE")
                 .ok()
                 .filter(|s| !s.trim().is_empty()),
+            report_writes: enabled("GLPI_INV_REPORT_WRITES"),
             innodb_writes: enabled("GLPI_INV_INNODB_WRITES"),
             variable_writes: enabled("GLPI_INV_VARIABLE_WRITES"),
         })

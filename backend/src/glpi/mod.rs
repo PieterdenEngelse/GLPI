@@ -45,6 +45,7 @@ pub mod perf;
 pub mod php_sampler;
 pub mod posture;
 pub mod refused;
+pub mod reports;
 pub mod rights;
 pub mod rsql;
 pub mod sampler;

@@ -13,7 +13,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::IntoResponse,
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
     Json, Router,
 };
 use serde::Serialize;
@@ -90,6 +90,10 @@ pub struct AppState {
 
     /// Whether the restart links may run scripts/db-restart.sh. A separate
     /// flag from innodb_writes, and a bigger one: see config::Config.
+    /// config::Config::report_writes. Narrow by design: rows in the swcat
+    /// plugin's own table, which GLPI neither logs nor derives state from.
+    pub report_writes: bool,
+
     pub db_restart: bool,
 
     /// The startup file, when one is configured. See
@@ -140,6 +144,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/nginx/proxy", get(nginx_proxy))
         .route("/api/nginx/tuning", get(nginx_tuning))
         .route("/api/nginx/tuning/{name}", post(set_nginx_tuning))
+        .route("/api/reports", get(report_defs).post(create_report_def))
+        .route("/api/reports/{id}", delete(delete_report_def))
         .route("/api/logout", get(logout_settings))
         .route("/api/logout/{name}", post(set_logout_setting))
         .route("/api/self-timing", get(self_timing))
@@ -2788,4 +2794,123 @@ async fn refused(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse
         entities,
         rows,
     }))
+}
+
+// ----------------------------------------------------------- report builder
+
+/// Saved report definitions.
+///
+/// An empty list when the swcat plugin has never been installed, rather than
+/// an error: "no reports defined" and "plugin absent" are different facts but
+/// the builder can show both honestly, and a 500 here would make an unused
+/// feature look broken.
+async fn report_defs(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    let Some(db) = state.db.as_ref() else {
+        return no_db();
+    };
+
+    match db.report_defs().await {
+        Ok(defs) => Json(serde_json::json!({
+            "definitions": defs,
+            // The UI needs this to decide whether to offer a save button at
+            // all, rather than offering one that always 403s.
+            "writes_enabled": state.report_writes,
+        }))
+        .into_response(),
+        Err(e) => db_error(&e),
+    }
+}
+
+async fn create_report_def(
+    State(state): State<Arc<AppState>>,
+    Json(def): Json<crate::glpi::reports::NewReport>,
+) -> axum::response::Response {
+    let Some(db) = state.db.as_ref() else {
+        return no_db();
+    };
+
+    if !state.report_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Report definitions are read-only in this backend. Start it with \
+                          GLPI_INV_REPORT_WRITES=1 to allow saving.",
+            })),
+        )
+            .into_response();
+    }
+
+    match db.create_report_def(&def).await {
+        // The inner Result is the definition being refused, which is the
+        // caller's mistake and not a failure - 400 with the reason, so the
+        // builder can put it beside the field.
+        Ok(Err(invalid)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": invalid.message() })),
+        )
+            .into_response(),
+        Ok(Ok(id)) => {
+            tracing::info!("report definition {id} created: {}", def.name);
+            Json(serde_json::json!({
+                "id": id,
+                "note": "Saved. It appears in GLPI under Tools > Reports immediately - the \
+                         plugin rebuilds that menu from this table on every request.",
+            }))
+            .into_response()
+        }
+        Err(e) => db_error(&e),
+    }
+}
+
+async fn delete_report_def(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> axum::response::Response {
+    let Some(db) = state.db.as_ref() else {
+        return no_db();
+    };
+
+    if !state.report_writes {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Report definitions are read-only in this backend. Start it with \
+                          GLPI_INV_REPORT_WRITES=1 to allow deleting.",
+            })),
+        )
+            .into_response();
+    }
+
+    match db.delete_report_def(id).await {
+        Ok(true) => {
+            tracing::info!("report definition {id} deleted");
+            Json(serde_json::json!({ "deleted": id })).into_response()
+        }
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "No such report definition." })),
+        )
+            .into_response(),
+        Err(e) => db_error(&e),
+    }
+}
+
+/// The same answer every report endpoint gives when GLPI_DB_URL is unset.
+fn no_db() -> axum::response::Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({
+            "error": "No database connection is configured, so report definitions cannot be \
+                      read. Set GLPI_DB_URL.",
+        })),
+    )
+        .into_response()
+}
+
+fn db_error(e: &anyhow::Error) -> axum::response::Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(serde_json::json!({ "error": format!("{e:#}") })),
+    )
+        .into_response()
 }
