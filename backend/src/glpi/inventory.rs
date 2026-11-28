@@ -1,9 +1,9 @@
 //! What the agents collected: hardware, software and network, fleet-wide.
 //!
-//! WHY ALL THREE RUN ON v1. The rule in CLAUDE.md is that v1 is for what v2.3
-//! does not expose at all, and these three qualify for two separate reasons.
-//! Verified by reading src/Glpi/Api/HL/Controller/ in GLPI 11.0.12 and by
-//! probing the running install, not assumed:
+//! WHY ALL THREE RUN ON v1. The rule in docs/claude/two-apis.md is that v1 is
+//! for what v2.3 does not expose at all, and these three qualify for two
+//! separate reasons. Verified by reading src/Glpi/Api/HL/Controller/ in GLPI
+//! 11.0.12 and by probing the running install, not assumed:
 //!
 //!   * Every component, volume, OS and software install is reachable under
 //!     v2.3 only beneath a single asset id - `/Assets/Computer/{id}/Volume`,

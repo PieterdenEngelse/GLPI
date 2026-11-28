@@ -180,7 +180,7 @@ v2.3 (the High-Level API) for everything about inventory. v1 (`/apirest.php`)
 **only** for rights and authorizations, because v2.3 does not model them at
 all: `Profile_User` has zero occurrences in it, and its `Profile` schema
 carries neither `interface` nor any rights. The trade and its traps are in
-`CLAUDE.md` and `docs/gl-rights.md`.
+`docs/claude/two-apis.md` and `docs/gl-rights.md`.
 
 ## Layout
 
@@ -232,8 +232,8 @@ Three gaps, all in the API rather than in this code:
 - **Refused submissions.** The HL API exposes `Agent` but **not**
   `RefusedEquipment`, so the most valuable failure mode — agent exits 0, GLPI
   rejects the submission, the asset never appears — is unreachable. Reading it
-  needs database access, with the trade-offs in `CLAUDE.md`. That decision is
-  open.
+  needs database access, with the trade-offs in `docs/claude/db-access.md`.
+  That decision is open.
 - **Field-level change history.** Also not exposed, so "what changed between
   runs" is out of reach too.
 - **Agents outside the service account's entities.** GLPI filters every query

@@ -76,8 +76,8 @@ FLUSH PRIVILEGES;
 ```
 
 Two tables, SELECT only, no secret to store, and nothing to leak if the
-dashboard's config is read. It is also exactly the grant `CLAUDE.md` named as
-the acceptable form of this.
+dashboard's config is read. It is also exactly the grant that
+`docs/claude/db-access.md` named as the acceptable form of this.
 
 Needs deciding: `rules_id` is a number. Showing the rule's *name* means either
 `GRANT SELECT ON glpi.glpi_rules` — a third table — or displaying the id and
@@ -112,7 +112,7 @@ two tables *was* narrower than what the `inv` API account already holds — that
 account can read every computer, agent, profile and user in the install. As of
 2026-11-13 the database account holds all privileges server-wide, which is
 wider than the API account in both reach and kind: it can write, and it can
-read accounts. See CLAUDE.md for what that traded away.
+read accounts. See `docs/claude/db-access.md` for what that traded away.
 
 **Trap: the table is `glpi_refusedequipments`, plural.** GLPI pluralises table
 names, so a grep for the singular matches every occurrence of the plural as a

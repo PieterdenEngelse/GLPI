@@ -23,8 +23,8 @@
 //! of it: the grant to pde@localhost is server-wide, so the question is no
 //! longer which tables are reachable but which this app chooses to read. It
 //! reads one, glpi_refusedequipments. The rest is deliberate restraint rather
-//! than enforcement - see CLAUDE.md, which records what the grant stopped
-//! protecting.
+//! than enforcement - see docs/claude/db-access.md, which records what the
+//! grant stopped protecting.
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 

@@ -35,11 +35,12 @@
 //! a different branch of the same handler and answers access-denied, so `None`
 //! never hides a permission problem.
 //!
-//! WHY THERE IS NO FLEET-WIDE SWEEP. One request per asset. CLAUDE.md's rule
-//! against exactly this shape - "a fleet-wide view would cost ~10 requests per
-//! machine" - is why the inventory pages read v1 collections instead. Infocom
-//! has no collection route under Assets, so a fleet view would be one request
-//! per machine with no way to batch it. Offered per-asset only, deliberately.
+//! WHY THERE IS NO FLEET-WIDE SWEEP. One request per asset. The rule in
+//! docs/claude/two-apis.md against exactly this shape - "a fleet-wide view
+//! would cost ~10 requests per machine" - is why the inventory pages read v1
+//! collections instead. Infocom has no collection route under Assets, so a
+//! fleet view would be one request per machine with no way to batch it.
+//! Offered per-asset only, deliberately.
 use anyhow::Result;
 use serde::Serialize;
 
